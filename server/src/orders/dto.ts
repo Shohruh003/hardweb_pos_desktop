@@ -1,14 +1,17 @@
 import {
   IsArray,
+  IsEnum,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   Min,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { OrderStatus } from '@hardweb-pos/shared';
+import { OrderStatus, PaymentType } from '@hardweb-pos/shared';
 
 export class CreateOrderItemDto {
   @IsUUID()
@@ -36,4 +39,23 @@ export class CreateOrderDto {
 export class UpdateOrderStatusDto {
   @IsString()
   status: OrderStatus;
+}
+
+export class PayOrderDto {
+  @IsEnum(PaymentType)
+  type: PaymentType;
+
+  // Chegirma foizi (TZ F-3.3), 0-100
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  discountPercent?: number;
+
+  // Xizmat haqi foizi (TZ F-3.3)
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  serviceFeePercent?: number;
 }

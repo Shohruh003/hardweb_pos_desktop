@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { OrdersService } from './orders.service';
-import { CreateOrderDto, UpdateOrderStatusDto } from './dto';
+import { CreateOrderDto, PayOrderDto, UpdateOrderStatusDto } from './dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('orders')
@@ -35,5 +35,15 @@ export class OrdersController {
   @Patch(':id/status')
   updateStatus(@Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
     return this.orders.updateStatus(id, dto);
+  }
+
+  // Kassa: to'lov va hisobni yopish
+  @Post(':id/pay')
+  pay(
+    @Param('id') id: string,
+    @Body() dto: PayOrderDto,
+    @Request() req: any,
+  ) {
+    return this.orders.pay(id, dto, req.user.id);
   }
 }

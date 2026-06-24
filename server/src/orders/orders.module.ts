@@ -4,7 +4,9 @@ import {
   MenuItemEntity,
   OrderEntity,
   OrderItemEntity,
+  PaymentEntity,
   TableEntity,
+  UserEntity,
 } from '../entities';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
@@ -17,6 +19,8 @@ import { OrdersGateway } from './orders.gateway';
       OrderItemEntity,
       MenuItemEntity,
       TableEntity,
+      PaymentEntity,
+      UserEntity,
     ]),
   ],
   controllers: [OrdersController],

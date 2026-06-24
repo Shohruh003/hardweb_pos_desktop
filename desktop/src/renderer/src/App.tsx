@@ -3,6 +3,7 @@ import { UserRole } from '@hardweb-pos/shared';
 import { LoginPage } from './pages/LoginPage';
 import { WaiterPage } from './pages/WaiterPage';
 import { KdsPage } from './pages/KdsPage';
+import { CashierPage } from './pages/CashierPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 
 // Login qilingan foydalanuvchi roliga qarab kerakli ekran ochiladi (TZ: bitta ilova, rolga qarab)
@@ -17,13 +18,7 @@ export function App() {
     case UserRole.Cook:
       return <KdsPage />;
     case UserRole.Cashier:
-      return (
-        <PlaceholderPage
-          title="Kassa"
-          bosqich="3-bosqich"
-          tavsif="Hisob-kitob, to'lov turlari (naqd/karta/QR), chegirma va chek printeri (ESC/POS)."
-        />
-      );
+      return <CashierPage />;
     case UserRole.Admin:
       return (
         <PlaceholderPage

@@ -111,3 +111,30 @@ export interface FiscalDoc {
   qrCode: string; // qr_kod
   createdAt: string; // vaqt
 }
+
+/** Chek satri (chek shabloni uchun) */
+export interface ReceiptLine {
+  name: string;
+  quantity: number;
+  price: number;
+  sum: number; // price * quantity
+}
+
+/** Chek ma'lumoti — kassa to'lovni yopganda qaytadi (TZ F-3.4 / 6-bo'lim) */
+export interface Receipt {
+  orderId: string;
+  tableNumber?: number;
+  waiterName?: string;
+  cashierName?: string;
+  lines: ReceiptLine[];
+  subtotal: number; // chegirmagacha jami
+  discountPercent: number;
+  discountAmount: number;
+  serviceFeePercent: number;
+  serviceFeeAmount: number;
+  total: number; // to'lanadigan yakuniy summa
+  paymentType: PaymentType;
+  createdAt: string;
+  // Fiskal QR uchun joy (2-bosqich) — TZ F-6.7
+  fiscalQrPlaceholder: boolean;
+}

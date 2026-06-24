@@ -10,15 +10,18 @@ import {
   MenuItemEntity,
   OrderEntity,
   OrderItemEntity,
+  PaymentEntity,
   TableEntity,
+  UserEntity,
 } from '../entities';
 import {
   Order,
   OrderStatus,
   OrderItemStatus,
+  Receipt,
   TableStatus,
 } from '@hardweb-pos/shared';
-import { CreateOrderDto, UpdateOrderStatusDto } from './dto';
+import { CreateOrderDto, PayOrderDto, UpdateOrderStatusDto } from './dto';
 import { OrdersGateway } from './orders.gateway';
 
 @Injectable()
@@ -30,6 +33,10 @@ export class OrdersService {
     private readonly menuItems: Repository<MenuItemEntity>,
     @InjectRepository(TableEntity)
     private readonly tables: Repository<TableEntity>,
+    @InjectRepository(PaymentEntity)
+    private readonly payments: Repository<PaymentEntity>,
+    @InjectRepository(UserEntity)
+    private readonly users: Repository<UserEntity>,
     private readonly dataSource: DataSource,
     private readonly gateway: OrdersGateway,
   ) {}
@@ -120,6 +127,78 @@ export class OrdersService {
     const dtoOut = this.toDto(saved, table?.number);
     this.gateway.emitOrderUpdated(dtoOut); // -> ofitsiant / navbat
     return dtoOut;
+  }
+
+  // Kassa: to'lov qabul qilish, hisobni yopish, stolni bo'shatish, chek qaytarish (TZ 5.3)
+  async pay(
+    id: string,
+    dto: PayOrderDto,
+    cashierId: string,
+  ): Promise<{ order: Order; receipt: Receipt }> {
+    const order = await this.orders.findOne({ where: { id } });
+    if (!order) throw new NotFoundException('Buyurtma topilmadi');
+    if (order.status === OrderStatus.Closed) {
+      throw new BadRequestException('Hisob allaqachon yopilgan');
+    }
+
+    const subtotal = (order.items || []).reduce(
+      (s, it) => s + Number(it.price) * it.quantity,
+      0,
+    );
+    const discountPercent = dto.discountPercent ?? 0;
+    const serviceFeePercent = dto.serviceFeePercent ?? 0;
+    const discountAmount = Math.round((subtotal * discountPercent) / 100);
+    const serviceFeeAmount = Math.round((subtotal * serviceFeePercent) / 100);
+    const total = subtotal - discountAmount + serviceFeeAmount;
+
+    const table = await this.tables.findOne({ where: { id: order.tableId } });
+    const cashier = await this.users.findOne({ where: { id: cashierId } });
+    const waiter = await this.users.findOne({ where: { id: order.waiterId } });
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.save(
+        manager.create(PaymentEntity, {
+          orderId: order.id,
+          amount: total,
+          type: dto.type,
+          cashierId,
+        }),
+      );
+      order.status = OrderStatus.Closed;
+      order.closedAt = new Date();
+      await manager.save(order);
+
+      if (table) {
+        table.status = TableStatus.Free; // stol bo'shadi (TZ F-3.5)
+        await manager.save(table);
+      }
+    });
+
+    const receipt: Receipt = {
+      orderId: order.id,
+      tableNumber: table?.number,
+      waiterName: waiter?.name,
+      cashierName: cashier?.name,
+      lines: (order.items || []).map((it) => ({
+        name: it.menuItemName,
+        quantity: it.quantity,
+        price: Number(it.price),
+        sum: Number(it.price) * it.quantity,
+      })),
+      subtotal,
+      discountPercent,
+      discountAmount,
+      serviceFeePercent,
+      serviceFeeAmount,
+      total,
+      paymentType: dto.type,
+      createdAt: new Date().toISOString(),
+      fiscalQrPlaceholder: true, // 2-bosqich: QR shu yerga joylashadi (TZ F-6.7)
+    };
+
+    const dtoOut = this.toDto(order, table?.number);
+    this.gateway.emitOrderClosed(dtoOut); // -> KDS/navbatdan o'chadi
+    return { order: dtoOut, receipt };
   }
 
   private toDto(o: OrderEntity, tableNumber?: number): Order {
