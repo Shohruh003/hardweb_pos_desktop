@@ -17,3 +17,6 @@ desktop/dist/
 # Lokal ma'lumotlar
 *.sqlite
 *.sqlite-journal
+
+# Sinxron watermark holati
+sync-state.json

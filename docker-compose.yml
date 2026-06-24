@@ -20,5 +20,25 @@ services:
       timeout: 3s
       retries: 10
 
+  # Bulut serveri uchun alohida ma'lumotlar bazasi (multi-tenant)
+  postgres_cloud:
+    image: postgres:16-alpine
+    container_name: hardweb_cloud_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: hardweb_cloud
+    ports:
+      - '5433:5432'
+    volumes:
+      - hardweb_cloud_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d hardweb_cloud']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   hardweb_pos_data:
+  hardweb_cloud_data:

@@ -6,11 +6,13 @@
   "workspaces": [
     "shared",
     "server",
-    "desktop"
+    "desktop",
+    "cloud"
   ],
   "scripts": {
     "dev:server": "npm run dev --workspace=server",
     "dev:desktop": "npm run dev --workspace=desktop",
+    "dev:cloud": "npm run dev --workspace=cloud",
     "build:shared": "npm run build --workspace=shared"
   },
   "engines": {

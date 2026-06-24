@@ -44,7 +44,8 @@ RESTORAN LOKAL TARMOG'I (Wi-Fi / LAN)
 hardweb_pos_desktop/
 ├── shared/    # Umumiy TypeScript turlar: DB modellari, enumlar, socket eventlar
 ├── server/    # Lokal server (NestJS + PostgreSQL + Socket.IO)
-└── desktop/   # Electron + React terminal ilovasi (kassa / KDS / ofitsiant / admin)
+├── desktop/   # Electron + React terminal ilovasi (kassa / KDS / ofitsiant / admin)
+└── cloud/     # Bulut serveri (NestJS + PostgreSQL, multi-tenant, direktor hisobotlari)
 ```
 
 ## Boshlash
@@ -61,8 +62,19 @@ hardweb_pos_desktop/
 2. 🟡 Ofitsiant ekrani ✅ · offline rejim ⬜
 3. 🟡 Oshxona ekrani (KDS) ✅ · Kassa + chek preview ✅ · ESC/POS fizik printer ⬜
 4. ✅ Navbat ekrani (`/queue`) + Administrator paneli
-5. ⬜ Bulut sinxronlash (subdomen) + Direktor hisobotlari
+5. ✅ Bulut sinxronlash (multi-tenant) + Direktor hisobotlari (`/dashboard`)
 6. ⬜ Fiskal modul: QR-kodli chek + aksiz skaneri
+
+### Bulut serveri (multi-tenant)
+
+```
+npm run dev:cloud          # bulut serveri (port 4000)
+```
+
+- Direktor paneli: `http://<subdomen>.poscloud.uz/dashboard` (lokalda `http://localhost:4000/dashboard`)
+- Lokal server `SYNC_ENABLED=true` bo'lsa yopilgan hisoblarni bulutga bir tomonlama yuboradi (`server/.env`: `CLOUD_URL`, `CLOUD_API_KEY`).
+- Yangi restoran (tenant) ulash: `POST /api/tenants` (`x-platform-key` sarlavhasi bilan) — avtomatik subdomen va API kalit beradi.
+- Deploy paytida: har tenant uchun subdomen + wildcard SSL (TZ 3.2). Hozir lokalda subdomen `demo-restoran` bilan sinaladi.
 
 ### Navbat ekranini ochish (TV/brauzer)
 
