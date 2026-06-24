@@ -44,4 +44,12 @@ export class OrderItemEntity {
     default: OrderItemStatus.Pending,
   })
   status: OrderItemStatus;
+
+  // Aksiz kerakmi (buyurtma paytida menyudan ko'chiriladi) — TZ F-8.5
+  @Column({ name: 'excise_required', default: false })
+  exciseRequired: boolean;
+
+  // Skanerlangan aksiz kodi (bo'lsa) — TZ F-8.6
+  @Column({ name: 'excise_code', type: 'varchar', nullable: true })
+  exciseCode: string | null;
 }

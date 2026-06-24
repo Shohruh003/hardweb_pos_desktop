@@ -10,7 +10,12 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { OrdersService } from './orders.service';
-import { CreateOrderDto, PayOrderDto, UpdateOrderStatusDto } from './dto';
+import {
+  AddExciseDto,
+  CreateOrderDto,
+  PayOrderDto,
+  UpdateOrderStatusDto,
+} from './dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('orders')
@@ -35,6 +40,12 @@ export class OrdersController {
   @Patch(':id/status')
   updateStatus(@Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
     return this.orders.updateStatus(id, dto);
+  }
+
+  // Aksiz kodlarini skanerlab saqlash (TZ F-8.6)
+  @Post(':id/excise')
+  addExcise(@Param('id') id: string, @Body() dto: AddExciseDto) {
+    return this.orders.addExciseCodes(id, dto.codes);
   }
 
   // Kassa: to'lov va hisobni yopish

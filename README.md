@@ -59,11 +59,15 @@ hardweb_pos_desktop/
 ## Bosqichlar (TZ yo'l xaritasi bo'yicha)
 
 1. ✅ Backend + ma'lumotlar bazasi + WebSocket (asos)
-2. 🟡 Ofitsiant ekrani ✅ · offline rejim ⬜
-3. 🟡 Oshxona ekrani (KDS) ✅ · Kassa + chek preview ✅ · ESC/POS fizik printer ⬜
+2. ✅ Ofitsiant ekrani + offline rejim
+3. ✅ Oshxona ekrani (KDS) + Kassa + chek + ESC/POS printer (tarmoq)
 4. ✅ Navbat ekrani (`/queue`) + Administrator paneli
 5. ✅ Bulut sinxronlash (multi-tenant) + Direktor hisobotlari (`/dashboard`)
-6. ⬜ Fiskal modul: QR-kodli chek + aksiz skaneri
+6. ✅ Fiskal modul: QR-kodli chek + aksiz skaneri *(struktura tayyor; real OFD ulanishi deploy paytida)*
+
+> **Deploy paytida ulanadigan tashqi qismlar:** real soliq operatori (OFD) API'si fiskal QR uchun;
+> bulut hosting + har restoran uchun subdomen va wildcard SSL; to'lov tizimlari (Payme/Click/Uzum)
+> integratsiyasi. Qolgan barcha funksiyalar tayyor va lokalda ishlaydi.
 
 ### Bulut serveri (multi-tenant)
 

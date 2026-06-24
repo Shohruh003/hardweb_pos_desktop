@@ -74,6 +74,8 @@ export class SeedService implements OnModuleInit {
       { name: 'Sezar', price: 30000, categoryId: salat.id, available: true, exciseRequired: false },
       { name: 'Choy', price: 8000, categoryId: ichimlik.id, available: true, exciseRequired: false },
       { name: 'Coca-Cola', price: 12000, categoryId: ichimlik.id, available: true, exciseRequired: false },
+      // Aksizli mahsulot — kassada kodi skanerlanishi shart (TZ F-8.5)
+      { name: 'Pivo (0.5)', price: 22000, categoryId: ichimlik.id, available: true, exciseRequired: true },
     ] as Partial<MenuItemEntity>[]);
 
     this.logger.log('Seed tayyor. Login: ofitsiant/oshpaz/kassir/admin/direktor — parol: 1234');

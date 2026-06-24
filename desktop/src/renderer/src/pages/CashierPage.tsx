@@ -27,6 +27,8 @@ export function CashierPage() {
   const [payType, setPayType] = useState<PaymentType>(PaymentType.Cash);
   const [paying, setPaying] = useState(false);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [exciseInputs, setExciseInputs] = useState<Record<string, string>>({});
+  const [savingExcise, setSavingExcise] = useState(false);
 
   function refresh() {
     api.get<Order[]>('/orders').then(setOrders).catch(() => {});
@@ -53,6 +55,32 @@ export function CashierPage() {
     setDiscount(0);
     setServiceFee(0);
     setPayType(PaymentType.Cash);
+    setExciseInputs({});
+  }
+
+  // Aksiz kodi kerak bo'lib, hali skanerlanmagan taomlar (TZ F-8.5/8.6)
+  const pendingExcise = (selected?.items ?? []).filter(
+    (it) => it.exciseRequired && !it.exciseCode,
+  );
+
+  async function saveExcise() {
+    if (!selected) return;
+    const codes = pendingExcise
+      .map((it) => ({ orderItemId: it.id, code: (exciseInputs[it.id] || '').trim() }))
+      .filter((c) => c.code.length > 0);
+    if (codes.length === 0) return;
+    setSavingExcise(true);
+    try {
+      const updated = await api.post<Order>(`/orders/${selected.id}/excise`, {
+        codes,
+      });
+      setSelected(updated); // yangilangan (exciseCode bilan) buyurtma
+      setExciseInputs({});
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setSavingExcise(false);
+    }
   }
 
   const subtotal = selected?.total ?? 0;
@@ -149,6 +177,43 @@ export function CashierPage() {
                 ))}
               </div>
 
+              {/* Aksiz kodlarini skanerlash (TZ F-8.5/8.6) */}
+              {pendingExcise.length > 0 && (
+                <div className="bg-warning/10 border border-warning/40 rounded-xl p-4 mb-5">
+                  <div className="font-semibold text-warning mb-2">
+                    Aksiz kodi skanerlanishi kerak
+                  </div>
+                  <div className="space-y-2">
+                    {pendingExcise.map((it) => (
+                      <div key={it.id} className="flex items-center gap-2">
+                        <span className="flex-1">{it.menuItemName}</span>
+                        <input
+                          autoFocus
+                          value={exciseInputs[it.id] || ''}
+                          onChange={(e) =>
+                            setExciseInputs((p) => ({ ...p, [it.id]: e.target.value }))
+                          }
+                          onKeyDown={(e) => {
+                            // HID skaner kod oxirida Enter yuboradi
+                            if (e.key === 'Enter') saveExcise();
+                          }}
+                          placeholder="Aksiz kodini skanerlang yoki kiriting"
+                          className="flex-[2] px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    className="mt-3"
+                    disabled={savingExcise}
+                    onClick={saveExcise}
+                  >
+                    {savingExcise ? 'Saqlanmoqda...' : 'Aksiz kodlarini saqlash'}
+                  </Button>
+                </div>
+              )}
+
               {/* Chegirma va xizmat haqi (TZ F-3.3) */}
               <div className="grid grid-cols-2 gap-4 mb-5">
                 <Field
@@ -205,8 +270,16 @@ export function CashierPage() {
                 </div>
               </div>
 
-              <Button className="w-full py-3.5 text-lg" disabled={paying} onClick={pay}>
-                {paying ? 'Yopilmoqda...' : 'To‘lash va chek chiqarish'}
+              <Button
+                className="w-full py-3.5 text-lg"
+                disabled={paying || pendingExcise.length > 0}
+                onClick={pay}
+              >
+                {pendingExcise.length > 0
+                  ? 'Avval aksiz kodini skanerlang'
+                  : paying
+                    ? 'Yopilmoqda...'
+                    : 'To‘lash va chek chiqarish'}
               </Button>
             </div>
           )}

@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Not, Repository } from 'typeorm';
 
 import {
+  ExciseCodeEntity,
   FiscalDocEntity,
   MenuItemEntity,
   OrderEntity,
@@ -98,6 +99,8 @@ export class OrdersService {
             quantity: i.quantity,
             note: i.note ?? null,
             status: OrderItemStatus.Pending,
+            exciseRequired: mi.exciseRequired, // aksiz bayrog'ini ko'chiramiz
+            exciseCode: null,
           });
         }),
       });
@@ -142,6 +145,18 @@ export class OrdersService {
     if (!order) throw new NotFoundException('Buyurtma topilmadi');
     if (order.status === OrderStatus.Closed) {
       throw new BadRequestException('Hisob allaqachon yopilgan');
+    }
+
+    // Aksizli taomlar uchun kod skanerlangan bo'lishi shart (TZ F-8.6/8.8)
+    const missingExcise = (order.items || []).filter(
+      (it) => it.exciseRequired && !it.exciseCode,
+    );
+    if (missingExcise.length > 0) {
+      throw new BadRequestException(
+        `Aksiz kodi skanerlanmagan: ${missingExcise
+          .map((it) => it.menuItemName)
+          .join(', ')}`,
+      );
     }
 
     const subtotal = (order.items || []).reduce(
@@ -252,7 +267,35 @@ export class OrdersService {
         quantity: it.quantity,
         note: it.note,
         status: it.status,
+        exciseRequired: it.exciseRequired,
+        exciseCode: it.exciseCode,
       })),
     };
+  }
+
+  // Aksiz kodlarini saqlash (TZ F-8.6/8.8) — kassa skaner orqali kiritadi
+  async addExciseCodes(
+    orderId: string,
+    codes: { orderItemId: string; code: string }[],
+  ): Promise<Order> {
+    const order = await this.orders.findOne({ where: { id: orderId } });
+    if (!order) throw new NotFoundException('Buyurtma topilmadi');
+
+    await this.dataSource.transaction(async (manager) => {
+      for (const c of codes) {
+        const item = order.items.find((it) => it.id === c.orderItemId);
+        if (!item) continue;
+        item.exciseCode = c.code;
+        await manager.save(item);
+        await manager.save(
+          manager.create(ExciseCodeEntity, {
+            orderItemId: item.id,
+            exciseCode: c.code,
+          }),
+        );
+      }
+    });
+
+    return this.findOne(orderId);
   }
 }

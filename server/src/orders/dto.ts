@@ -41,6 +41,21 @@ export class UpdateOrderStatusDto {
   status: OrderStatus;
 }
 
+export class ExciseCodeItemDto {
+  @IsUUID()
+  orderItemId: string;
+
+  @IsString()
+  code: string;
+}
+
+export class AddExciseDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ExciseCodeItemDto)
+  codes: ExciseCodeItemDto[];
+}
+
 export class PayOrderDto {
   @IsEnum(PaymentType)
   type: PaymentType;

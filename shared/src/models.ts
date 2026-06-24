@@ -56,6 +56,8 @@ export interface OrderItem {
   quantity: number; // miqdor
   note?: string | null; // izoh (masalan "tuzsiz")
   status: OrderItemStatus; // holat
+  exciseRequired?: boolean; // aksiz kodi kerakmi (TZ F-8.5)
+  exciseCode?: string | null; // skanerlangan aksiz kodi (bo'lsa)
   // Qulaylik uchun (server to'ldiradi):
   menuItemName?: string;
   price?: number;

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import {
+  ExciseCodeEntity,
   FiscalDocEntity,
   MenuItemEntity,
   OrderEntity,
@@ -23,6 +24,7 @@ import { OrdersGateway } from './orders.gateway';
       PaymentEntity,
       UserEntity,
       FiscalDocEntity,
+      ExciseCodeEntity,
     ]),
   ],
   controllers: [OrdersController],

@@ -7,3 +7,4 @@ export * from './order-item.entity';
 export * from './payment.entity';
 export * from './device.entity';
 export * from './fiscal-doc.entity';
+export * from './excise-code.entity';
