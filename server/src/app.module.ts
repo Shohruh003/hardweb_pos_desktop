@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { TablesModule } from './tables/tables.module';
 import { MenuModule } from './menu/menu.module';
 import { OrdersModule } from './orders/orders.module';
+import { UsersModule } from './users/users.module';
 import { SeedModule } from './seed/seed.module';
 
 @Module({
@@ -29,6 +30,7 @@ import { SeedModule } from './seed/seed.module';
     TablesModule,
     MenuModule,
     OrdersModule,
+    UsersModule,
     SeedModule,
   ],
 })

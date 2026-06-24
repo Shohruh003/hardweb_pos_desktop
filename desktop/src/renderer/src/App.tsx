@@ -4,6 +4,7 @@ import { LoginPage } from './pages/LoginPage';
 import { WaiterPage } from './pages/WaiterPage';
 import { KdsPage } from './pages/KdsPage';
 import { CashierPage } from './pages/CashierPage';
+import { AdminPage } from './pages/AdminPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 
 // Login qilingan foydalanuvchi roliga qarab kerakli ekran ochiladi (TZ: bitta ilova, rolga qarab)
@@ -20,13 +21,7 @@ export function App() {
     case UserRole.Cashier:
       return <CashierPage />;
     case UserRole.Admin:
-      return (
-        <PlaceholderPage
-          title="Administrator paneli"
-          bosqich="4-bosqich"
-          tavsif="Menyu, stollar/zallar, xodimlar va qurilmalarni boshqarish."
-        />
-      );
+      return <AdminPage />;
     case UserRole.Director:
       return (
         <PlaceholderPage
