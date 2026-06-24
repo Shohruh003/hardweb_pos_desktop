@@ -1,0 +1,39 @@
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Request,
+  UseGuards,
+} from '@nestjs/common';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { OrdersService } from './orders.service';
+import { CreateOrderDto, UpdateOrderStatusDto } from './dto';
+
+@UseGuards(JwtAuthGuard)
+@Controller('orders')
+export class OrdersController {
+  constructor(private readonly orders: OrdersService) {}
+
+  @Get()
+  findActive() {
+    return this.orders.findActive();
+  }
+
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    return this.orders.findOne(id);
+  }
+
+  @Post()
+  create(@Body() dto: CreateOrderDto, @Request() req: any) {
+    return this.orders.create(dto, req.user.id);
+  }
+
+  @Patch(':id/status')
+  updateStatus(@Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
+    return this.orders.updateStatus(id, dto);
+  }
+}

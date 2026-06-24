@@ -1,0 +1,24 @@
+# Lokal rivojlantirish uchun PostgreSQL (TZ bo'yicha asosiy baza).
+# Ishga tushirish:  docker compose up -d
+# To'xtatish:       docker compose down   (ma'lumotlar saqlanadi)
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hardweb_pos_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: hardweb_pos
+    ports:
+      - '5432:5432'
+    volumes:
+      - hardweb_pos_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d hardweb_pos']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  hardweb_pos_data:
