@@ -9,9 +9,9 @@ function normalizePeriod(p?: string): ReportPeriod {
   return p === 'week' || p === 'month' ? p : 'day';
 }
 
-// Hisobotlar — faqat Direktor va Administrator ko'radi (TZ 5.5)
+// Hisobotlar — Direktor, Administrator va Kassir (kunlik tushum) ko'radi (TZ 5.5)
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.Director, UserRole.Admin)
+@Roles(UserRole.Director, UserRole.Admin, UserRole.Cashier)
 @Controller('reports')
 export class ReportsController {
   constructor(private readonly reports: ReportsService) {}

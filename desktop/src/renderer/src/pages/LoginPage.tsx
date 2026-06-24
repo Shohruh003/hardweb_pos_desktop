@@ -1,7 +1,47 @@
 import { useState } from 'react';
 import { useAuth } from '../state/auth';
+import { useDemoNav } from '../state/demoNav';
 import { Button } from '../components/ui';
+import { MOCK } from '../lib/api';
 import { getServerUrl, setServerUrl } from '../lib/config';
+
+// Mock/prezentatsiya uchun tez kirish ekrani — panel tanlash
+function DemoEntry() {
+  const { login } = useAuth();
+  const { openQueue } = useDemoNav();
+  const roles = [
+    { login: 'ofitsiant', label: 'Ofitsiant', desc: 'Buyurtma qabul qilish' },
+    { login: 'oshpaz', label: 'Oshxona (KDS)', desc: 'Tayyorlash ekrani' },
+    { login: 'kassir', label: 'Kassa', desc: 'To‘lov va chek' },
+    { login: 'admin', label: 'Administrator', desc: 'Menyu, stol, xodim' },
+    { login: 'direktor', label: 'Direktor', desc: 'Hisobotlar' },
+  ];
+  return (
+    <div className="h-full flex flex-col items-center justify-center bg-bg p-6">
+      <div className="text-primary font-extrabold text-3xl mb-1">HardWeb POS</div>
+      <div className="text-muted mb-8">Demo — qaysi panelni ko‘rmoqchisiz?</div>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 max-w-3xl">
+        {roles.map((r) => (
+          <button
+            key={r.login}
+            onClick={() => login(r.login, '1234')}
+            className="bg-surface border border-border rounded-2xl p-5 text-left hover:border-primary transition-colors w-56"
+          >
+            <div className="text-lg font-bold">{r.label}</div>
+            <div className="text-sm text-muted mt-1">{r.desc}</div>
+          </button>
+        ))}
+        <button
+          onClick={openQueue}
+          className="bg-surface border border-border rounded-2xl p-5 text-left hover:border-primary transition-colors w-56"
+        >
+          <div className="text-lg font-bold">Navbat ekrani</div>
+          <div className="text-sm text-muted mt-1">Mijozlar uchun tablo (TV)</div>
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function LoginPage() {
   const { login } = useAuth();
@@ -25,6 +65,9 @@ export function LoginPage() {
       setBusy(false);
     }
   }
+
+  // Mock rejimda — tez kirish ekrani
+  if (MOCK) return <DemoEntry />;
 
   return (
     <div className="h-full flex items-center justify-center bg-bg">

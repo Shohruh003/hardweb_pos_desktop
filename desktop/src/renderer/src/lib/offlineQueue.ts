@@ -6,6 +6,7 @@ export interface PendingOrder {
   localId: string; // lokal id (vaqt asosida)
   tableId: string;
   tableNumber?: number;
+  waiterId?: string;
   items: { menuItemId: string; quantity: number; note?: string }[];
   createdAt: number;
 }
@@ -57,6 +58,7 @@ export async function flushPending(): Promise<number> {
     try {
       await api.post('/orders', {
         tableId: p.tableId,
+        waiterId: p.waiterId,
         items: p.items,
       });
       sent++;

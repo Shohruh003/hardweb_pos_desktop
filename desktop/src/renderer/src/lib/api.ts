@@ -1,4 +1,8 @@
 import { getServerUrl } from './config';
+import { mockRequest } from './mock';
+
+// Prezentatsiya rejimi: VITE_MOCK=1 bo'lsa serverga emas, soxta ma'lumotlarga yo'naltiriladi
+export const MOCK = import.meta.env.VITE_MOCK === '1';
 
 let token: string | null = localStorage.getItem('token');
 
@@ -17,6 +21,8 @@ async function request<T>(
   path: string,
   body?: unknown,
 ): Promise<T> {
+  if (MOCK) return mockRequest<T>(method, path, body);
+
   const res = await fetch(`${getServerUrl()}/api${path}`, {
     method,
     headers: {

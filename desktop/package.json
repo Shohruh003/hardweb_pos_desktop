@@ -3,28 +3,54 @@
   "version": "0.1.0",
   "private": true,
   "description": "HardWeb POS terminal ilovasi (Electron + React)",
+  "author": "HardWeb",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
+    "dev:mock": "electron-vite dev --mode mock",
     "build": "electron-vite build",
-    "preview": "electron-vite preview"
+    "build:mock": "electron-vite build --mode mock",
+    "preview": "electron-vite preview",
+    "dist": "electron-vite build && electron-builder --win",
+    "dist:mock": "electron-vite build --mode mock && electron-builder --win"
   },
-  "dependencies": {
-    "@hardweb-pos/shared": "*",
-    "qrcode": "^1.5.4",
-    "socket.io-client": "^4.7.5"
+  "build": {
+    "appId": "com.hardweb.pos",
+    "productName": "HardWeb POS",
+    "electronVersion": "31.3.1",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "runAfterFinish": true,
+      "artifactName": "HardWeb-POS-Setup-${version}.${ext}"
+    }
   },
   "devDependencies": {
+    "@hardweb-pos/shared": "*",
     "@types/qrcode": "^1.5.5",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.19",
     "electron": "^31.3.1",
+    "electron-builder": "^26.0.0",
     "electron-vite": "^2.3.0",
     "postcss": "^8.4.40",
+    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "@types/react": "^18.3.3",
-    "@types/react-dom": "^18.3.0",
+    "socket.io-client": "^4.7.5",
     "tailwindcss": "^3.4.7",
     "typescript": "^5.5.4",
     "vite": "^5.3.5"

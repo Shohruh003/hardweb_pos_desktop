@@ -4,6 +4,7 @@ import {
   MenuItem,
   Table,
   TableStatus,
+  User,
 } from '@hardweb-pos/shared';
 import { AppShell } from '../components/AppShell';
 import { Button, formatSum } from '../components/ui';
@@ -19,31 +20,33 @@ interface CartItem {
   note?: string;
 }
 
-// Tarmoq xatosi (server topilmadi) — validatsiya xatosidan farqlash uchun
 function isNetworkError(e: unknown): boolean {
-  if (e instanceof TypeError) return true; // fetch "Failed to fetch"
+  if (e instanceof TypeError) return true;
   const msg = (e as Error)?.message?.toLowerCase() ?? '';
   return msg.includes('fetch') || msg.includes('network') || !navigator.onLine;
 }
 
-// Ofitsiant ekrani: stol tanlash -> menyudan taom qo'shish -> buyurtmani yuborish (TZ 5.1)
+// Ofitsiant ekrani (TZ 5.1): ofitsiant tanlash -> zal -> stol -> menyudan buyurtma
 export function WaiterPage() {
   const { online } = useConnectivity();
+  const [waiters, setWaiters] = useState<User[]>([]);
+  const [selectedWaiter, setSelectedWaiter] = useState<User | null>(null);
   const [tables, setTables] = useState<Table[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [activeCat, setActiveCat] = useState<string | null>(null);
+  const [selectedHall, setSelectedHall] = useState<string | null>(null);
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [sending, setSending] = useState(false);
   const [toast, setToast] = useState('');
 
   async function loadTables() {
-    const t = await api.get<Table[]>('/tables');
-    setTables(t);
+    setTables(await api.get<Table[]>('/tables'));
   }
 
   useEffect(() => {
+    api.get<User[]>('/users/waiters').then(setWaiters).catch(() => {});
     loadTables().catch(() => {});
     api.get<Category[]>('/menu/categories').then((c) => {
       setCategories(c);
@@ -52,63 +55,59 @@ export function WaiterPage() {
     api.get<MenuItem[]>('/menu/items').then(setMenu);
   }, []);
 
+  const halls = useMemo(
+    () => Array.from(new Set(tables.map((t) => t.hall))),
+    [tables],
+  );
   const shownItems = useMemo(
     () => menu.filter((m) => m.categoryId === activeCat),
     [menu, activeCat],
   );
-
   const total = cart.reduce((s, c) => s + c.price * c.quantity, 0);
+
+  function pickWaiter(w: User) {
+    setSelectedWaiter(w);
+    setSelectedHall(halls[0] ?? null);
+  }
 
   function addToCart(item: MenuItem) {
     setCart((prev) => {
       const found = prev.find((c) => c.menuItemId === item.id);
-      if (found) {
-        return prev.map((c) =>
-          c.menuItemId === item.id ? { ...c, quantity: c.quantity + 1 } : c,
-        );
-      }
-      return [
-        ...prev,
-        { menuItemId: item.id, name: item.name, price: Number(item.price), quantity: 1 },
-      ];
+      if (found) return prev.map((c) => (c.menuItemId === item.id ? { ...c, quantity: c.quantity + 1 } : c));
+      return [...prev, { menuItemId: item.id, name: item.name, price: Number(item.price), quantity: 1 }];
     });
   }
-
   function changeQty(id: string, delta: number) {
     setCart((prev) =>
-      prev
-        .map((c) =>
-          c.menuItemId === id ? { ...c, quantity: c.quantity + delta } : c,
-        )
-        .filter((c) => c.quantity > 0),
+      prev.map((c) => (c.menuItemId === id ? { ...c, quantity: c.quantity + delta } : c)).filter((c) => c.quantity > 0),
     );
   }
 
-  async function sendOrder() {
-    if (!selectedTable || cart.length === 0) return;
-    const items = cart.map((c) => ({
-      menuItemId: c.menuItemId,
-      quantity: c.quantity,
-      note: c.note,
-    }));
+  function finishSend(message: string, ms: number) {
+    setCart([]);
+    setSelectedTable(null);
+    setToast(message);
+    setTimeout(() => setToast(''), ms);
+  }
 
-    // Oflayn bo'lsa darhol lokal saqlash (TZ F-1.10)
+  async function sendOrder() {
+    if (!selectedTable || !selectedWaiter || cart.length === 0) return;
+    const items = cart.map((c) => ({ menuItemId: c.menuItemId, quantity: c.quantity, note: c.note }));
+
     if (!online) {
-      enqueue({ tableId: selectedTable.id, tableNumber: selectedTable.number, items });
-      finishSend('Oflayn saqlandi — ulanish tiklanganda yuboriladi', false);
+      enqueue({ tableId: selectedTable.id, tableNumber: selectedTable.number, waiterId: selectedWaiter.id, items });
+      finishSend('Oflayn saqlandi — ulanish tiklanganda yuboriladi', 3500);
       return;
     }
-
     setSending(true);
     try {
-      await api.post('/orders', { tableId: selectedTable.id, items });
+      await api.post('/orders', { tableId: selectedTable.id, waiterId: selectedWaiter.id, items });
       await loadTables();
-      finishSend('Buyurtma oshxonaga yuborildi ✓', true);
+      finishSend('Buyurtma oshxonaga yuborildi ✓', 2500);
     } catch (e) {
-      // Tarmoq xatosi bo'lsa — lokal saqlaymiz, aks holda xabar ko'rsatamiz
       if (isNetworkError(e)) {
-        enqueue({ tableId: selectedTable.id, tableNumber: selectedTable.number, items });
-        finishSend('Aloqa yo‘q — oflayn saqlandi, keyin yuboriladi', false);
+        enqueue({ tableId: selectedTable.id, tableNumber: selectedTable.number, waiterId: selectedWaiter.id, items });
+        finishSend('Aloqa yo‘q — oflayn saqlandi', 3500);
       } else {
         setToast((e as Error).message);
         setTimeout(() => setToast(''), 3000);
@@ -118,43 +117,69 @@ export function WaiterPage() {
     }
   }
 
-  function finishSend(message: string, clearOnly: boolean) {
-    setCart([]);
-    setSelectedTable(null);
-    setToast(message);
-    setTimeout(() => setToast(''), clearOnly ? 2500 : 3500);
+  // 1-qadam: ofitsiant o'zini tanlaydi
+  if (!selectedWaiter) {
+    return (
+      <AppShell title="Ofitsiant — kim ish boshlaydi?">
+        <div className="h-full overflow-auto p-6">
+          <div className="text-muted mb-4">Ro‘yxatdan o‘zingizni tanlang:</div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+            {waiters.map((w) => (
+              <button
+                key={w.id}
+                onClick={() => pickWaiter(w)}
+                className="bg-surface border border-border rounded-xl p-5 text-center hover:border-primary transition-colors"
+              >
+                <div className="w-12 h-12 rounded-full bg-primary/20 text-primary font-bold text-xl flex items-center justify-center mx-auto mb-2">
+                  {w.name.charAt(0)}
+                </div>
+                <div className="font-semibold">{w.name}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      </AppShell>
+    );
   }
 
-  // 1-bosqich: stol tanlash
+  // 2-qadam: zal va stol tanlash
   if (!selectedTable) {
+    const hallTables = tables.filter((t) => t.hall === selectedHall);
     return (
-      <AppShell title="Ofitsiant — stollar">
+      <AppShell title={`Ofitsiant — ${selectedWaiter.name}`}>
         <div className="h-full overflow-auto p-6">
           {toast && (
-            <div className="mb-4 px-4 py-2 rounded-lg bg-success/15 text-success font-semibold">
-              {toast}
-            </div>
+            <div className="mb-4 px-4 py-2 rounded-lg bg-success/15 text-success font-semibold">{toast}</div>
           )}
+          <div className="flex items-center gap-2 mb-4 flex-wrap">
+            <Button variant="ghost" onClick={() => setSelectedWaiter(null)}>← Ofitsiant</Button>
+            <span className="text-muted ml-2">Zal:</span>
+            {halls.map((h) => (
+              <button
+                key={h}
+                onClick={() => setSelectedHall(h)}
+                className={`px-4 py-2 rounded-lg font-semibold ${
+                  selectedHall === h ? 'bg-primary text-white' : 'bg-surface text-muted hover:text-text'
+                }`}
+              >
+                {h}
+              </button>
+            ))}
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-3">
-            {tables.map((t) => {
+            {hallTables.map((t) => {
               const busy = t.status !== TableStatus.Free;
               return (
                 <button
                   key={t.id}
                   onClick={() => setSelectedTable(t)}
                   className={`aspect-square rounded-xl border flex flex-col items-center justify-center transition-colors ${
-                    busy
-                      ? 'bg-warning/10 border-warning/40 hover:bg-warning/20'
-                      : 'bg-surface border-border hover:bg-surface-hover'
+                    busy ? 'bg-warning/10 border-warning/40 hover:bg-warning/20' : 'bg-surface border-border hover:bg-surface-hover'
                   }`}
                 >
                   <span className="text-2xl font-bold">№{t.number}</span>
-                  <span className="text-xs text-muted mt-1">{t.hall}</span>
-                  <span
-                    className={`text-xs mt-1 font-semibold ${
-                      busy ? 'text-warning' : 'text-success'
-                    }`}
-                  >
+                  <span className="text-xs text-muted mt-1">{t.capacity} kishi</span>
+                  <span className={`text-xs mt-1 font-semibold ${busy ? 'text-warning' : 'text-success'}`}>
                     {busy ? 'Band' : 'Bo‘sh'}
                   </span>
                 </button>
@@ -166,24 +191,19 @@ export function WaiterPage() {
     );
   }
 
-  // 2-bosqich: menyudan buyurtma yig'ish
+  // 3-qadam: menyudan buyurtma yig'ish
   return (
-    <AppShell title={`Ofitsiant — Stol №${selectedTable.number}`}>
+    <AppShell title={`${selectedWaiter.name} — Stol №${selectedTable.number}`}>
       <div className="h-full flex">
-        {/* Menyu */}
         <div className="flex-1 flex flex-col overflow-hidden">
           <div className="flex gap-2 p-4 border-b border-border overflow-x-auto">
-            <Button variant="ghost" onClick={() => setSelectedTable(null)}>
-              ← Stollar
-            </Button>
+            <Button variant="ghost" onClick={() => setSelectedTable(null)}>← Stollar</Button>
             {categories.map((c) => (
               <button
                 key={c.id}
                 onClick={() => setActiveCat(c.id)}
                 className={`px-4 py-2 rounded-lg font-semibold whitespace-nowrap ${
-                  activeCat === c.id
-                    ? 'bg-primary text-white'
-                    : 'bg-surface text-muted hover:text-text'
+                  activeCat === c.id ? 'bg-primary text-white' : 'bg-surface text-muted hover:text-text'
                 }`}
               >
                 {c.name}
@@ -199,53 +219,29 @@ export function WaiterPage() {
                   className="bg-surface border border-border rounded-xl p-4 text-left hover:bg-surface-hover transition-colors"
                 >
                   <div className="font-semibold">{item.name}</div>
-                  <div className="text-primary font-bold mt-2">
-                    {formatSum(Number(item.price))}
-                  </div>
+                  <div className="text-primary font-bold mt-2">{formatSum(Number(item.price))}</div>
                 </button>
               ))}
             </div>
           </div>
         </div>
 
-        {/* Buyurtma savati */}
         <aside className="w-[360px] bg-surface border-l border-border flex flex-col">
-          <div className="px-5 py-4 border-b border-border font-bold text-lg">
-            Buyurtma
-          </div>
+          <div className="px-5 py-4 border-b border-border font-bold text-lg">Buyurtma</div>
           <div className="flex-1 overflow-auto p-4 space-y-2">
             {cart.length === 0 ? (
-              <div className="text-muted text-sm text-center mt-8">
-                Taom tanlang
-              </div>
+              <div className="text-muted text-sm text-center mt-8">Taom tanlang</div>
             ) : (
               cart.map((c) => (
-                <div
-                  key={c.menuItemId}
-                  className="flex items-center justify-between bg-bg rounded-lg p-2.5"
-                >
+                <div key={c.menuItemId} className="flex items-center justify-between bg-bg rounded-lg p-2.5">
                   <div className="min-w-0">
                     <div className="font-semibold truncate">{c.name}</div>
-                    <div className="text-xs text-muted">
-                      {formatSum(c.price)}
-                    </div>
+                    <div className="text-xs text-muted">{formatSum(c.price)}</div>
                   </div>
                   <div className="flex items-center gap-2 ml-2">
-                    <button
-                      onClick={() => changeQty(c.menuItemId, -1)}
-                      className="w-7 h-7 rounded bg-surface border border-border font-bold"
-                    >
-                      −
-                    </button>
-                    <span className="w-6 text-center font-semibold">
-                      {c.quantity}
-                    </span>
-                    <button
-                      onClick={() => changeQty(c.menuItemId, 1)}
-                      className="w-7 h-7 rounded bg-surface border border-border font-bold"
-                    >
-                      +
-                    </button>
+                    <button onClick={() => changeQty(c.menuItemId, -1)} className="w-7 h-7 rounded bg-surface border border-border font-bold">−</button>
+                    <span className="w-6 text-center font-semibold">{c.quantity}</span>
+                    <button onClick={() => changeQty(c.menuItemId, 1)} className="w-7 h-7 rounded bg-surface border border-border font-bold">+</button>
                   </div>
                 </div>
               ))
@@ -256,11 +252,7 @@ export function WaiterPage() {
               <span className="text-muted">Jami</span>
               <span className="font-bold text-lg">{formatSum(total)}</span>
             </div>
-            <Button
-              className="w-full"
-              disabled={cart.length === 0 || sending}
-              onClick={sendOrder}
-            >
+            <Button className="w-full" disabled={cart.length === 0 || sending} onClick={sendOrder}>
               {sending ? 'Yuborilmoqda...' : 'Oshxonaga yuborish'}
             </Button>
           </div>

@@ -34,7 +34,8 @@ export class OrdersController {
 
   @Post()
   create(@Body() dto: CreateOrderDto, @Request() req: any) {
-    return this.orders.create(dto, req.user.id);
+    // Terminal tanlagan ofitsiant bo'lsa o'sha, aks holda kirgan foydalanuvchi
+    return this.orders.create(dto, dto.waiterId || req.user.id);
   }
 
   @Patch(':id/status')

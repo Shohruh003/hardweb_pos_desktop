@@ -54,6 +54,24 @@ export class UsersController {
     return list.map(({ passwordHash, ...rest }) => rest);
   }
 
+  // Ofitsiantlar ro'yxati — ofitsiant terminali kim ish boshlashini tanlash uchun.
+  // Har qanday tizimga kirgan foydalanuvchi ko'ra oladi (admin roli shart emas).
+  @Roles(
+    UserRole.Waiter,
+    UserRole.Cook,
+    UserRole.Cashier,
+    UserRole.Admin,
+    UserRole.Director,
+  )
+  @Get('waiters')
+  async findWaiters() {
+    const list = await this.users.find({
+      where: { role: UserRole.Waiter, active: true },
+      order: { name: 'ASC' },
+    });
+    return list.map((u) => ({ id: u.id, name: u.name, role: u.role, login: u.login, active: u.active }));
+  }
+
   @Post()
   async create(@Body() dto: CreateUserDto) {
     const passwordHash = await bcrypt.hash(dto.password, 10);

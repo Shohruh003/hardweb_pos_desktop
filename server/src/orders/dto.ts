@@ -30,6 +30,12 @@ export class CreateOrderDto {
   @IsUUID()
   tableId: string;
 
+  // Buyurtmani qaysi ofitsiant qabul qildi (terminal ro'yxatdan tanlaydi).
+  // Berilmasa, tizimga kirgan foydalanuvchi hisoblanadi.
+  @IsOptional()
+  @IsUUID()
+  waiterId?: string;
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => CreateOrderItemDto)

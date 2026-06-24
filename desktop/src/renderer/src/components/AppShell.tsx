@@ -1,7 +1,9 @@
 import React from 'react';
 import { useAuth } from '../state/auth';
 import { useConnectivity } from '../state/connectivity';
+import { MOCK } from '../lib/api';
 import { Button } from './ui';
+import { DemoSwitcher } from './DemoSwitcher';
 
 const ROLE_LABEL: Record<string, string> = {
   ofitsiant: 'Ofitsiant',
@@ -29,6 +31,10 @@ export function AppShell({
           <span className="text-muted">/</span>
           <span className="font-semibold">{title}</span>
         </div>
+
+        {/* Demo: panel almashtirgich (faqat mock rejimda) */}
+        {MOCK && <DemoSwitcher />}
+
         <div className="flex items-center gap-4">
           {/* Ulanish holati va kutilayotgan buyurtmalar (TZ F-1.10) */}
           <div className="flex items-center gap-2">

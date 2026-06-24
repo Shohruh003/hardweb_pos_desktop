@@ -4,6 +4,7 @@ import {
   OrderStatus,
   PaymentType,
   Receipt,
+  ReportSummary,
   SOCKET_EVENTS,
 } from '@hardweb-pos/shared';
 import { AppShell } from '../components/AppShell';
@@ -29,9 +30,12 @@ export function CashierPage() {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [exciseInputs, setExciseInputs] = useState<Record<string, string>>({});
   const [savingExcise, setSavingExcise] = useState(false);
+  const [summary, setSummary] = useState<ReportSummary | null>(null);
 
   function refresh() {
     api.get<Order[]>('/orders').then(setOrders).catch(() => {});
+    // Bugungi tushum / smena yakuni (TZ: kassir kunlik tushumni ko'radi)
+    api.get<ReportSummary>('/reports/summary?period=day').then(setSummary).catch(() => {});
   }
 
   useEffect(() => {
@@ -110,9 +114,23 @@ export function CashierPage() {
     }
   }
 
+  const payLabel: Record<string, string> = { naqd: 'Naqd', karta: 'Karta', qr: 'QR' };
+
   return (
     <AppShell title="Kassa">
-      <div className="h-full flex">
+      <div className="h-full flex flex-col">
+        {/* Bugungi tushum / smena yakuni */}
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-border overflow-x-auto">
+          <SummaryStat label="Bugungi tushum" value={formatSum(summary?.revenue ?? 0)} accent />
+          <SummaryStat label="Yopilgan cheklar" value={String(summary?.ordersCount ?? 0)} />
+          <SummaryStat label="O‘rtacha chek" value={formatSum(summary?.avgCheck ?? 0)} />
+          <div className="h-8 w-px bg-border mx-1" />
+          {(summary?.paymentBreakdown ?? []).map((p) => (
+            <SummaryStat key={p.type} label={payLabel[p.type] || p.type} value={formatSum(p.amount)} />
+          ))}
+        </div>
+
+      <div className="flex-1 flex min-h-0">
         {/* Faol hisoblar ro'yxati */}
         <div className="w-[320px] border-r border-border overflow-auto">
           <div className="px-4 py-3 font-bold border-b border-border">
@@ -285,11 +303,29 @@ export function CashierPage() {
           )}
         </div>
       </div>
+      </div>
 
       {receipt && (
         <ReceiptPreview receipt={receipt} onClose={() => setReceipt(null)} />
       )}
     </AppShell>
+  );
+}
+
+function SummaryStat({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+}) {
+  return (
+    <div className="px-3 whitespace-nowrap">
+      <div className="text-xs text-muted">{label}</div>
+      <div className={`font-bold ${accent ? 'text-primary text-lg' : ''}`}>{value}</div>
+    </div>
   );
 }
 
