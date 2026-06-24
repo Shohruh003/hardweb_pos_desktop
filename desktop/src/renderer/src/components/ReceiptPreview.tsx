@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Receipt, PaymentType } from '@hardweb-pos/shared';
 import { Button, formatSum } from './ui';
 
@@ -15,6 +16,22 @@ export function ReceiptPreview({
   receipt: Receipt;
   onClose: () => void;
 }) {
+  const [printMsg, setPrintMsg] = useState('');
+
+  async function print() {
+    setPrintMsg('Chop etilmoqda...');
+    try {
+      const res = await window.hardweb.printer.printReceipt(receipt);
+      setPrintMsg(res.message);
+      // Printer sozlanmagan bo'lsa — brauzer chopiga tushamiz
+      if (!res.ok && res.message.includes('sozlanmagan')) {
+        window.print();
+      }
+    } catch {
+      window.print(); // Electron tashqarisida yoki xato bo'lsa
+    }
+  }
+
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
       <div className="bg-surface border border-border rounded-2xl w-[380px] max-h-full flex flex-col">
@@ -88,8 +105,11 @@ export function ReceiptPreview({
           </div>
         </div>
 
+        <div className="px-4 pt-2 text-center text-sm text-muted min-h-[20px]">
+          {printMsg}
+        </div>
         <div className="p-4 border-t border-border flex gap-2">
-          <Button variant="ghost" className="flex-1" onClick={() => window.print()}>
+          <Button variant="ghost" className="flex-1" onClick={print}>
             Chop etish
           </Button>
           <Button className="flex-1" onClick={onClose}>

@@ -3,13 +3,15 @@ import { AppShell } from '../components/AppShell';
 import { MenuTab } from './admin/MenuTab';
 import { TablesTab } from './admin/TablesTab';
 import { StaffTab } from './admin/StaffTab';
+import { DevicesTab } from './admin/DevicesTab';
 
-type Tab = 'menu' | 'tables' | 'staff';
+type Tab = 'menu' | 'tables' | 'staff' | 'devices';
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'menu', label: 'Menyu' },
   { key: 'tables', label: 'Stollar' },
   { key: 'staff', label: 'Xodimlar' },
+  { key: 'devices', label: 'Qurilmalar' },
 ];
 
 // Administrator paneli (TZ 5.4)
@@ -38,6 +40,7 @@ export function AdminPage() {
           {tab === 'menu' && <MenuTab />}
           {tab === 'tables' && <TablesTab />}
           {tab === 'staff' && <StaffTab />}
+          {tab === 'devices' && <DevicesTab />}
         </div>
       </div>
     </AppShell>

@@ -1,5 +1,13 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import { join } from 'path';
+import {
+  getConfig,
+  printReceipt,
+  setConfig,
+  testPrint,
+  PrinterConfig,
+} from './printer';
+import type { Receipt } from '@hardweb-pos/shared';
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -25,6 +33,16 @@ function createWindow(): void {
     win.loadFile(join(__dirname, '../renderer/index.html'));
   }
 }
+
+// Printer IPC (renderer -> main): chek chop etish va sozlamalar
+ipcMain.handle('printer:print-receipt', (_e, receipt: Receipt) =>
+  printReceipt(receipt),
+);
+ipcMain.handle('printer:test', () => testPrint());
+ipcMain.handle('printer:get-config', () => getConfig());
+ipcMain.handle('printer:set-config', (_e, cfg: Partial<PrinterConfig>) =>
+  setConfig(cfg),
+);
 
 app.whenReady().then(() => {
   createWindow();
