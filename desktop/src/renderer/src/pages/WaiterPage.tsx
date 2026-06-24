@@ -8,6 +8,8 @@ import {
 import { AppShell } from '../components/AppShell';
 import { Button, formatSum } from '../components/ui';
 import { api } from '../lib/api';
+import { enqueue } from '../lib/offlineQueue';
+import { useConnectivity } from '../state/connectivity';
 
 interface CartItem {
   menuItemId: string;
@@ -17,8 +19,16 @@ interface CartItem {
   note?: string;
 }
 
+// Tarmoq xatosi (server topilmadi) — validatsiya xatosidan farqlash uchun
+function isNetworkError(e: unknown): boolean {
+  if (e instanceof TypeError) return true; // fetch "Failed to fetch"
+  const msg = (e as Error)?.message?.toLowerCase() ?? '';
+  return msg.includes('fetch') || msg.includes('network') || !navigator.onLine;
+}
+
 // Ofitsiant ekrani: stol tanlash -> menyudan taom qo'shish -> buyurtmani yuborish (TZ 5.1)
 export function WaiterPage() {
+  const { online } = useConnectivity();
   const [tables, setTables] = useState<Table[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [menu, setMenu] = useState<MenuItem[]>([]);
@@ -76,27 +86,43 @@ export function WaiterPage() {
 
   async function sendOrder() {
     if (!selectedTable || cart.length === 0) return;
+    const items = cart.map((c) => ({
+      menuItemId: c.menuItemId,
+      quantity: c.quantity,
+      note: c.note,
+    }));
+
+    // Oflayn bo'lsa darhol lokal saqlash (TZ F-1.10)
+    if (!online) {
+      enqueue({ tableId: selectedTable.id, tableNumber: selectedTable.number, items });
+      finishSend('Oflayn saqlandi — ulanish tiklanganda yuboriladi', false);
+      return;
+    }
+
     setSending(true);
     try {
-      await api.post('/orders', {
-        tableId: selectedTable.id,
-        items: cart.map((c) => ({
-          menuItemId: c.menuItemId,
-          quantity: c.quantity,
-          note: c.note,
-        })),
-      });
-      setCart([]);
-      setSelectedTable(null);
+      await api.post('/orders', { tableId: selectedTable.id, items });
       await loadTables();
-      setToast('Buyurtma oshxonaga yuborildi ✓');
-      setTimeout(() => setToast(''), 2500);
+      finishSend('Buyurtma oshxonaga yuborildi ✓', true);
     } catch (e) {
-      setToast((e as Error).message);
-      setTimeout(() => setToast(''), 3000);
+      // Tarmoq xatosi bo'lsa — lokal saqlaymiz, aks holda xabar ko'rsatamiz
+      if (isNetworkError(e)) {
+        enqueue({ tableId: selectedTable.id, tableNumber: selectedTable.number, items });
+        finishSend('Aloqa yo‘q — oflayn saqlandi, keyin yuboriladi', false);
+      } else {
+        setToast((e as Error).message);
+        setTimeout(() => setToast(''), 3000);
+      }
     } finally {
       setSending(false);
     }
+  }
+
+  function finishSend(message: string, clearOnly: boolean) {
+    setCart([]);
+    setSelectedTable(null);
+    setToast(message);
+    setTimeout(() => setToast(''), clearOnly ? 2500 : 3500);
   }
 
   // 1-bosqich: stol tanlash
