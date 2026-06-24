@@ -11,7 +11,7 @@ export class PaymentEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'order_id' })
+  @Column({ name: 'order_id', type: 'uuid' })
   orderId: string;
 
   @Column({ type: 'numeric', precision: 12, scale: 2 })
@@ -20,7 +20,7 @@ export class PaymentEntity {
   @Column({ type: 'enum', enum: PaymentType })
   type: PaymentType;
 
-  @Column({ name: 'cashier_id' })
+  @Column({ name: 'cashier_id', type: 'uuid' })
   cashierId: string;
 
   @CreateDateColumn({ name: 'created_at' })

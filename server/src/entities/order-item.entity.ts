@@ -13,7 +13,7 @@ export class OrderItemEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'order_id' })
+  @Column({ name: 'order_id', type: 'uuid' })
   orderId: string;
 
   @ManyToOne(() => OrderEntity, (order) => order.items, {
@@ -22,7 +22,7 @@ export class OrderItemEntity {
   @JoinColumn({ name: 'order_id' })
   order: OrderEntity;
 
-  @Column({ name: 'menu_item_id' })
+  @Column({ name: 'menu_item_id', type: 'uuid' })
   menuItemId: string;
 
   // Buyurtma payti taom nomi va narxini saqlaymiz (menyu keyin o'zgarsa ham chek to'g'ri)

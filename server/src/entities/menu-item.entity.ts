@@ -11,7 +11,7 @@ export class MenuItemEntity {
   @Column({ type: 'numeric', precision: 12, scale: 2 })
   price: number;
 
-  @Column({ name: 'category_id' })
+  @Column({ name: 'category_id', type: 'uuid' })
   categoryId: string;
 
   @Column({ nullable: true, type: 'text' })

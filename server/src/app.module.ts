@@ -9,6 +9,7 @@ import { MenuModule } from './menu/menu.module';
 import { OrdersModule } from './orders/orders.module';
 import { UsersModule } from './users/users.module';
 import { QueueModule } from './queue/queue.module';
+import { ReportsModule } from './reports/reports.module';
 import { SeedModule } from './seed/seed.module';
 
 @Module({
@@ -33,6 +34,7 @@ import { SeedModule } from './seed/seed.module';
     OrdersModule,
     UsersModule,
     QueueModule,
+    ReportsModule,
     SeedModule,
   ],
 })

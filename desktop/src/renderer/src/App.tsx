@@ -5,7 +5,7 @@ import { WaiterPage } from './pages/WaiterPage';
 import { KdsPage } from './pages/KdsPage';
 import { CashierPage } from './pages/CashierPage';
 import { AdminPage } from './pages/AdminPage';
-import { PlaceholderPage } from './pages/PlaceholderPage';
+import { DirectorPage } from './pages/DirectorPage';
 
 // Login qilingan foydalanuvchi roliga qarab kerakli ekran ochiladi (TZ: bitta ilova, rolga qarab)
 export function App() {
@@ -23,13 +23,7 @@ export function App() {
     case UserRole.Admin:
       return <AdminPage />;
     case UserRole.Director:
-      return (
-        <PlaceholderPage
-          title="Direktor hisobotlari"
-          bosqich="5-bosqich"
-          tavsif="Bulut subdomeni orqali tushum, statistika va reytinglar (masofadan)."
-        />
-      );
+      return <DirectorPage />;
     default:
       return <LoginPage />;
   }

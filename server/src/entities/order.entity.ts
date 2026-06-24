@@ -13,10 +13,10 @@ export class OrderEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'table_id' })
+  @Column({ name: 'table_id', type: 'uuid' })
   tableId: string;
 
-  @Column({ name: 'waiter_id' })
+  @Column({ name: 'waiter_id', type: 'uuid' })
   waiterId: string;
 
   @Column({ type: 'enum', enum: OrderStatus, default: OrderStatus.Accepted })
