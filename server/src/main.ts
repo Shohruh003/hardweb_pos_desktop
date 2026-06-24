@@ -12,7 +12,8 @@ async function bootstrap() {
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, transform: true }),
   );
-  app.setGlobalPrefix('api');
+  // 'queue' marshruti TV/brauzer uchun ildizda qoladi (api prefiksisiz)
+  app.setGlobalPrefix('api', { exclude: ['queue', 'queue/data'] });
 
   const port = process.env.PORT ? Number(process.env.PORT) : 3000;
   // 0.0.0.0 — boshqa kompyuterlardagi terminallar ham ulana olishi uchun

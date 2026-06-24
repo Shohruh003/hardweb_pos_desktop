@@ -8,6 +8,7 @@ import { TablesModule } from './tables/tables.module';
 import { MenuModule } from './menu/menu.module';
 import { OrdersModule } from './orders/orders.module';
 import { UsersModule } from './users/users.module';
+import { QueueModule } from './queue/queue.module';
 import { SeedModule } from './seed/seed.module';
 
 @Module({
@@ -31,6 +32,7 @@ import { SeedModule } from './seed/seed.module';
     MenuModule,
     OrdersModule,
     UsersModule,
+    QueueModule,
     SeedModule,
   ],
 })

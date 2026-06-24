@@ -25,5 +25,6 @@ import { OrdersGateway } from './orders.gateway';
   ],
   controllers: [OrdersController],
   providers: [OrdersService, OrdersGateway],
+  exports: [OrdersService],
 })
 export class OrdersModule {}

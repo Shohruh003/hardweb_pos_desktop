@@ -58,11 +58,21 @@ hardweb_pos_desktop/
 ## Bosqichlar (TZ yo'l xaritasi bo'yicha)
 
 1. ✅ Backend + ma'lumotlar bazasi + WebSocket (asos)
-2. ⬜ Ofitsiant ekrani + offline rejim
-3. ⬜ Oshxona ekrani (KDS) + Kassa + Chek printeri
-4. ⬜ Navbat ekrani + Administrator paneli
+2. 🟡 Ofitsiant ekrani ✅ · offline rejim ⬜
+3. 🟡 Oshxona ekrani (KDS) ✅ · Kassa + chek preview ✅ · ESC/POS fizik printer ⬜
+4. ✅ Navbat ekrani (`/queue`) + Administrator paneli
 5. ⬜ Bulut sinxronlash (subdomen) + Direktor hisobotlari
 6. ⬜ Fiskal modul: QR-kodli chek + aksiz skaneri
+
+### Navbat ekranini ochish (TV/brauzer)
+
+Server ishga tushgach, istalgan TV yoki brauzerda:
+
+```
+http://<server-ip>:3000/queue
+```
+
+Ilova o'rnatish va internet kerak emas — socket.io serverning o'zidan keladi.
 
 ## Dizayn
 
