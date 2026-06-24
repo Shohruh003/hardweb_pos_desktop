@@ -66,6 +66,26 @@ class EscPosBuilder {
     return this.raw(new Array(n).fill(LF));
   }
 
+  // Native QR-kod chop etish (ESC/POS GS ( k) — fiskal QR uchun (TZ F-8.2)
+  qr(data: string) {
+    const store = Buffer.from(data, 'ascii');
+    const len = store.length + 3;
+    const pL = len & 0xff;
+    const pH = (len >> 8) & 0xff;
+    // Model: QR Model 2
+    this.raw([GS, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00]);
+    // Modul o'lchami
+    this.raw([GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, 0x06]);
+    // Xato tuzatish darajasi
+    this.raw([GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, 0x31]);
+    // Ma'lumotni saqlash
+    this.raw([GS, 0x28, 0x6b, pL, pH, 0x31, 0x50, 0x30]);
+    this.chunks.push(store);
+    // Chop etish
+    this.raw([GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30]);
+    return this;
+  }
+
   cut() {
     // Qog'ozni kesish (qisman kesish)
     return this.raw([GS, 0x56, 0x42, 0x00]);
@@ -110,8 +130,14 @@ export function buildReceiptBuffer(receipt: Receipt, width = 32): Buffer {
   b.bold(true).size(true).cols('JAMI', money(receipt.total)).size(false).bold(false);
   b.line(`To'lov: ${receipt.paymentType}`);
 
-  // Fiskal QR uchun joy (2-bosqich — TZ F-6.7)
-  b.feed(1).align('center').line('[ Fiskal QR uchun joy ]');
+  // Fiskal QR (TZ F-8.2) — yoqilgan bo'lsa native QR, aks holda joy
+  b.feed(1).align('center');
+  if (receipt.fiscalQr && receipt.fiscalNumber) {
+    b.qr(receipt.fiscalQr);
+    b.line(`Fiskal chek N ${receipt.fiscalNumber}`);
+  } else {
+    b.line('[ Fiskal QR uchun joy ]');
+  }
 
   b.feed(1).line('Rahmat! Yana keling').feed(3).cut();
   return b.build();

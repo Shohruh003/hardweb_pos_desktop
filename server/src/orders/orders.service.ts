@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Not, Repository } from 'typeorm';
 
 import {
+  FiscalDocEntity,
   MenuItemEntity,
   OrderEntity,
   OrderItemEntity,
@@ -37,6 +38,8 @@ export class OrdersService {
     private readonly payments: Repository<PaymentEntity>,
     @InjectRepository(UserEntity)
     private readonly users: Repository<UserEntity>,
+    @InjectRepository(FiscalDocEntity)
+    private readonly fiscalDocs: Repository<FiscalDocEntity>,
     private readonly dataSource: DataSource,
     private readonly gateway: OrdersGateway,
   ) {}
@@ -155,6 +158,12 @@ export class OrdersService {
     const cashier = await this.users.findOne({ where: { id: cashierId } });
     const waiter = await this.users.findOne({ where: { id: order.waiterId } });
 
+    // Fiskal hujjat (TZ 8.1). Hozir demo generator — real OFD ulanganda shu yerda
+    // soliq operatori API'siga so'rov yuboriladi va fiskal_raqam/QR o'shandan olinadi.
+    let fiscalNumber: string | undefined;
+    let fiscalQr: string | undefined;
+    const fiscalEnabled = process.env.FISCAL_ENABLED !== 'false';
+
     await this.dataSource.transaction(async (manager) => {
       await manager.save(
         manager.create(PaymentEntity, {
@@ -171,6 +180,22 @@ export class OrdersService {
       if (table) {
         table.status = TableStatus.Free; // stol bo'shadi (TZ F-3.5)
         await manager.save(table);
+      }
+
+      if (fiscalEnabled) {
+        const count = await manager.count(FiscalDocEntity);
+        fiscalNumber = String(count + 1).padStart(10, '0');
+        // QR payload — real OFD'da bu soliq tekshiruv URL'i bo'ladi
+        fiscalQr =
+          `https://ofd.soliq.uz/check?fn=${fiscalNumber}` +
+          `&sum=${total}&t=${order.closedAt!.getTime()}`;
+        await manager.save(
+          manager.create(FiscalDocEntity, {
+            orderId: order.id,
+            fiscalNumber,
+            qrCode: fiscalQr,
+          }),
+        );
       }
     });
 
@@ -193,7 +218,9 @@ export class OrdersService {
       total,
       paymentType: dto.type,
       createdAt: new Date().toISOString(),
-      fiscalQrPlaceholder: true, // 2-bosqich: QR shu yerga joylashadi (TZ F-6.7)
+      fiscalQrPlaceholder: !fiscalEnabled, // fiskal o'chiq bo'lsa faqat joy ko'rsatiladi
+      fiscalNumber,
+      fiscalQr,
     };
 
     const dtoOut = this.toDto(order, table?.number);

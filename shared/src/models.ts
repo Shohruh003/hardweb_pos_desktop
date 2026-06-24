@@ -135,6 +135,9 @@ export interface Receipt {
   total: number; // to'lanadigan yakuniy summa
   paymentType: PaymentType;
   createdAt: string;
-  // Fiskal QR uchun joy (2-bosqich) — TZ F-6.7
+  // Fiskal QR uchun joy (TZ F-6.7)
   fiscalQrPlaceholder: boolean;
+  // Fiskal modul yoqilgan bo'lsa to'ldiriladi (TZ 8.1)
+  fiscalNumber?: string;
+  fiscalQr?: string; // QR ichidagi ma'lumot (chekda QR rasm sifatida chiziladi)
 }

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import QRCode from 'qrcode';
 import { Receipt, PaymentType } from '@hardweb-pos/shared';
 import { Button, formatSum } from './ui';
 
@@ -17,6 +18,16 @@ export function ReceiptPreview({
   onClose: () => void;
 }) {
   const [printMsg, setPrintMsg] = useState('');
+  const [qrImg, setQrImg] = useState('');
+
+  // Fiskal QR ma'lumotidan QR rasm yaratish (TZ F-8.2)
+  useEffect(() => {
+    if (receipt.fiscalQr) {
+      QRCode.toDataURL(receipt.fiscalQr, { margin: 1, width: 120 })
+        .then(setQrImg)
+        .catch(() => setQrImg(''));
+    }
+  }, [receipt.fiscalQr]);
 
   async function print() {
     setPrintMsg('Chop etilmoqda...');
@@ -91,13 +102,21 @@ export function ReceiptPreview({
               To‘lov turi: {PAYMENT_LABEL[receipt.paymentType]}
             </div>
 
-            {/* Fiskal QR uchun joy (2-bosqich) — TZ F-6.7 */}
+            {/* Fiskal QR (TZ F-8.2) — yoqilgan bo'lsa haqiqiy QR */}
+            {receipt.fiscalNumber && (
+              <div className="mt-3 flex flex-col items-center">
+                {qrImg && <img src={qrImg} alt="Fiskal QR" className="w-24 h-24" />}
+                <div className="text-[10px] mt-1">
+                  Fiskal chek № {receipt.fiscalNumber}
+                </div>
+              </div>
+            )}
             {receipt.fiscalQrPlaceholder && (
               <div className="mt-3 flex flex-col items-center">
                 <div className="w-20 h-20 border-2 border-dashed border-black/40 flex items-center justify-center text-[9px] text-center text-black/50">
                   Fiskal QR
                   <br />
-                  (2-bosqich)
+                  (o‘chirilgan)
                 </div>
               </div>
             )}
