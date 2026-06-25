@@ -8,9 +8,17 @@ import {
 } from '@hardweb-pos/shared';
 import { AppShell } from '../components/AppShell';
 import { Button, formatSum } from '../components/ui';
+import { MenuTile } from '../components/MenuTile';
+import { FeedbackModal, FeedbackVariant } from '../components/FeedbackModal';
 import { api } from '../lib/api';
 import { enqueue } from '../lib/offlineQueue';
 import { useConnectivity } from '../state/connectivity';
+
+interface Feedback {
+  variant: FeedbackVariant;
+  title: string;
+  subtitle?: string;
+}
 
 interface CartItem {
   menuItemId: string;
@@ -39,7 +47,7 @@ export function WaiterPage() {
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [sending, setSending] = useState(false);
-  const [toast, setToast] = useState('');
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
 
   async function loadTables() {
     setTables(await api.get<Table[]>('/tables'));
@@ -83,39 +91,48 @@ export function WaiterPage() {
     );
   }
 
-  function finishSend(message: string, ms: number) {
+  function finishSend(fb: Feedback) {
     setCart([]);
     setSelectedTable(null);
-    setToast(message);
-    setTimeout(() => setToast(''), ms);
+    setFeedback(fb);
   }
 
   async function sendOrder() {
     if (!selectedTable || !selectedWaiter || cart.length === 0) return;
+    const tableNo = selectedTable.number;
     const items = cart.map((c) => ({ menuItemId: c.menuItemId, quantity: c.quantity, note: c.note }));
 
     if (!online) {
       enqueue({ tableId: selectedTable.id, tableNumber: selectedTable.number, waiterId: selectedWaiter.id, items });
-      finishSend('Oflayn saqlandi — ulanish tiklanganda yuboriladi', 3500);
+      finishSend({ variant: 'info', title: 'Oflayn saqlandi', subtitle: 'Ulanish tiklanganda avtomatik yuboriladi' });
       return;
     }
     setSending(true);
     try {
       await api.post('/orders', { tableId: selectedTable.id, waiterId: selectedWaiter.id, items });
       await loadTables();
-      finishSend('Buyurtma oshxonaga yuborildi ✓', 2500);
+      finishSend({ variant: 'success', title: 'Buyurtma yuborildi!', subtitle: `Stol №${tableNo} — oshxonaga uzatildi` });
     } catch (e) {
       if (isNetworkError(e)) {
         enqueue({ tableId: selectedTable.id, tableNumber: selectedTable.number, waiterId: selectedWaiter.id, items });
-        finishSend('Aloqa yo‘q — oflayn saqlandi', 3500);
+        finishSend({ variant: 'info', title: 'Aloqa yo‘q', subtitle: 'Oflayn saqlandi, keyin yuboriladi' });
       } else {
-        setToast((e as Error).message);
-        setTimeout(() => setToast(''), 3000);
+        setFeedback({ variant: 'warning', title: 'Xatolik', subtitle: (e as Error).message });
       }
     } finally {
       setSending(false);
     }
   }
+
+  // Barcha bosqichlarda ko'rinadigan feedback modali
+  const feedbackModal = feedback && (
+    <FeedbackModal
+      variant={feedback.variant}
+      title={feedback.title}
+      subtitle={feedback.subtitle}
+      onClose={() => setFeedback(null)}
+    />
+  );
 
   // 1-qadam: ofitsiant o'zini tanlaydi
   if (!selectedWaiter) {
@@ -128,7 +145,7 @@ export function WaiterPage() {
               <button
                 key={w.id}
                 onClick={() => pickWaiter(w)}
-                className="bg-surface border border-border rounded-xl p-5 text-center hover:border-primary transition-colors"
+                className="bg-surface border border-border rounded-2xl p-5 text-center hover:border-primary lift animate-card-in"
               >
                 <div className="w-12 h-12 rounded-full bg-primary/20 text-primary font-bold text-xl flex items-center justify-center mx-auto mb-2">
                   {w.name.charAt(0)}
@@ -147,10 +164,8 @@ export function WaiterPage() {
     const hallTables = tables.filter((t) => t.hall === selectedHall);
     return (
       <AppShell title={`Ofitsiant — ${selectedWaiter.name}`}>
+        {feedbackModal}
         <div className="h-full overflow-auto p-6">
-          {toast && (
-            <div className="mb-4 px-4 py-2 rounded-lg bg-success/15 text-success font-semibold">{toast}</div>
-          )}
           <div className="flex items-center gap-2 mb-4 flex-wrap">
             <Button variant="ghost" onClick={() => setSelectedWaiter(null)}>← Ofitsiant</Button>
             <span className="text-muted ml-2">Zal:</span>
@@ -173,7 +188,7 @@ export function WaiterPage() {
                 <button
                   key={t.id}
                   onClick={() => setSelectedTable(t)}
-                  className={`aspect-square rounded-xl border flex flex-col items-center justify-center transition-colors ${
+                  className={`aspect-square rounded-2xl border flex flex-col items-center justify-center lift animate-card-in ${
                     busy ? 'bg-warning/10 border-warning/40 hover:bg-warning/20' : 'bg-surface border-border hover:bg-surface-hover'
                   }`}
                 >
@@ -194,6 +209,7 @@ export function WaiterPage() {
   // 3-qadam: menyudan buyurtma yig'ish
   return (
     <AppShell title={`${selectedWaiter.name} — Stol №${selectedTable.number}`}>
+      {feedbackModal}
       <div className="h-full flex">
         <div className="flex-1 flex flex-col overflow-hidden">
           <div className="flex gap-2 p-4 border-b border-border overflow-x-auto">
@@ -216,10 +232,13 @@ export function WaiterPage() {
                 <button
                   key={item.id}
                   onClick={() => addToCart(item)}
-                  className="bg-surface border border-border rounded-xl p-4 text-left hover:bg-surface-hover transition-colors"
+                  className="group bg-surface border border-border rounded-2xl p-2.5 text-left lift hover:border-primary animate-card-in"
                 >
-                  <div className="font-semibold">{item.name}</div>
-                  <div className="text-primary font-bold mt-2">{formatSum(Number(item.price))}</div>
+                  <MenuTile name={item.name} image={item.image} />
+                  <div className="font-semibold mt-2 px-1">{item.name}</div>
+                  <div className="text-primary font-bold px-1 pb-1">
+                    {formatSum(Number(item.price))}
+                  </div>
                 </button>
               ))}
             </div>

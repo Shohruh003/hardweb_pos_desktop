@@ -62,7 +62,7 @@ export function KdsPage() {
             {active.map((order) => (
               <div
                 key={order.id}
-                className="bg-surface border border-border rounded-xl p-4 flex flex-col"
+                className="bg-surface border border-border rounded-2xl p-4 flex flex-col animate-pop-in lift"
               >
                 <div className="flex items-center justify-between mb-3">
                   <div className="text-lg font-bold">

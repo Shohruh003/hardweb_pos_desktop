@@ -154,7 +154,7 @@ function StatCard({
   accent?: boolean;
 }) {
   return (
-    <div className="bg-surface border border-border rounded-xl p-5">
+    <div className="bg-surface border border-border rounded-2xl p-5 lift animate-card-in">
       <div className="text-muted text-sm">{label}</div>
       <div
         className={`text-2xl font-bold mt-1 ${accent ? 'text-primary' : ''}`}
@@ -176,7 +176,7 @@ function Panel({
 }) {
   return (
     <div
-      className={`bg-surface border border-border rounded-xl p-5 ${
+      className={`bg-surface border border-border rounded-2xl p-5 animate-card-in ${
         wide ? 'col-span-2' : ''
       }`}
     >
@@ -205,7 +205,7 @@ function Bar({
       </div>
       <div className="h-2.5 bg-bg rounded-full overflow-hidden">
         <div
-          className={`h-full ${color} rounded-full`}
+          className={`h-full ${color} rounded-full transition-all duration-700 ease-out`}
           style={{ width: `${Math.max(4, percent)}%` }}
         />
       </div>

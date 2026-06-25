@@ -25,7 +25,7 @@ function DemoEntry() {
           <button
             key={r.login}
             onClick={() => login(r.login, '1234')}
-            className="bg-surface border border-border rounded-2xl p-5 text-left hover:border-primary transition-colors w-56"
+            className="bg-surface border border-border rounded-2xl p-5 text-left hover:border-primary lift animate-card-in w-56"
           >
             <div className="text-lg font-bold">{r.label}</div>
             <div className="text-sm text-muted mt-1">{r.desc}</div>

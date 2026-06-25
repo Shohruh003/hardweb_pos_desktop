@@ -84,7 +84,7 @@ function Column({
           {orders.map((o) => (
             <div
               key={o.id}
-              className={`bg-surface border-2 rounded-2xl py-6 text-center ${
+              className={`bg-surface border-2 rounded-2xl py-6 text-center animate-pop-in ${
                 color === 'success' ? 'border-success' : 'border-border'
               } ${pulse ? 'animate-pulse' : ''}`}
             >
