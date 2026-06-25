@@ -1,17 +1,19 @@
 import { useState } from 'react';
 import { AppShell } from '../components/AppShell';
 import { MenuTab } from './admin/MenuTab';
+import { CategoriesTab } from './admin/CategoriesTab';
 import { TablesTab } from './admin/TablesTab';
 import { StaffTab } from './admin/StaffTab';
 import { RolesTab } from './admin/RolesTab';
 import { DevicesTab } from './admin/DevicesTab';
 import { ReceiptsTab } from './admin/ReceiptsTab';
 
-type Tab = 'receipts' | 'menu' | 'tables' | 'staff' | 'roles' | 'devices';
+type Tab = 'receipts' | 'menu' | 'categories' | 'tables' | 'staff' | 'roles' | 'devices';
 
 const NAV: { key: Tab; label: string; icon: string; hint: string }[] = [
   { key: 'receipts', label: 'Cheklar / Tarix', icon: '🧾', hint: 'Buyurtmalar va to‘lovlar tarixi' },
-  { key: 'menu', label: 'Menyu', icon: '📋', hint: 'Taomlar va kategoriyalar' },
+  { key: 'menu', label: 'Menyu', icon: '📋', hint: 'Taomlar ro‘yxati' },
+  { key: 'categories', label: 'Kategoriyalar', icon: '🗂️', hint: 'Menyu kategoriyalari' },
   { key: 'tables', label: 'Stollar', icon: '🪑', hint: 'Stollar va zallar' },
   { key: 'staff', label: 'Xodimlar', icon: '👥', hint: 'Xodimlar' },
   { key: 'roles', label: 'Rollar', icon: '🛡️', hint: 'Rollar va ruxsatlar' },
@@ -69,6 +71,7 @@ export function AdminPage() {
           <div className="flex-1 overflow-auto p-6">
             {tab === 'receipts' && <ReceiptsTab />}
             {tab === 'menu' && <MenuTab />}
+            {tab === 'categories' && <CategoriesTab />}
             {tab === 'tables' && <TablesTab />}
             {tab === 'staff' && <StaffTab />}
             {tab === 'roles' && <RolesTab />}
