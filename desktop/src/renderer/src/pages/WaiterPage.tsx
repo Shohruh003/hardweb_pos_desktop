@@ -252,15 +252,25 @@ export function WaiterPage() {
               <div className="text-muted text-sm text-center mt-8">Taom tanlang</div>
             ) : (
               cart.map((c) => (
-                <div key={c.menuItemId} className="flex items-center justify-between bg-bg rounded-lg p-2.5">
+                <div key={c.menuItemId} className="flex items-center justify-between bg-bg rounded-xl p-3">
                   <div className="min-w-0">
                     <div className="font-semibold truncate">{c.name}</div>
                     <div className="text-xs text-muted">{formatSum(c.price)}</div>
                   </div>
-                  <div className="flex items-center gap-2 ml-2">
-                    <button onClick={() => changeQty(c.menuItemId, -1)} className="w-7 h-7 rounded bg-surface border border-border font-bold">−</button>
-                    <span className="w-6 text-center font-semibold">{c.quantity}</span>
-                    <button onClick={() => changeQty(c.menuItemId, 1)} className="w-7 h-7 rounded bg-surface border border-border font-bold">+</button>
+                  <div className="flex items-center gap-2.5 ml-2">
+                    <button
+                      onClick={() => changeQty(c.menuItemId, -1)}
+                      className="w-12 h-12 rounded-xl bg-surface border border-border text-3xl font-bold leading-none flex items-center justify-center active:scale-90 hover:border-danger hover:text-danger transition-all"
+                    >
+                      −
+                    </button>
+                    <span className="w-9 text-center text-2xl font-extrabold">{c.quantity}</span>
+                    <button
+                      onClick={() => changeQty(c.menuItemId, 1)}
+                      className="w-12 h-12 rounded-xl bg-primary text-white text-3xl font-bold leading-none flex items-center justify-center active:scale-90 hover:brightness-110 transition-all"
+                    >
+                      +
+                    </button>
                   </div>
                 </div>
               ))

@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -100,5 +101,11 @@ export class UsersController {
     if (!updated) return null;
     const { passwordHash, ...rest } = updated;
     return rest;
+  }
+
+  @Delete(':id')
+  async remove(@Param('id') id: string) {
+    await this.users.delete(id);
+    return { ok: true };
   }
 }

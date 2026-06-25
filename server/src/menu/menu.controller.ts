@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -106,5 +107,21 @@ export class MenuController {
   async updateItem(@Param('id') id: string, @Body() dto: MenuItemPatchDto) {
     await this.items.update(id, dto);
     return this.items.findOne({ where: { id } });
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.Admin)
+  @Delete('items/:id')
+  async deleteItem(@Param('id') id: string) {
+    await this.items.delete(id);
+    return { ok: true };
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.Admin)
+  @Delete('categories/:id')
+  async deleteCategory(@Param('id') id: string) {
+    await this.categories.delete(id);
+    return { ok: true };
   }
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../components/ui';
+import { Select } from '../../components/Select';
 import type { PrinterConfig } from '../../global';
 
 // Qurilmalarni sozlash (TZ F-4.4) — chek printeri (ESC/POS, tarmoq)
@@ -44,16 +45,15 @@ export function DevicesTab() {
         <div className="font-bold mb-4">Chek printeri (ESC/POS)</div>
 
         <label className="block text-sm text-muted mb-1">Ulanish turi</label>
-        <select
+        <Select
+          className="mb-4"
           value={cfg.type}
-          onChange={(e) =>
-            setCfg({ ...cfg, type: e.target.value as PrinterConfig['type'] })
-          }
-          className="w-full mb-4 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary"
-        >
-          <option value="none">O‘chirilgan</option>
-          <option value="network">Tarmoq (LAN/Wi-Fi/IP)</option>
-        </select>
+          onChange={(v) => setCfg({ ...cfg, type: v as PrinterConfig['type'] })}
+          options={[
+            { value: 'none', label: 'O‘chirilgan' },
+            { value: 'network', label: 'Tarmoq (LAN/Wi-Fi/IP)' },
+          ]}
+        />
 
         {cfg.type === 'network' && (
           <div className="grid grid-cols-2 gap-4 mb-4">
@@ -81,14 +81,16 @@ export function DevicesTab() {
         )}
 
         <label className="block text-sm text-muted mb-1">Qog‘oz kengligi</label>
-        <select
-          value={cfg.width}
-          onChange={(e) => setCfg({ ...cfg, width: Number(e.target.value) })}
-          className="w-full mb-5 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary"
-        >
-          <option value={32}>58 mm (32 belgi)</option>
-          <option value={48}>80 mm (48 belgi)</option>
-        </select>
+        <div className="mb-5">
+          <Select
+            value={String(cfg.width)}
+            onChange={(v) => setCfg({ ...cfg, width: Number(v) })}
+            options={[
+              { value: '32', label: '58 mm (32 belgi)' },
+              { value: '48', label: '80 mm (48 belgi)' },
+            ]}
+          />
+        </div>
 
         <div className="flex gap-2">
           <Button onClick={save} disabled={saving} className="flex-1">

@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -57,5 +58,13 @@ export class TablesController {
   async update(@Param('id') id: string, @Body() dto: TablePatchDto) {
     await this.tables.update(id, dto);
     return this.tables.findOne({ where: { id } });
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.Admin)
+  @Delete(':id')
+  async remove(@Param('id') id: string) {
+    await this.tables.delete(id);
+    return { ok: true };
   }
 }

@@ -158,6 +158,12 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     const t = { id: uid(), number: body.number, hall: body.hall, capacity: body.capacity || 4, status: TableStatus.Free };
     tables.push(t); return ok(t);
   }
+  if (seg[0] === 'tables' && seg[1] && method === 'PATCH') {
+    const t = tables.find((x) => x.id === seg[1]); if (t) Object.assign(t, body); return ok(t);
+  }
+  if (seg[0] === 'tables' && seg[1] && method === 'DELETE') {
+    const i = tables.findIndex((x) => x.id === seg[1]); if (i >= 0) tables.splice(i, 1); return ok({ ok: true });
+  }
 
   // Menu
   if (path === '/menu/categories' && method === 'GET') return ok([...categories]);
@@ -174,6 +180,15 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
   if (seg[0] === 'menu' && seg[1] === 'items' && seg[2] && method === 'PATCH') {
     const m = menu.find((x) => x.id === seg[2]); if (m) Object.assign(m, body); return ok(m);
   }
+  if (seg[0] === 'menu' && seg[1] === 'items' && seg[2] && method === 'DELETE') {
+    const i = menu.findIndex((x) => x.id === seg[2]); if (i >= 0) menu.splice(i, 1); return ok({ ok: true });
+  }
+  if (seg[0] === 'menu' && seg[1] === 'categories' && seg[2] && method === 'PATCH') {
+    const c = categories.find((x) => x.id === seg[2]); if (c) Object.assign(c, body); return ok(c);
+  }
+  if (seg[0] === 'menu' && seg[1] === 'categories' && seg[2] && method === 'DELETE') {
+    const i = categories.findIndex((x) => x.id === seg[2]); if (i >= 0) categories.splice(i, 1); return ok({ ok: true });
+  }
 
   // Users
   if (path === '/users/waiters' && method === 'GET')
@@ -185,6 +200,9 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
   }
   if (seg[0] === 'users' && seg[1] && method === 'PATCH') {
     const u = users.find((x) => x.id === seg[1]); if (u) Object.assign(u, body); return ok(u);
+  }
+  if (seg[0] === 'users' && seg[1] && method === 'DELETE') {
+    const i = users.findIndex((x) => x.id === seg[1]); if (i >= 0) users.splice(i, 1); return ok({ ok: true });
   }
 
   // Orders

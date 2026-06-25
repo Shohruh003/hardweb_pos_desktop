@@ -5,7 +5,7 @@ import {
   SOCKET_EVENTS,
 } from '@hardweb-pos/shared';
 import { AppShell } from '../components/AppShell';
-import { Button, StatusBadge } from '../components/ui';
+import { StatusBadge } from '../components/ui';
 import { api } from '../lib/api';
 import { getSocket } from '../lib/socket';
 
@@ -62,7 +62,11 @@ export function KdsPage() {
             {active.map((order) => (
               <div
                 key={order.id}
-                className="bg-surface border border-border rounded-2xl p-4 flex flex-col animate-pop-in lift"
+                className={`bg-surface border-2 rounded-2xl p-4 flex flex-col animate-pop-in lift ${
+                  order.status === OrderStatus.Accepted
+                    ? 'border-info/50'
+                    : 'border-warning/60'
+                }`}
               >
                 <div className="flex items-center justify-between mb-3">
                   <div className="text-lg font-bold">
@@ -88,11 +92,20 @@ export function KdsPage() {
                 </ul>
 
                 {order.status !== OrderStatus.Ready && (
-                  <Button onClick={() => advance(order)}>
-                    {order.status === OrderStatus.Accepted
-                      ? 'Tayyorlashni boshlash'
-                      : 'Tayyor deb belgilash'}
-                  </Button>
+                  <button
+                    onClick={() => advance(order)}
+                    className={`w-full py-4 rounded-xl font-extrabold text-xl flex items-center justify-center gap-2 lift active:scale-[0.98] hover:brightness-110 ${
+                      order.status === OrderStatus.Accepted
+                        ? 'bg-warning text-black'
+                        : 'bg-success text-white'
+                    }`}
+                  >
+                    {order.status === OrderStatus.Accepted ? (
+                      <>🔥 Boshlash</>
+                    ) : (
+                      <>✅ Tayyor</>
+                    )}
+                  </button>
                 )}
               </div>
             ))}
