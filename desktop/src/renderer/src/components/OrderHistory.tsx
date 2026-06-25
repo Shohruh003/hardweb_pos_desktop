@@ -9,9 +9,28 @@ const PAY_LABEL: Record<string, string> = {
   [PaymentType.QR]: 'QR',
 };
 
-// Buyurtmalar/cheklar tarixi ro'yxati + tafsilot modali (shikoyatlar uchun)
-export function OrderHistory({ orders }: { orders: Order[] }) {
+// Buyurtmalar/cheklar tarixi ro'yxati + tafsilot modali (shikoyatlar uchun).
+// onRevert berilsa — "Tayyor" holatdagi buyurtmani ortga qaytarish tugmasi chiqadi (KDS uchun).
+export function OrderHistory({
+  orders,
+  onRevert,
+}: {
+  orders: Order[];
+  onRevert?: (order: Order) => Promise<void> | void;
+}) {
   const [sel, setSel] = useState<Order | null>(null);
+  const [reverting, setReverting] = useState(false);
+
+  async function doRevert() {
+    if (!sel || !onRevert) return;
+    setReverting(true);
+    try {
+      await onRevert(sel);
+      setSel(null);
+    } finally {
+      setReverting(false);
+    }
+  }
 
   if (orders.length === 0) {
     return <div className="text-muted text-center py-10">Tarix bo‘sh</div>;
@@ -72,6 +91,18 @@ export function OrderHistory({ orders }: { orders: Order[] }) {
           {sel.status !== OrderStatus.Closed && (
             <div className="text-xs text-muted mt-2 text-right">Hali to‘lanmagan</div>
           )}
+
+          {/* Adashib "Tayyor" bosilgan bo'lsa — ortga qaytarish (faqat to'lanmagan) */}
+          {onRevert && sel.status === OrderStatus.Ready && (
+            <button
+              onClick={doRevert}
+              disabled={reverting}
+              className="w-full mt-4 py-3 rounded-xl bg-warning text-black font-bold active:scale-[0.98] hover:brightness-110 transition-all disabled:opacity-60"
+            >
+              {reverting ? 'Qaytarilmoqda...' : '↩ Tayyorlanmoqdaga qaytarish'}
+            </button>
+          )}
+
           <div className="text-xs text-muted mt-3 text-center">Buyurtma vaqti: {formatTime(sel.openedAt)}</div>
         </Modal>
       )}

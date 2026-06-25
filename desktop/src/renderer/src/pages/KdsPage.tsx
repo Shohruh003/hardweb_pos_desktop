@@ -136,7 +136,13 @@ export function KdsPage() {
         ) : (
           <div className="flex-1 overflow-auto p-6">
             <div className="max-w-3xl mx-auto bg-surface border border-border rounded-2xl p-4">
-              <OrderHistory orders={history} />
+              <OrderHistory
+                orders={history}
+                onRevert={async (o) => {
+                  await api.patch(`/orders/${o.id}/status`, { status: OrderStatus.Cooking });
+                  setHistory(await api.get<Order[]>('/orders/history'));
+                }}
+              />
             </div>
           </div>
         )}
