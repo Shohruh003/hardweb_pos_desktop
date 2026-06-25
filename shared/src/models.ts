@@ -73,9 +73,11 @@ export interface Order {
   closedAt?: string | null; // yopilgan_vaqt
   queueNumber?: number | null; // navbat_raqami
   items: OrderItem[];
-  // Qulaylik uchun:
+  // Qulaylik uchun (server to'ldiradi):
   tableNumber?: number;
   total?: number; // jami summa
+  waiterName?: string | null; // ofitsiant ismi (tarix uchun)
+  paymentType?: PaymentType; // to'lov turi (yopilgan bo'lsa)
 }
 
 /** payments — to'lovlar */

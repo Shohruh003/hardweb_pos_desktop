@@ -38,3 +38,26 @@ export function StatusBadge({ status }: { status: OrderStatus }) {
 export function formatSum(n: number): string {
   return new Intl.NumberFormat('uz-UZ').format(n) + ' so‘m';
 }
+
+// Vaqt: 14:32
+export function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('uz-UZ', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+// Sana + vaqt: 24.06 14:32
+export function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  return (
+    d.toLocaleDateString('uz-UZ', { day: '2-digit', month: '2-digit' }) +
+    ' ' +
+    formatTime(iso)
+  );
+}
+
+// O'tgan daqiqa (hozirgacha)
+export function minutesSince(iso: string, now: number): number {
+  return Math.max(0, Math.floor((now - new Date(iso).getTime()) / 60000));
+}

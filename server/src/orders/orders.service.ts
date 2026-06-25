@@ -62,6 +62,34 @@ export class OrdersService {
     return this.toDto(order, table?.number);
   }
 
+  // Buyurtmalar tarixi (barcha holatlar). waiterId berilsa — faqat o'sha ofitsiantniki.
+  // Cheklar/shikoyatlar uchun: nima yeyilgan, qachon, qancha, qanday to'langan.
+  async history(waiterId?: string, limit = 100): Promise<Order[]> {
+    const list = await this.orders.find({
+      where: waiterId ? { waiterId } : {},
+      order: { openedAt: 'DESC' },
+      take: limit,
+    });
+    if (list.length === 0) return [];
+    const tableMap = await this.tableNumberMap(list.map((o) => o.tableId));
+    const users = await this.users.find({
+      where: { id: In([...new Set(list.map((o) => o.waiterId))]) },
+    });
+    const pays = await this.payments.find({
+      where: { orderId: In(list.map((o) => o.id)) },
+    });
+    const waiterName = new Map(users.map((u) => [u.id, u.name]));
+    const payByOrder = new Map(pays.map((p) => [p.orderId, p]));
+
+    return list.map((o) => {
+      const dto = this.toDto(o, tableMap.get(o.tableId));
+      dto.waiterName = waiterName.get(o.waiterId) ?? null;
+      const p = payByOrder.get(o.id);
+      if (p) dto.paymentType = p.type;
+      return dto;
+    });
+  }
+
   // stol id -> stol raqami xaritasi (KDS/kassada ko'rsatish uchun)
   private async tableNumberMap(ids: string[]): Promise<Map<string, number>> {
     if (ids.length === 0) return new Map();

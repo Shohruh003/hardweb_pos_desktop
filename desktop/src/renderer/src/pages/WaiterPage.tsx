@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Category,
   MenuItem,
+  Order,
   Table,
   TableStatus,
   User,
@@ -10,6 +11,8 @@ import { AppShell } from '../components/AppShell';
 import { Button, formatSum } from '../components/ui';
 import { MenuTile } from '../components/MenuTile';
 import { FeedbackModal, FeedbackVariant } from '../components/FeedbackModal';
+import { Modal } from '../components/Modal';
+import { OrderHistory } from '../components/OrderHistory';
 import { api } from '../lib/api';
 import { enqueue } from '../lib/offlineQueue';
 import { useConnectivity } from '../state/connectivity';
@@ -48,6 +51,18 @@ export function WaiterPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [sending, setSending] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [myHistory, setMyHistory] = useState<Order[]>([]);
+
+  async function openHistory() {
+    if (!selectedWaiter) return;
+    try {
+      setMyHistory(await api.get<Order[]>(`/orders/history?waiterId=${selectedWaiter.id}`));
+    } catch {
+      setMyHistory([]);
+    }
+    setShowHistory(true);
+  }
 
   async function loadTables() {
     setTables(await api.get<Table[]>('/tables'));
@@ -165,6 +180,11 @@ export function WaiterPage() {
     return (
       <AppShell title={`Ofitsiant — ${selectedWaiter.name}`}>
         {feedbackModal}
+        {showHistory && (
+          <Modal title="Mening buyurtmalarim" onClose={() => setShowHistory(false)}>
+            <OrderHistory orders={myHistory} />
+          </Modal>
+        )}
         <div className="h-full overflow-auto p-6">
           <div className="flex items-center gap-2 mb-4 flex-wrap">
             <Button variant="ghost" onClick={() => setSelectedWaiter(null)}>← Ofitsiant</Button>
@@ -180,6 +200,9 @@ export function WaiterPage() {
                 {h}
               </button>
             ))}
+            <Button variant="ghost" className="ml-auto" onClick={openHistory}>
+              🧾 Mening buyurtmalarim
+            </Button>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-3">
             {hallTables.map((t) => {

@@ -3,9 +3,11 @@ import { Table, TableStatus } from '@hardweb-pos/shared';
 import { Button } from '../../components/ui';
 import { Modal } from '../../components/Modal';
 import { api } from '../../lib/api';
+import { useConfirm } from '../../state/confirm';
 
 // Stollar va zallarni to'liq boshqarish (TZ F-4.2)
 export function TablesTab() {
+  const confirm = useConfirm();
   const [tables, setTables] = useState<Table[]>([]);
   const [number, setNumber] = useState('');
   const [hall, setHall] = useState('');
@@ -27,9 +29,9 @@ export function TablesTab() {
     await load();
   }
 
-  async function remove(id: string) {
-    if (!confirm('Stol o‘chirilsinmi?')) return;
-    await api.del(`/tables/${id}`);
+  async function remove(t: Table) {
+    if (!(await confirm({ title: 'Stolni o‘chirish', message: `Stol №${t.number} o‘chirilsinmi?`, danger: true }))) return;
+    await api.del(`/tables/${t.id}`);
     await load();
   }
 
@@ -70,7 +72,7 @@ export function TablesTab() {
                   </div>
                   <div className="flex gap-1.5 mt-2 justify-center">
                     <button onClick={() => setEdit({ ...t })} className="px-2.5 py-1 rounded-md text-sm bg-bg border border-border hover:border-primary">✏️</button>
-                    <button onClick={() => remove(t.id)} className="px-2.5 py-1 rounded-md text-sm bg-bg border border-border hover:border-danger">🗑️</button>
+                    <button onClick={() => remove(t)} className="px-2.5 py-1 rounded-md text-sm bg-bg border border-border hover:border-danger">🗑️</button>
                   </div>
                 </div>
               ))}

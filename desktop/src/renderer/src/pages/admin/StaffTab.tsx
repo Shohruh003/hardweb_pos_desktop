@@ -4,6 +4,7 @@ import { Button } from '../../components/ui';
 import { Select } from '../../components/Select';
 import { Modal } from '../../components/Modal';
 import { api } from '../../lib/api';
+import { useConfirm } from '../../state/confirm';
 
 const ROLE_OPTIONS = [
   { value: UserRole.Waiter, label: 'Ofitsiant' },
@@ -16,7 +17,9 @@ const ROLE_LABEL = Object.fromEntries(ROLE_OPTIONS.map((r) => [r.value, r.label]
 
 // Xodimlarni to'liq boshqarish (TZ F-4.3): qo'shish, tahrirlash, o'chirish, faollik
 export function StaffTab() {
+  const confirm = useConfirm();
   const [users, setUsers] = useState<User[]>([]);
+  const [roleDefs, setRoleDefs] = useState<{ value: string; label: string }[]>(ROLE_OPTIONS);
   const [name, setName] = useState('');
   const [login, setLogin] = useState('');
   const [role, setRole] = useState<string>(UserRole.Waiter);
@@ -25,10 +28,19 @@ export function StaffTab() {
 
   async function load() {
     setUsers(await api.get<User[]>('/users'));
+    try {
+      const roles = await api.get<{ key: string; label: string }[]>('/roles');
+      if (roles?.length) setRoleDefs(roles.map((r) => ({ value: r.key, label: r.label })));
+    } catch {
+      /* real server'da /roles bo'lmasligi mumkin — tizim rollari ishlatiladi */
+    }
   }
   useEffect(() => {
     load().catch(() => {});
   }, []);
+
+  const roleLabel = (key: string) =>
+    roleDefs.find((r) => r.value === key)?.label ?? ROLE_LABEL[key] ?? key;
 
   async function addUser(e: React.FormEvent) {
     e.preventDefault();
@@ -43,9 +55,9 @@ export function StaffTab() {
     await load();
   }
 
-  async function remove(id: string) {
-    if (!confirm('Xodim o‘chirilsinmi?')) return;
-    await api.del(`/users/${id}`);
+  async function remove(u: User) {
+    if (!(await confirm({ title: 'Xodimni o‘chirish', message: `"${u.name}" o‘chirilsinmi?`, danger: true }))) return;
+    await api.del(`/users/${u.id}`);
     await load();
   }
 
@@ -66,7 +78,7 @@ export function StaffTab() {
           className="w-full mb-2 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
         <input value={login} onChange={(e) => setLogin(e.target.value)} placeholder="Login"
           className="w-full mb-2 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
-        <Select className="mb-2" value={role} onChange={setRole} options={ROLE_OPTIONS} />
+        <Select className="mb-2" value={role} onChange={setRole} options={roleDefs} />
         <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="Parol (kamida 3 belgi)"
           className="w-full mb-3 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
         <Button type="submit" className="w-full">Qo‘shish</Button>
@@ -77,7 +89,7 @@ export function StaffTab() {
           <div key={u.id} className="flex items-center justify-between px-4 py-3 gap-3">
             <div className="min-w-0">
               <div className="font-semibold truncate">{u.name}</div>
-              <div className="text-sm text-muted">{u.login} · {ROLE_LABEL[u.role] ?? u.role}</div>
+              <div className="text-sm text-muted">{u.login} · {roleLabel(u.role)}</div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <button onClick={() => toggleActive(u)}
@@ -85,7 +97,7 @@ export function StaffTab() {
                 {u.active ? 'Faol' : 'Bloklangan'}
               </button>
               <button onClick={() => setEdit({ ...u })} className="px-3 py-1.5 rounded-md text-sm bg-bg border border-border hover:border-primary">✏️</button>
-              <button onClick={() => remove(u.id)} className="px-3 py-1.5 rounded-md text-sm bg-bg border border-border hover:border-danger hover:text-danger">🗑️</button>
+              <button onClick={() => remove(u)} className="px-3 py-1.5 rounded-md text-sm bg-bg border border-border hover:border-danger hover:text-danger">🗑️</button>
             </div>
           </div>
         ))}
@@ -97,7 +109,7 @@ export function StaffTab() {
           <input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })}
             className="w-full mb-3 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
           <label className="block text-sm text-muted mb-1">Rol</label>
-          <Select className="mb-3" value={edit.role} onChange={(v) => setEdit({ ...edit, role: v as UserRole })} options={ROLE_OPTIONS} />
+          <Select className="mb-3" value={edit.role} onChange={(v) => setEdit({ ...edit, role: v as UserRole })} options={roleDefs} />
           <label className="block text-sm text-muted mb-1">Yangi parol (ixtiyoriy)</label>
           <input type="password" value={edit.password ?? ''} onChange={(e) => setEdit({ ...edit, password: e.target.value })} placeholder="O'zgartirmaslik uchun bo'sh qoldiring"
             className="w-full mb-3 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />

@@ -63,6 +63,15 @@ const users = [
 const waiter = users[0];
 const cashier = users.find((u) => u.role === UserRole.Cashier)!;
 
+// Rollar registri (admin CRUD qiladi). Har rol qaysi panelga kirishini belgilaydi.
+const roles: { key: string; label: string; description: string; panel: string; builtin: boolean }[] = [
+  { key: UserRole.Waiter, label: 'Ofitsiant', description: 'Buyurtma qabul qilish', panel: 'ofitsiant', builtin: true },
+  { key: UserRole.Cook, label: 'Oshpaz', description: 'Oshxona ekrani (KDS)', panel: 'oshpaz', builtin: true },
+  { key: UserRole.Cashier, label: 'Kassir', description: 'To‘lov va chek', panel: 'kassir', builtin: true },
+  { key: UserRole.Admin, label: 'Administrator', description: 'Tizimni boshqarish', panel: 'administrator', builtin: true },
+  { key: UserRole.Director, label: 'Direktor', description: 'Hisobotlar', panel: 'direktor', builtin: true },
+];
+
 interface MockItem {
   id: string; orderId: string; menuItemId: string; menuItemName: string;
   price: number; quantity: number; note: string | null; status: OrderItemStatus;
@@ -174,7 +183,7 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
   if (path === '/menu/items' && method === 'GET') return ok(menu.filter((m) => m.available));
   if (path === '/menu/all-items' && method === 'GET') return ok([...menu]);
   if (path === '/menu/items' && method === 'POST') {
-    const m = { id: uid(), name: body.name, price: body.price, categoryId: body.categoryId, available: true, exciseRequired: !!body.exciseRequired, image: null };
+    const m = { id: uid(), name: body.name, price: body.price, categoryId: body.categoryId, available: true, exciseRequired: !!body.exciseRequired, image: body.image ?? null };
     menu.push(m); return ok(m);
   }
   if (seg[0] === 'menu' && seg[1] === 'items' && seg[2] && method === 'PATCH') {
@@ -191,6 +200,19 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
   }
 
   // Users
+  // Rollar CRUD
+  if (path === '/roles' && method === 'GET') return ok([...roles]);
+  if (path === '/roles' && method === 'POST') {
+    const r = { key: 'role-' + uid().slice(0, 6), label: body.label, description: body.description || '', panel: body.panel || 'ofitsiant', builtin: false };
+    roles.push(r); return ok(r);
+  }
+  if (seg[0] === 'roles' && seg[1] && method === 'PATCH') {
+    const r = roles.find((x) => x.key === seg[1]); if (r && !r.builtin) Object.assign(r, body); else if (r) r.description = body.description ?? r.description; return ok(r);
+  }
+  if (seg[0] === 'roles' && seg[1] && method === 'DELETE') {
+    const i = roles.findIndex((x) => x.key === seg[1]); if (i >= 0 && !roles[i].builtin) roles.splice(i, 1); return ok({ ok: true });
+  }
+
   if (path === '/users/waiters' && method === 'GET')
     return ok(users.filter((u) => u.role === UserRole.Waiter && u.active));
   if (path === '/users' && method === 'GET') return ok([...users]);
@@ -207,6 +229,15 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
 
   // Orders
   if (path === '/orders' && method === 'GET') return ok(orders.filter((o) => o.status !== OrderStatus.Closed));
+  if (path === '/orders/history' && method === 'GET') {
+    const wid = new URLSearchParams(query || '').get('waiterId');
+    let list = orders.slice();
+    if (wid) list = list.filter((o) => o.waiterId === wid);
+    const enriched = list
+      .map((o) => ({ ...o, paymentType: payments.find((p) => p.orderId === o.id)?.type }))
+      .sort((a, b) => b.openedAt.localeCompare(a.openedAt));
+    return ok(enriched);
+  }
   if (seg[0] === 'orders' && seg[1] && !seg[2] && method === 'GET') {
     return ok(orders.find((o) => o.id === seg[1]));
   }

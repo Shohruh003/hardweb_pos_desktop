@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Request,
   UseGuards,
 } from '@nestjs/common';
@@ -25,6 +26,12 @@ export class OrdersController {
   @Get()
   findActive() {
     return this.orders.findActive();
+  }
+
+  // Tarix — ':id' dan oldin turishi shart (aks holda 'history' id deb qabul qilinadi)
+  @Get('history')
+  history(@Query('waiterId') waiterId?: string) {
+    return this.orders.history(waiterId);
   }
 
   @Get(':id')
