@@ -260,16 +260,22 @@ export function WaiterPage() {
                   <div className="flex items-center gap-2.5 ml-2">
                     <button
                       onClick={() => changeQty(c.menuItemId, -1)}
-                      className="w-12 h-12 rounded-xl bg-surface border border-border text-3xl font-bold leading-none flex items-center justify-center active:scale-90 hover:border-danger hover:text-danger transition-all"
+                      aria-label="Kamaytirish"
+                      className="w-12 h-12 rounded-xl bg-surface border border-border flex items-center justify-center active:scale-90 hover:border-danger hover:text-danger transition-all"
                     >
-                      −
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                        <path d="M6 12h12" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                      </svg>
                     </button>
                     <span className="w-9 text-center text-2xl font-extrabold">{c.quantity}</span>
                     <button
                       onClick={() => changeQty(c.menuItemId, 1)}
-                      className="w-12 h-12 rounded-xl bg-primary text-white text-3xl font-bold leading-none flex items-center justify-center active:scale-90 hover:brightness-110 transition-all"
+                      aria-label="Ko'paytirish"
+                      className="w-12 h-12 rounded-xl bg-primary text-white flex items-center justify-center active:scale-90 hover:brightness-110 transition-all"
                     >
-                      +
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                        <path d="M12 6v12M6 12h12" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                      </svg>
                     </button>
                   </div>
                 </div>
