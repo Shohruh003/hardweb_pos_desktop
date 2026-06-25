@@ -67,6 +67,32 @@ button {
 .lift:hover { transform: translateY(-3px) }
 .lift:active { transform: translateY(-1px) scale(0.99) }
 
+/* ===== Chiroyli scrollbar ===== */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #323a46 transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: #323a46;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #059669; /* emerald — hover'da brendga mos */
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* Yorqin gradientli plitkalar (taom rasmlari o'rnida) */
 .tile-1 { background: linear-gradient(135deg, #F59E0B, #EF4444) }
 .tile-2 { background: linear-gradient(135deg, #10B981, #059669) }

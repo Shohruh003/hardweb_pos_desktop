@@ -41,7 +41,7 @@ export function CategoriesTab() {
   }
 
   return (
-    <div className="max-w-2xl">
+    <div className="w-full">
       <form onSubmit={add} className="flex gap-2 mb-5">
         <input
           value={name}

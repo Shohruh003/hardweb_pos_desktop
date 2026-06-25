@@ -31,6 +31,9 @@ export function MenuTab() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [items, setItems] = useState<MenuItem[]>([]);
   const [form, setForm] = useState<ItemForm | null>(null);
+  const [search, setSearch] = useState('');
+  const [catFilter, setCatFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
 
   async function load() {
     const [c, i] = await Promise.all([
@@ -84,18 +87,37 @@ export function MenuTab() {
 
   const catOptions = categories.map((c) => ({ value: c.id, label: c.name }));
 
+  const search2 = search.trim().toLowerCase();
+  const filtered = items.filter((it) => {
+    if (catFilter && it.categoryId !== catFilter) return false;
+    if (statusFilter === 'available' && !it.available) return false;
+    if (statusFilter === 'unavailable' && it.available) return false;
+    if (search2 && !it.name.toLowerCase().includes(search2)) return false;
+    return true;
+  });
+
   return (
     <div className="w-full">
       <div className="flex items-center justify-between mb-4">
-        <div className="text-muted">{items.length} ta taom</div>
+        <div className="text-muted">{filtered.length} ta taom</div>
         <Button onClick={openAdd}>+ Yangi taom</Button>
       </div>
 
+      {/* Filtrlar */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Nom bo‘yicha qidirish..."
+          className="px-3 py-2.5 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
+        <Select value={catFilter} onChange={setCatFilter}
+          options={[{ value: '', label: 'Barcha kategoriyalar' }, ...catOptions]} />
+        <Select value={statusFilter} onChange={setStatusFilter}
+          options={[{ value: '', label: 'Barcha holatlar' }, { value: 'available', label: 'Mavjud' }, { value: 'unavailable', label: 'Mavjud emas' }]} />
+      </div>
+
       <div className="bg-surface border border-border rounded-2xl divide-y divide-border">
-        {items.length === 0 ? (
-          <div className="p-6 text-muted text-center">Taom yo‘q. “+ Yangi taom” bilan qo‘shing.</div>
+        {filtered.length === 0 ? (
+          <div className="p-6 text-muted text-center">Taom topilmadi.</div>
         ) : (
-          items.map((it) => (
+          filtered.map((it) => (
             <div key={it.id} className="flex items-center justify-between px-4 py-3 gap-3">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="w-14 h-14 shrink-0">

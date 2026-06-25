@@ -12,6 +12,13 @@ interface Role {
   panel: string;
   builtin: boolean;
 }
+interface RoleForm {
+  key?: string;
+  label: string;
+  description: string;
+  panel: string;
+  builtin?: boolean;
+}
 
 const PANELS = [
   { value: 'ofitsiant', label: 'Ofitsiant paneli' },
@@ -22,14 +29,11 @@ const PANELS = [
 ];
 const PANEL_LABEL = Object.fromEntries(PANELS.map((p) => [p.value, p.label]));
 
-// Rollarni boshqarish (CRUD). Har rol qaysi panelga kirishini belgilaydi.
+// Rollarni boshqarish (CRUD): "+ Yangi rol" modal orqali. Har rol qaysi panelga kiradi.
 export function RolesTab() {
   const confirm = useConfirm();
   const [roles, setRoles] = useState<Role[]>([]);
-  const [label, setLabel] = useState('');
-  const [description, setDescription] = useState('');
-  const [panel, setPanel] = useState('ofitsiant');
-  const [edit, setEdit] = useState<Role | null>(null);
+  const [form, setForm] = useState<RoleForm | null>(null);
 
   async function load() {
     setRoles(await api.get<Role[]>('/roles'));
@@ -38,12 +42,18 @@ export function RolesTab() {
     load().catch(() => {});
   }, []);
 
-  async function addRole(e: React.FormEvent) {
-    e.preventDefault();
-    if (!label.trim()) return;
-    await api.post('/roles', { label: label.trim(), description: description.trim(), panel });
-    setLabel('');
-    setDescription('');
+  function openAdd() {
+    setForm({ label: '', description: '', panel: 'ofitsiant' });
+  }
+  function openEdit(r: Role) {
+    setForm({ key: r.key, label: r.label, description: r.description, panel: r.panel, builtin: r.builtin });
+  }
+
+  async function save() {
+    if (!form || !form.label.trim()) return;
+    if (form.key) await api.patch(`/roles/${form.key}`, { label: form.label, description: form.description, panel: form.panel });
+    else await api.post('/roles', { label: form.label.trim(), description: form.description.trim(), panel: form.panel });
+    setForm(null);
     await load();
   }
 
@@ -53,27 +63,14 @@ export function RolesTab() {
     await load();
   }
 
-  async function saveEdit() {
-    if (!edit) return;
-    await api.patch(`/roles/${edit.key}`, { label: edit.label, description: edit.description, panel: edit.panel });
-    setEdit(null);
-    await load();
-  }
-
   return (
-    <div className="grid grid-cols-3 gap-6">
-      <form onSubmit={addRole} className="bg-surface border border-border rounded-2xl p-4 h-fit">
-        <div className="font-bold mb-3">Yangi rol</div>
-        <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Rol nomi (masalan: Menejer)"
-          className="w-full mb-2 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
-        <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Tavsifi"
-          className="w-full mb-2 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
-        <label className="block text-sm text-muted mb-1">Qaysi panelga kiradi</label>
-        <Select className="mb-3" value={panel} onChange={setPanel} options={PANELS} />
-        <Button type="submit" className="w-full">Qo‘shish</Button>
-      </form>
+    <div className="w-full">
+      <div className="flex items-center justify-between mb-4">
+        <div className="text-muted">{roles.length} ta rol</div>
+        <Button onClick={openAdd}>+ Yangi rol</Button>
+      </div>
 
-      <div className="col-span-2 bg-surface border border-border rounded-2xl divide-y divide-border">
+      <div className="bg-surface border border-border rounded-2xl divide-y divide-border">
         {roles.map((r) => (
           <div key={r.key} className="flex items-center justify-between px-4 py-3 gap-3">
             <div className="min-w-0">
@@ -86,7 +83,7 @@ export function RolesTab() {
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <button onClick={() => setEdit({ ...r })} className="px-3 py-1.5 rounded-md text-sm bg-bg border border-border hover:border-primary">✏️</button>
+              <button onClick={() => openEdit(r)} className="px-3 py-1.5 rounded-md text-sm bg-bg border border-border hover:border-primary">✏️</button>
               {!r.builtin && (
                 <button onClick={() => remove(r)} className="px-3 py-1.5 rounded-md text-sm bg-bg border border-border hover:border-danger hover:text-danger">🗑️</button>
               )}
@@ -95,21 +92,22 @@ export function RolesTab() {
         ))}
       </div>
 
-      {edit && (
-        <Modal title="Rolni tahrirlash" onClose={() => setEdit(null)}>
-          <label className="block text-sm text-muted mb-1">Nomi</label>
-          <input value={edit.label} disabled={edit.builtin} onChange={(e) => setEdit({ ...edit, label: e.target.value })}
+      {form && (
+        <Modal title={form.key ? 'Rolni tahrirlash' : 'Yangi rol'} onClose={() => setForm(null)}>
+          <label className="block text-sm text-muted mb-1">Rol nomi</label>
+          <input value={form.label} disabled={form.builtin} onChange={(e) => setForm({ ...form, label: e.target.value })}
+            placeholder="masalan: Menejer"
             className="w-full mb-3 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary disabled:opacity-60" />
           <label className="block text-sm text-muted mb-1">Tavsifi</label>
-          <input value={edit.description} onChange={(e) => setEdit({ ...edit, description: e.target.value })}
+          <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
             className="w-full mb-3 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
-          <label className="block text-sm text-muted mb-1">Panel</label>
-          <div className={edit.builtin ? 'opacity-60 pointer-events-none mb-4' : 'mb-4'}>
-            <Select value={edit.panel} onChange={(v) => setEdit({ ...edit, panel: v })} options={PANELS} />
+          <label className="block text-sm text-muted mb-1">Qaysi panelga kiradi</label>
+          <div className={form.builtin ? 'opacity-60 pointer-events-none mb-4' : 'mb-4'}>
+            <Select value={form.panel} onChange={(v) => setForm({ ...form, panel: v })} options={PANELS} />
           </div>
           <div className="flex gap-2">
-            <Button variant="ghost" className="flex-1" onClick={() => setEdit(null)}>Bekor</Button>
-            <Button className="flex-1" onClick={saveEdit}>Saqlash</Button>
+            <Button variant="ghost" className="flex-1" onClick={() => setForm(null)}>Bekor</Button>
+            <Button className="flex-1" onClick={save}>{form.key ? 'Saqlash' : 'Qo‘shish'}</Button>
           </div>
         </Modal>
       )}

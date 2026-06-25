@@ -71,18 +71,23 @@ export class OrdersService {
       take: limit,
     });
     if (list.length === 0) return [];
-    const tableMap = await this.tableNumberMap(list.map((o) => o.tableId));
+    const tableRows = await this.tables.find({
+      where: { id: In([...new Set(list.map((o) => o.tableId))]) },
+    });
     const users = await this.users.find({
       where: { id: In([...new Set(list.map((o) => o.waiterId))]) },
     });
     const pays = await this.payments.find({
       where: { orderId: In(list.map((o) => o.id)) },
     });
+    const tableNo = new Map(tableRows.map((t) => [t.id, t.number]));
+    const tableHall = new Map(tableRows.map((t) => [t.id, t.hall]));
     const waiterName = new Map(users.map((u) => [u.id, u.name]));
     const payByOrder = new Map(pays.map((p) => [p.orderId, p]));
 
     return list.map((o) => {
-      const dto = this.toDto(o, tableMap.get(o.tableId));
+      const dto = this.toDto(o, tableNo.get(o.tableId));
+      dto.hall = tableHall.get(o.tableId) ?? null;
       dto.waiterName = waiterName.get(o.waiterId) ?? null;
       const p = payByOrder.get(o.id);
       if (p) dto.paymentType = p.type;

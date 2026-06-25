@@ -234,7 +234,11 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     let list = orders.slice();
     if (wid) list = list.filter((o) => o.waiterId === wid);
     const enriched = list
-      .map((o) => ({ ...o, paymentType: payments.find((p) => p.orderId === o.id)?.type }))
+      .map((o) => ({
+        ...o,
+        hall: tables.find((t) => t.id === o.tableId)?.hall ?? null,
+        paymentType: payments.find((p) => p.orderId === o.id)?.type,
+      }))
       .sort((a, b) => b.openedAt.localeCompare(a.openedAt));
     return ok(enriched);
   }

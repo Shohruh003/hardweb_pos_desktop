@@ -75,6 +75,7 @@ export interface Order {
   items: OrderItem[];
   // Qulaylik uchun (server to'ldiradi):
   tableNumber?: number;
+  hall?: string | null; // zal nomi (tarix/filtr uchun)
   total?: number; // jami summa
   waiterName?: string | null; // ofitsiant ismi (tarix uchun)
   paymentType?: PaymentType; // to'lov turi (yopilgan bo'lsa)

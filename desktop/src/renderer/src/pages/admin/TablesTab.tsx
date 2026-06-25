@@ -5,14 +5,18 @@ import { Modal } from '../../components/Modal';
 import { api } from '../../lib/api';
 import { useConfirm } from '../../state/confirm';
 
-// Stollar va zallarni to'liq boshqarish (TZ F-4.2)
+interface TableForm {
+  id?: string;
+  number: string;
+  hall: string;
+  capacity: string;
+}
+
+// Stollar va zallarni boshqarish (TZ F-4.2): "+ Yangi stol" modal orqali, to'liq CRUD
 export function TablesTab() {
   const confirm = useConfirm();
   const [tables, setTables] = useState<Table[]>([]);
-  const [number, setNumber] = useState('');
-  const [hall, setHall] = useState('');
-  const [capacity, setCapacity] = useState('4');
-  const [edit, setEdit] = useState<Table | null>(null);
+  const [form, setForm] = useState<TableForm | null>(null);
 
   async function load() {
     setTables(await api.get<Table[]>('/tables'));
@@ -21,11 +25,21 @@ export function TablesTab() {
     load().catch(() => {});
   }, []);
 
-  async function addTable(e: React.FormEvent) {
-    e.preventDefault();
-    if (!number || !hall) return;
-    await api.post('/tables', { number: Number(number), hall, capacity: Number(capacity) || 4 });
-    setNumber('');
+  const halls = Array.from(new Set(tables.map((t) => t.hall)));
+
+  function openAdd() {
+    setForm({ number: '', hall: halls[0] ?? '', capacity: '4' });
+  }
+  function openEdit(t: Table) {
+    setForm({ id: t.id, number: String(t.number), hall: t.hall, capacity: String(t.capacity) });
+  }
+
+  async function save() {
+    if (!form || !form.number || !form.hall) return;
+    const body = { number: Number(form.number), hall: form.hall, capacity: Number(form.capacity) || 4 };
+    if (form.id) await api.patch(`/tables/${form.id}`, body);
+    else await api.post('/tables', body);
+    setForm(null);
     await load();
   }
 
@@ -35,34 +49,19 @@ export function TablesTab() {
     await load();
   }
 
-  async function saveEdit() {
-    if (!edit) return;
-    await api.patch(`/tables/${edit.id}`, { number: Number(edit.number), hall: edit.hall, capacity: Number(edit.capacity) });
-    setEdit(null);
-    await load();
-  }
-
-  const halls = Array.from(new Set(tables.map((t) => t.hall)));
-
   return (
-    <div className="grid grid-cols-3 gap-6">
-      <form onSubmit={addTable} className="bg-surface border border-border rounded-2xl p-4 h-fit">
-        <div className="font-bold mb-3">Yangi stol</div>
-        <input value={number} onChange={(e) => setNumber(e.target.value)} type="number" placeholder="Stol raqami"
-          className="w-full mb-2 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
-        <input value={hall} onChange={(e) => setHall(e.target.value)} placeholder="Zal nomi" list="halls"
-          className="w-full mb-2 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
-        <datalist id="halls">{halls.map((h) => <option key={h} value={h} />)}</datalist>
-        <input value={capacity} onChange={(e) => setCapacity(e.target.value)} type="number" placeholder="Sig'imi"
-          className="w-full mb-3 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
-        <Button type="submit" className="w-full">Qo‘shish</Button>
-      </form>
+    <div className="w-full">
+      <div className="flex items-center justify-between mb-4">
+        <div className="text-muted">{tables.length} ta stol · {halls.length} ta zal</div>
+        <Button onClick={openAdd}>+ Yangi stol</Button>
+      </div>
 
-      <div className="col-span-2 space-y-5">
+      <div className="space-y-6">
+        {halls.length === 0 && <div className="text-muted">Stol yo‘q. “+ Yangi stol” bilan qo‘shing.</div>}
         {halls.map((h) => (
           <div key={h}>
             <div className="font-semibold mb-2 text-muted">{h}</div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-3">
               {tables.filter((t) => t.hall === h).map((t) => (
                 <div key={t.id} className="bg-surface border border-border rounded-2xl p-3 text-center lift">
                   <div className="text-xl font-bold">№{t.number}</div>
@@ -71,7 +70,7 @@ export function TablesTab() {
                     {t.status === TableStatus.Free ? 'Bo‘sh' : 'Band'}
                   </div>
                   <div className="flex gap-1.5 mt-2 justify-center">
-                    <button onClick={() => setEdit({ ...t })} className="px-2.5 py-1 rounded-md text-sm bg-bg border border-border hover:border-primary">✏️</button>
+                    <button onClick={() => openEdit(t)} className="px-2.5 py-1 rounded-md text-sm bg-bg border border-border hover:border-primary">✏️</button>
                     <button onClick={() => remove(t)} className="px-2.5 py-1 rounded-md text-sm bg-bg border border-border hover:border-danger">🗑️</button>
                   </div>
                 </div>
@@ -81,20 +80,21 @@ export function TablesTab() {
         ))}
       </div>
 
-      {edit && (
-        <Modal title={`Stol №${edit.number} ni tahrirlash`} onClose={() => setEdit(null)}>
-          <label className="block text-sm text-muted mb-1">Raqami</label>
-          <input type="number" value={edit.number} onChange={(e) => setEdit({ ...edit, number: Number(e.target.value) })}
+      {form && (
+        <Modal title={form.id ? 'Stolni tahrirlash' : 'Yangi stol'} onClose={() => setForm(null)}>
+          <label className="block text-sm text-muted mb-1">Stol raqami</label>
+          <input type="number" value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })}
             className="w-full mb-3 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
           <label className="block text-sm text-muted mb-1">Zal</label>
-          <input value={edit.hall} onChange={(e) => setEdit({ ...edit, hall: e.target.value })}
+          <input value={form.hall} onChange={(e) => setForm({ ...form, hall: e.target.value })} list="halls-modal" placeholder="Zal nomi"
             className="w-full mb-3 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
-          <label className="block text-sm text-muted mb-1">Sig'imi</label>
-          <input type="number" value={edit.capacity} onChange={(e) => setEdit({ ...edit, capacity: Number(e.target.value) })}
+          <datalist id="halls-modal">{halls.map((h) => <option key={h} value={h} />)}</datalist>
+          <label className="block text-sm text-muted mb-1">Sig‘imi (kishi)</label>
+          <input type="number" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })}
             className="w-full mb-4 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
           <div className="flex gap-2">
-            <Button variant="ghost" className="flex-1" onClick={() => setEdit(null)}>Bekor</Button>
-            <Button className="flex-1" onClick={saveEdit}>Saqlash</Button>
+            <Button variant="ghost" className="flex-1" onClick={() => setForm(null)}>Bekor</Button>
+            <Button className="flex-1" onClick={save}>{form.id ? 'Saqlash' : 'Qo‘shish'}</Button>
           </div>
         </Modal>
       )}
