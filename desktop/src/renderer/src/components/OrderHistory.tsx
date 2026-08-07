@@ -14,12 +14,31 @@ const PAY_LABEL: Record<string, string> = {
 export function OrderHistory({
   orders,
   onRevert,
+  onRefund,
 }: {
   orders: Order[];
   onRevert?: (order: Order) => Promise<void> | void;
+  // Vozvrat (to'langan chekni qaytarish) — faqat Direktor/Admin sahifalarida beriladi
+  onRefund?: (order: Order, reason: string) => Promise<void> | void;
 }) {
   const [sel, setSel] = useState<Order | null>(null);
   const [reverting, setReverting] = useState(false);
+  const [refundOpen, setRefundOpen] = useState(false);
+  const [refundReason, setRefundReason] = useState('');
+  const [refunding, setRefunding] = useState(false);
+
+  async function doRefund() {
+    if (!sel || !onRefund) return;
+    setRefunding(true);
+    try {
+      await onRefund(sel, refundReason);
+      setSel(null);
+      setRefundOpen(false);
+      setRefundReason('');
+    } finally {
+      setRefunding(false);
+    }
+  }
 
   async function doRevert() {
     if (!sel || !onRevert) return;
@@ -56,8 +75,16 @@ export function OrderHistory({
               </div>
             </div>
             <div className="text-right shrink-0">
-              <StatusBadge status={o.status} />
-              <div className="text-sm font-bold mt-1">{formatSum(o.total ?? 0)}</div>
+              {o.refunded ? (
+                <span className="px-2 py-0.5 rounded-md bg-danger/15 text-danger text-xs font-bold">
+                  ↩ Qaytarilgan
+                </span>
+              ) : (
+                <StatusBadge status={o.status} />
+              )}
+              <div className={`text-sm font-bold mt-1 ${o.refunded ? 'line-through text-muted' : ''}`}>
+                {formatSum(o.total ?? 0)}
+              </div>
             </div>
           </button>
         ))}
@@ -101,6 +128,62 @@ export function OrderHistory({
             >
               {reverting ? 'Qaytarilmoqda...' : '↩ Tayyorlanmoqdaga qaytarish'}
             </button>
+          )}
+
+          {/* Allaqachon qaytarilgan bo'lsa — ma'lumot */}
+          {sel.refunded && (
+            <div className="mt-4 bg-danger/10 border border-danger/30 rounded-xl p-3 text-sm">
+              <div className="font-bold text-danger">↩ Chek qaytarilgan (vozvrat)</div>
+              {sel.refundReason && (
+                <div className="text-muted mt-1">Sabab: {sel.refundReason}</div>
+              )}
+            </div>
+          )}
+
+          {/* Vozvrat — faqat Direktor/Admin (onRefund berilgan) va to'langan, qaytarilmagan chek */}
+          {onRefund && sel.status === OrderStatus.Closed && !sel.refunded && (
+            <div className="mt-4">
+              {!refundOpen ? (
+                <button
+                  onClick={() => setRefundOpen(true)}
+                  className="w-full py-3 rounded-xl border border-danger/50 text-danger font-bold hover:bg-danger/10 transition-all"
+                >
+                  ↩ Vozvrat qilish
+                </button>
+              ) : (
+                <div className="bg-bg border border-border rounded-xl p-3">
+                  <div className="text-sm font-semibold mb-2">
+                    Vozvrat sababi (majburiy):
+                  </div>
+                  <textarea
+                    autoFocus
+                    value={refundReason}
+                    onChange={(e) => setRefundReason(e.target.value)}
+                    rows={2}
+                    placeholder="Masalan: mijoz taomdan voz kechdi"
+                    className="w-full px-3 py-2 rounded-lg bg-surface border border-border outline-none focus:border-primary text-sm"
+                  />
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      onClick={() => {
+                        setRefundOpen(false);
+                        setRefundReason('');
+                      }}
+                      className="flex-1 py-2.5 rounded-lg border border-border text-muted hover:text-text"
+                    >
+                      Bekor
+                    </button>
+                    <button
+                      onClick={doRefund}
+                      disabled={refunding || !refundReason.trim()}
+                      className="flex-1 py-2.5 rounded-lg bg-danger text-white font-bold disabled:opacity-50 hover:brightness-110 transition-all"
+                    >
+                      {refunding ? 'Qaytarilmoqda...' : 'Tasdiqlash'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           <div className="text-xs text-muted mt-3 text-center">Buyurtma vaqti: {formatTime(sel.openedAt)}</div>

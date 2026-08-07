@@ -48,7 +48,7 @@ export const QUEUE_HTML = /* html */ `<!doctype html>
 </head>
 <body>
   <header>
-    <div class="brand">HardWeb Restoran</div>
+    <div class="brand">DasturXon</div>
     <div class="clock" id="clock"></div>
   </header>
   <div class="columns">

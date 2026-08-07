@@ -54,7 +54,7 @@ export function ReceiptPreview({
         {/* Chek qog'ozi */}
         <div className="p-4 overflow-auto">
           <div className="bg-white text-black rounded-md p-4 font-mono text-[13px] leading-snug">
-            <div className="text-center font-bold text-base">HardWeb Restoran</div>
+            <div className="text-center font-bold text-base">DasturXon</div>
             <div className="text-center text-[11px] mb-2">
               Manzil: Toshkent sh.
             </div>

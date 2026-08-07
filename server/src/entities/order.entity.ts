@@ -31,6 +31,19 @@ export class OrderEntity {
   @Column({ name: 'queue_number', type: 'int', nullable: true })
   queueNumber: number | null;
 
+  // Vozvrat (to'langan chek qaytarilishi) — faqat Direktor/Administrator (TZ ruxsatlar)
+  @Column({ default: false })
+  refunded: boolean;
+
+  @Column({ name: 'refund_reason', type: 'text', nullable: true })
+  refundReason: string | null;
+
+  @Column({ name: 'refunded_at', type: 'timestamptz', nullable: true })
+  refundedAt: Date | null;
+
+  @Column({ name: 'refunded_by', type: 'uuid', nullable: true })
+  refundedBy: string | null;
+
   @OneToMany(() => OrderItemEntity, (item) => item.order, {
     cascade: true,
     eager: true,

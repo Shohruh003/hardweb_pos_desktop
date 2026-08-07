@@ -12,6 +12,12 @@ class LoginDto {
   password: string;
 }
 
+class PinDto {
+  @IsString()
+  @MinLength(4)
+  pin: string;
+}
+
 @Controller('auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
@@ -19,6 +25,12 @@ export class AuthController {
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.auth.login(dto.login, dto.password);
+  }
+
+  // PIN orqali kirish (asosiy usul)
+  @Post('login-pin')
+  loginPin(@Body() dto: PinDto) {
+    return this.auth.loginByPin(dto.pin);
   }
 
   // Token tekshirish / joriy foydalanuvchi

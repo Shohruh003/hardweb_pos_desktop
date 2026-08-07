@@ -16,10 +16,10 @@ export function Modal({
       onClick={onClose}
     >
       <div
-        className="bg-surface border border-border rounded-2xl w-[440px] max-h-[90vh] overflow-auto animate-pop-in"
+        className="bg-surface border border-border rounded-2xl w-full max-w-[440px] max-h-[90vh] overflow-auto animate-pop-in"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-5 py-3.5 border-b border-border font-bold flex items-center justify-between">
+        <div className="px-5 py-3.5 border-b border-border font-bold flex items-center justify-between sticky top-0 bg-surface z-10">
           <span>{title}</span>
           <button onClick={onClose} className="text-muted hover:text-text text-xl leading-none">
             ✕

@@ -1,82 +1,105 @@
 import { useEffect, useState } from 'react';
-import { User, UserRole } from '@hardweb-pos/shared';
+import { CAPABILITIES, User, UserRole, isFullAccessRole } from '@hardweb-pos/shared';
 import { Button } from '../../components/ui';
 import { Select } from '../../components/Select';
 import { Modal } from '../../components/Modal';
 import { api } from '../../lib/api';
 import { useConfirm } from '../../state/confirm';
+import { useAuth } from '../../state/auth';
 
-const ROLE_OPTIONS = [
-  { value: UserRole.Waiter, label: 'Ofitsiant' },
-  { value: UserRole.Cook, label: 'Oshpaz' },
-  { value: UserRole.Cashier, label: 'Kassir' },
-  { value: UserRole.Admin, label: 'Administrator' },
-  { value: UserRole.Director, label: 'Direktor' },
-];
-const ROLE_LABEL = Object.fromEntries(ROLE_OPTIONS.map((r) => [r.value, r.label])) as Record<string, string>;
+const ROLE_LABEL: Record<string, string> = {
+  [UserRole.Waiter]: 'Ofitsiant',
+  [UserRole.Cook]: 'Oshpaz',
+  [UserRole.Cashier]: 'Kassir',
+  [UserRole.Admin]: 'Administrator',
+  [UserRole.Director]: 'Direktor',
+  [UserRole.SuperAdmin]: 'Super Admin',
+};
 
 interface StaffForm {
   id?: string;
   name: string;
-  login: string;
   role: string;
-  password: string;
+  pin: string;
   active: boolean;
+  permissions: string[];
 }
 
-// Xodimlarni boshqarish (TZ F-4.3): "+ Yangi xodim" modal orqali, to'liq CRUD
+function randomPin(): string {
+  let s = '';
+  for (let i = 0; i < 4; i++) s += Math.floor(Math.random() * 10);
+  return s;
+}
+
+// Xodimlarni boshqarish — rol + aniq ruxsatlar (capabilities) beriladi.
+// Direktor admin ham yarata oladi; admin faqat oddiy xodimlarni yaratadi.
 export function StaffTab() {
   const confirm = useConfirm();
+  const { user } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
-  const [roleDefs, setRoleDefs] = useState<{ value: string; label: string }[]>(ROLE_OPTIONS);
   const [form, setForm] = useState<StaffForm | null>(null);
+
+  const currentIsDirector = isFullAccessRole(user?.role ?? '');
+  // Kim qaysi rolni bera oladi: direktor — hammasini, admin — faqat oddiy xodimlar
+  const assignableRoles = currentIsDirector
+    ? [UserRole.Waiter, UserRole.Cook, UserRole.Cashier, UserRole.Admin, UserRole.Director]
+    : [UserRole.Waiter, UserRole.Cook, UserRole.Cashier];
 
   async function load() {
     setUsers(await api.get<User[]>('/users'));
-    try {
-      const roles = await api.get<{ key: string; label: string }[]>('/roles');
-      if (roles?.length) setRoleDefs(roles.map((r) => ({ value: r.key, label: r.label })));
-    } catch {
-      /* real server'da /roles bo'lmasligi mumkin */
-    }
   }
   useEffect(() => {
     load().catch(() => {});
   }, []);
 
-  const roleLabel = (key: string) => roleDefs.find((r) => r.value === key)?.label ?? ROLE_LABEL[key] ?? key;
-
   function openAdd() {
-    setForm({ name: '', login: '', role: UserRole.Waiter, password: '', active: true });
+    setForm({ name: '', role: UserRole.Waiter, pin: randomPin(), active: true, permissions: [] });
   }
   function openEdit(u: User) {
-    setForm({ id: u.id, name: u.name, login: u.login, role: u.role, password: '', active: u.active });
+    setForm({ id: u.id, name: u.name, role: u.role, pin: u.pin ?? '', active: u.active, permissions: u.permissions ?? [] });
+  }
+
+  function toggleCap(key: string) {
+    if (!form) return;
+    const has = form.permissions.includes(key);
+    setForm({
+      ...form,
+      permissions: has ? form.permissions.filter((k) => k !== key) : [...form.permissions, key],
+    });
   }
 
   async function save() {
     if (!form || !form.name) return;
-    if (form.id) {
-      const patch: Record<string, unknown> = { name: form.name, role: form.role, active: form.active };
-      if (form.password && form.password.length >= 3) patch.password = form.password;
-      await api.patch(`/users/${form.id}`, patch);
-    } else {
-      if (!form.login || form.password.length < 3) return;
-      await api.post('/users', { name: form.name, login: form.login, role: form.role, password: form.password });
+    const permissions = isFullAccessRole(form.role) ? [] : form.permissions;
+    try {
+      if (form.id) {
+        const patch: Record<string, unknown> = { name: form.name, role: form.role, active: form.active, permissions };
+        if (form.pin && form.pin.length === 4) patch.pin = form.pin;
+        await api.patch(`/users/${form.id}`, patch);
+      } else {
+        if (form.pin.length !== 4) return;
+        await api.post('/users', { name: form.name, role: form.role, pin: form.pin, permissions });
+      }
+      setForm(null);
+      await load();
+    } catch (e) {
+      alert((e as Error).message);
     }
-    setForm(null);
-    await load();
   }
 
   async function toggleActive(u: User) {
     await api.patch(`/users/${u.id}`, { active: !u.active });
     await load();
   }
-
   async function remove(u: User) {
     if (!(await confirm({ title: 'Xodimni o‘chirish', message: `"${u.name}" o‘chirilsinmi?`, danger: true }))) return;
     await api.del(`/users/${u.id}`);
     await load();
   }
+
+  const opsCaps = CAPABILITIES.filter((c) => c.group === 'ops');
+  const manageCaps = CAPABILITIES.filter((c) => c.group === 'manage');
+  const fullAccess = form ? isFullAccessRole(form.role) : false;
 
   return (
     <div className="w-full">
@@ -97,7 +120,10 @@ export function StaffTab() {
                 </div>
                 <div className="min-w-0">
                   <div className="font-semibold truncate">{u.name}</div>
-                  <div className="text-sm text-muted">{u.login} · {roleLabel(u.role)}</div>
+                  <div className="text-sm text-muted">
+                    PIN: <span className="font-mono font-semibold text-text">{u.pin ?? '—'}</span> · {ROLE_LABEL[u.role] ?? u.role}
+                    {!isFullAccessRole(u.role) && (u.permissions?.length ? ` · ${u.permissions.length} ruxsat` : ' · ruxsat yo‘q')}
+                  </div>
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
@@ -118,15 +144,55 @@ export function StaffTab() {
           <label className="block text-sm text-muted mb-1">To‘liq ism</label>
           <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
             className="w-full mb-3 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
-          <label className="block text-sm text-muted mb-1">Login</label>
-          <input value={form.login} disabled={!!form.id} onChange={(e) => setForm({ ...form, login: e.target.value })}
-            className="w-full mb-3 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary disabled:opacity-60" />
-          <label className="block text-sm text-muted mb-1">Rol</label>
-          <Select className="mb-3" value={form.role} onChange={(v) => setForm({ ...form, role: v })} options={roleDefs} />
-          <label className="block text-sm text-muted mb-1">{form.id ? 'Yangi parol (ixtiyoriy)' : 'Parol (kamida 3 belgi)'}</label>
-          <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
-            placeholder={form.id ? "O'zgartirmaslik uchun bo'sh qoldiring" : '••••'}
-            className="w-full mb-3 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
+
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <div>
+              <label className="block text-sm text-muted mb-1">Rol</label>
+              <Select value={form.role} onChange={(v) => setForm({ ...form, role: v })}
+                options={assignableRoles.map((r) => ({ value: r, label: ROLE_LABEL[r] }))} />
+            </div>
+            <div>
+              <label className="block text-sm text-muted mb-1">PIN (4 xonali)</label>
+              <div className="flex gap-1">
+                <input value={form.pin} inputMode="numeric" maxLength={4}
+                  onChange={(e) => setForm({ ...form, pin: e.target.value.replace(/\D/g, '').slice(0, 4) })}
+                  placeholder="1234"
+                  className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary font-mono text-lg tracking-widest" />
+                <Button variant="ghost" onClick={() => setForm({ ...form, pin: randomPin() })}>🎲</Button>
+              </div>
+            </div>
+          </div>
+          <div className="text-xs text-muted mb-3">Bu PIN'ni xodimga ayting — u shu bilan tizimga kiradi.</div>
+
+          {/* Ruxsatlar (capabilities) */}
+          {fullAccess ? (
+            <div className="bg-primary/10 border border-primary/30 rounded-lg p-3 text-sm mb-3">
+              ✅ Direktor/Super Admin — <b>barcha ruxsatlarga</b> ega (avtomatik).
+            </div>
+          ) : (
+            <div className="mb-3">
+              <div className="text-sm font-semibold mb-2">Ruxsatlar — nima qila oladi?</div>
+              <div className="text-xs text-muted mb-1">Operatsion</div>
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                {opsCaps.map((c) => (
+                  <label key={c.key} className="flex items-center gap-2 text-sm cursor-pointer select-none bg-bg border border-border rounded-lg px-2.5 py-2">
+                    <input type="checkbox" checked={form.permissions.includes(c.key)} onChange={() => toggleCap(c.key)} className="w-4 h-4 accent-[#059669]" />
+                    <span>{c.icon} {c.label}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="text-xs text-muted mb-1">Boshqaruv</div>
+              <div className="grid grid-cols-2 gap-2">
+                {manageCaps.map((c) => (
+                  <label key={c.key} className="flex items-center gap-2 text-sm cursor-pointer select-none bg-bg border border-border rounded-lg px-2.5 py-2">
+                    <input type="checkbox" checked={form.permissions.includes(c.key)} onChange={() => toggleCap(c.key)} className="w-4 h-4 accent-[#059669]" />
+                    <span>{c.icon} {c.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
           {form.id && (
             <label className="flex items-center gap-2 mb-4 text-sm cursor-pointer select-none">
               <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} className="w-4 h-4 accent-[#059669]" />

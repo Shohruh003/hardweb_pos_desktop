@@ -13,6 +13,7 @@ import {
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { OrdersGateway } from './orders.gateway';
+import { TelegramModule } from '../telegram/telegram.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { OrdersGateway } from './orders.gateway';
       FiscalDocEntity,
       ExciseCodeEntity,
     ]),
+    TelegramModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService, OrdersGateway],

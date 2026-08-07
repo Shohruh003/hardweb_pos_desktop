@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -17,7 +18,6 @@ import {
   IsString,
   MinLength,
 } from 'class-validator';
-import * as bcrypt from 'bcryptjs';
 import { UserEntity } from '../entities';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -26,21 +26,23 @@ import { UserRole } from '@hardweb-pos/shared';
 
 class CreateUserDto {
   @IsString() name: string;
-  @IsString() login: string;
   @IsEnum(UserRole) role: UserRole;
-  @IsString() @MinLength(3) password: string;
+  @IsString() @MinLength(4) pin: string;
+  @IsOptional() @IsString() login?: string;
+  @IsOptional() permissions?: string[];
 }
 
 class UpdateUserDto {
   @IsOptional() @IsString() name?: string;
   @IsOptional() @IsEnum(UserRole) role?: UserRole;
   @IsOptional() @IsBoolean() active?: boolean;
-  @IsOptional() @IsString() @MinLength(3) password?: string;
+  @IsOptional() @IsString() @MinLength(4) pin?: string;
+  @IsOptional() permissions?: string[];
 }
 
-// Xodimlarni boshqarish — faqat admin (TZ F-4.3)
+// Xodimlarni boshqarish — admin va direktor (direktor admin yaratadi, admin qolganlarni)
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.Admin)
+@Roles(UserRole.Admin, UserRole.Director, UserRole.SuperAdmin)
 @Controller('users')
 export class UsersController {
   constructor(
@@ -51,7 +53,7 @@ export class UsersController {
   @Get()
   async findAll() {
     const list = await this.users.find({ order: { name: 'ASC' } });
-    // parol_hash mijozga yuborilmaydi
+    // parol_hash mijozga yuborilmaydi; PIN ko'rsatiladi (admin xodimga aytadi)
     return list.map(({ passwordHash, ...rest }) => rest);
   }
 
@@ -75,13 +77,19 @@ export class UsersController {
 
   @Post()
   async create(@Body() dto: CreateUserDto) {
-    const passwordHash = await bcrypt.hash(dto.password, 10);
+    // PIN unikal bo'lishi kerak
+    const exists = await this.users.findOne({ where: { pin: dto.pin } });
+    if (exists) {
+      throw new BadRequestException('Bu PIN band — boshqa 4 xonali kod tanlang');
+    }
     const saved = await this.users.save(
       this.users.create({
         name: dto.name,
-        login: dto.login,
+        login: dto.login ?? null,
         role: dto.role,
-        passwordHash,
+        pin: dto.pin,
+        permissions: dto.permissions ?? null,
+        passwordHash: null,
         active: true,
       }),
     );
@@ -95,7 +103,14 @@ export class UsersController {
     if (dto.name !== undefined) patch.name = dto.name;
     if (dto.role !== undefined) patch.role = dto.role;
     if (dto.active !== undefined) patch.active = dto.active;
-    if (dto.password) patch.passwordHash = await bcrypt.hash(dto.password, 10);
+    if (dto.permissions !== undefined) patch.permissions = dto.permissions;
+    if (dto.pin) {
+      const exists = await this.users.findOne({ where: { pin: dto.pin } });
+      if (exists && exists.id !== id) {
+        throw new BadRequestException('Bu PIN band — boshqa kod tanlang');
+      }
+      patch.pin = dto.pin;
+    }
     await this.users.update(id, patch);
     const updated = await this.users.findOne({ where: { id } });
     if (!updated) return null;

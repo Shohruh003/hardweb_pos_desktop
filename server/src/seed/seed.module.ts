@@ -3,6 +3,9 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import {
   CategoryEntity,
   MenuItemEntity,
+  OrderEntity,
+  OrderItemEntity,
+  PaymentEntity,
   TableEntity,
   UserEntity,
 } from '../entities';
@@ -15,6 +18,9 @@ import { SeedService } from './seed.service';
       TableEntity,
       CategoryEntity,
       MenuItemEntity,
+      OrderEntity,
+      OrderItemEntity,
+      PaymentEntity,
     ]),
   ],
   providers: [SeedService],

@@ -1,22 +1,26 @@
 /** @type {import('tailwindcss').Config} */
-// Ranglar shared/src/theme.ts bilan bir xil (ko'k YO'Q, kontrastli).
+// Ranglar CSS o'zgaruvchilari orqali (Dark/Light tema uchun).
+// RGB kanal texnikasi — Tailwind opacity modifikatorlari (bg-danger/15) ishlashi uchun.
+// Qiymatlar index.css ichida :root (dark) va [data-theme="light"] da belgilanadi.
+const c = (v) => `rgb(var(${v}) / <alpha-value>)`;
+
 export default {
   content: ['./src/renderer/**/*.{html,ts,tsx}'],
   theme: {
     extend: {
       colors: {
-        bg: '#15181E',
-        surface: '#1F242D',
-        'surface-hover': '#262C36',
-        border: '#2D333D',
-        text: '#F4F6F8',
-        muted: '#A8B0BD',
-        primary: '#059669',
-        'primary-hover': '#047857',
-        success: '#22C55E',
-        warning: '#F59E0B',
-        danger: '#EF4444',
-        info: '#8B5CF6',
+        bg: c('--c-bg'),
+        surface: c('--c-surface'),
+        'surface-hover': c('--c-surface-hover'),
+        border: c('--c-border'),
+        text: c('--c-text'),
+        muted: c('--c-muted'),
+        primary: c('--c-primary'),
+        'primary-hover': c('--c-primary-hover'),
+        success: c('--c-success'),
+        warning: c('--c-warning'),
+        danger: c('--c-danger'),
+        info: c('--c-info'),
       },
     },
   },

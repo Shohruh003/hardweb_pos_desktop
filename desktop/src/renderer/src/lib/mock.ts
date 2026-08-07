@@ -230,17 +230,32 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
   // Orders
   if (path === '/orders' && method === 'GET') return ok(orders.filter((o) => o.status !== OrderStatus.Closed));
   if (path === '/orders/history' && method === 'GET') {
-    const wid = new URLSearchParams(query || '').get('waiterId');
-    let list = orders.slice();
-    if (wid) list = list.filter((o) => o.waiterId === wid);
-    const enriched = list
+    const q = new URLSearchParams(query || '');
+    const wid = q.get('waiterId');
+    const status = q.get('status');
+    const paymentType = q.get('paymentType');
+    const hall = q.get('hall');
+    const search = q.get('search');
+    const page = Math.max(1, Number(q.get('page')) || 1);
+    const limit = Math.min(100, Math.max(1, Number(q.get('limit')) || 20));
+
+    let list = orders
       .map((o) => ({
         ...o,
         hall: tables.find((t) => t.id === o.tableId)?.hall ?? null,
         paymentType: payments.find((p) => p.orderId === o.id)?.type,
       }))
       .sort((a, b) => b.openedAt.localeCompare(a.openedAt));
-    return ok(enriched);
+
+    if (wid) list = list.filter((o) => o.waiterId === wid);
+    if (status) list = list.filter((o) => o.status === status);
+    if (paymentType) list = list.filter((o) => o.paymentType === paymentType);
+    if (hall) list = list.filter((o) => o.hall === hall);
+    if (search) list = list.filter((o) => String(o.tableNumber ?? '').includes(search));
+
+    const total = list.length;
+    const items = list.slice((page - 1) * limit, page * limit);
+    return ok({ items, total, page, limit, hasMore: page * limit < total });
   }
   if (seg[0] === 'orders' && seg[1] && !seg[2] && method === 'GET') {
     return ok(orders.find((o) => o.id === seg[1]));
@@ -266,6 +281,15 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
       o.status = body.status;
       if (body.status === OrderStatus.Ready) o.items.forEach((it) => (it.status = OrderItemStatus.Ready));
       emit(SOCKET_EVENTS.ORDER_UPDATED, { orderId: o.id, status: o.status, order: o });
+    }
+    return ok(o);
+  }
+  if (seg[0] === 'orders' && seg[2] === 'refund' && method === 'POST') {
+    const o = orders.find((x) => x.id === seg[1]);
+    if (o) {
+      o.refunded = true;
+      o.refundReason = body?.reason ?? null;
+      o.refundedAt = new Date().toISOString();
     }
     return ok(o);
   }

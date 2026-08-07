@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Param,
   Patch,
@@ -10,7 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { OrdersService } from './orders.service';
+import { HistoryQuery, OrdersService } from './orders.service';
 import {
   AddExciseDto,
   CreateOrderDto,
@@ -29,9 +30,10 @@ export class OrdersController {
   }
 
   // Tarix — ':id' dan oldin turishi shart (aks holda 'history' id deb qabul qilinadi)
+  // Filtr/pagination: ?page=1&limit=20&waiterId=&status=&dateFrom=&dateTo=&paymentType=&hall=&search=
   @Get('history')
-  history(@Query('waiterId') waiterId?: string) {
-    return this.orders.history(waiterId);
+  history(@Query() query: HistoryQuery) {
+    return this.orders.history(query);
   }
 
   @Get(':id')
@@ -54,6 +56,20 @@ export class OrdersController {
   @Post(':id/excise')
   addExcise(@Param('id') id: string, @Body() dto: AddExciseDto) {
     return this.orders.addExciseCodes(id, dto.codes);
+  }
+
+  // Vozvrat — 'refund' ruxsatiga ega xodim (Direktor/SuperAdmin avtomatik ega).
+  @Post(':id/refund')
+  refund(
+    @Param('id') id: string,
+    @Body() dto: { reason?: string },
+    @Request() req: any,
+  ) {
+    const perms: string[] = req.user?.permissions ?? [];
+    if (!perms.includes('refund')) {
+      throw new ForbiddenException('Vozvrat qilish ruxsati yo‘q');
+    }
+    return this.orders.refund(id, dto.reason ?? '', req.user.id, req.user.name);
   }
 
   // Kassa: to'lov va hisobni yopish

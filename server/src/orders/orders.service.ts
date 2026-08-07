@@ -25,6 +25,28 @@ import {
 } from '@hardweb-pos/shared';
 import { CreateOrderDto, PayOrderDto, UpdateOrderStatusDto } from './dto';
 import { OrdersGateway } from './orders.gateway';
+import { TelegramService } from '../telegram/telegram.service';
+
+// Tarix uchun filtr/pagination parametrlari
+export interface HistoryQuery {
+  page?: number | string;
+  limit?: number | string;
+  waiterId?: string;
+  status?: string;
+  hall?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  paymentType?: string;
+  search?: string;
+}
+
+export interface PaginatedOrders {
+  items: Order[];
+  total: number;
+  page: number;
+  limit: number;
+  hasMore: boolean;
+}
 
 @Injectable()
 export class OrdersService {
@@ -43,16 +65,26 @@ export class OrdersService {
     private readonly fiscalDocs: Repository<FiscalDocEntity>,
     private readonly dataSource: DataSource,
     private readonly gateway: OrdersGateway,
+    private readonly telegram: TelegramService,
   ) {}
 
-  // Faol (yopilmagan) buyurtmalar — KDS va kassa uchun
+  // Faol (yopilmagan) buyurtmalar — KDS va kassa uchun (zal bilan)
   async findActive(): Promise<Order[]> {
     const list = await this.orders.find({
       where: { status: Not(OrderStatus.Closed) },
       order: { openedAt: 'ASC' }, // eng eskisi yuqorida (TZ F-2.5)
     });
-    const tableMap = await this.tableNumberMap(list.map((o) => o.tableId));
-    return list.map((o) => this.toDto(o, tableMap.get(o.tableId)));
+    if (list.length === 0) return [];
+    const tableRows = await this.tables.find({
+      where: { id: In([...new Set(list.map((o) => o.tableId))]) },
+    });
+    const tableNo = new Map(tableRows.map((t) => [t.id, t.number]));
+    const tableHall = new Map(tableRows.map((t) => [t.id, t.hall]));
+    return list.map((o) => {
+      const dto = this.toDto(o, tableNo.get(o.tableId));
+      dto.hall = tableHall.get(o.tableId) ?? null;
+      return dto;
+    });
   }
 
   async findOne(id: string): Promise<Order> {
@@ -62,15 +94,62 @@ export class OrdersService {
     return this.toDto(order, table?.number);
   }
 
-  // Buyurtmalar tarixi (barcha holatlar). waiterId berilsa — faqat o'sha ofitsiantniki.
-  // Cheklar/shikoyatlar uchun: nima yeyilgan, qachon, qancha, qanday to'langan.
-  async history(waiterId?: string, limit = 100): Promise<Order[]> {
-    const list = await this.orders.find({
-      where: waiterId ? { waiterId } : {},
-      order: { openedAt: 'DESC' },
-      take: limit,
-    });
-    if (list.length === 0) return [];
+  // Buyurtmalar tarixi — pagination + filtrlar bilan (cheklar/shikoyatlar uchun).
+  // Katta hajmda ham tez ishlashi uchun sahifalab (20 tadan) qaytaramiz.
+  async history(query: HistoryQuery): Promise<PaginatedOrders> {
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
+
+    const qb = this.orders
+      .createQueryBuilder('o')
+      // stol ma'lumoti — filtr (zal/raqam) uchun join
+      .leftJoin(TableEntity, 't', 't.id = o.tableId');
+
+    if (query.waiterId) {
+      qb.andWhere('o.waiterId = :waiterId', { waiterId: query.waiterId });
+    }
+    if (query.status) {
+      qb.andWhere('o.status = :status', { status: query.status });
+    }
+    if (query.hall) {
+      qb.andWhere('t.hall = :hall', { hall: query.hall });
+    }
+    if (query.dateFrom) {
+      qb.andWhere('o.openedAt >= :dateFrom', { dateFrom: query.dateFrom });
+    }
+    if (query.dateTo) {
+      qb.andWhere('o.openedAt <= :dateTo', { dateTo: query.dateTo });
+    }
+    if (query.search) {
+      // stol raqami bo'yicha qidiruv
+      qb.andWhere('CAST(t.number AS TEXT) LIKE :search', {
+        search: `%${query.search}%`,
+      });
+    }
+    if (query.paymentType) {
+      qb.andWhere(
+        `o.id IN ${qb
+          .subQuery()
+          .select('p.orderId')
+          .from(PaymentEntity, 'p')
+          .where('p.type = :pt')
+          .getQuery()}`,
+      ).setParameter('pt', query.paymentType);
+    }
+
+    const total = await qb.getCount();
+    const list = await qb
+      .orderBy('o.openedAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getMany();
+
+    const items = list.length ? await this.enrichHistory(list) : [];
+    return { items, total, page, limit, hasMore: page * limit < total };
+  }
+
+  // Sahifadagi buyurtmalarni stol/ofitsiant/to'lov ma'lumoti bilan boyitamiz
+  private async enrichHistory(list: OrderEntity[]): Promise<Order[]> {
     const tableRows = await this.tables.find({
       where: { id: In([...new Set(list.map((o) => o.tableId))]) },
     });
@@ -115,27 +194,49 @@ export class OrdersService {
     const menu = await this.menuItems.find({ where: { id: In(menuIds) } });
     const menuById = new Map(menu.map((m) => [m.id, m]));
 
+    const buildItems = (manager: typeof this.dataSource.manager) =>
+      dto.items.map((i) => {
+        const mi = menuById.get(i.menuItemId);
+        if (!mi) {
+          throw new BadRequestException(`Taom topilmadi: ${i.menuItemId}`);
+        }
+        return manager.create(OrderItemEntity, {
+          menuItemId: mi.id,
+          menuItemName: mi.name,
+          price: mi.price,
+          quantity: i.quantity,
+          note: i.note ?? null,
+          status: OrderItemStatus.Pending,
+          exciseRequired: mi.exciseRequired,
+          exciseCode: null,
+        });
+      });
+
+    // Agar shu stolda ochiq (yopilmagan) buyurtma bo'lsa — yangi taomlarni
+    // o'sha buyurtmaga qo'shamiz (mijoz keyinroq qo'shimcha buyursa).
+    const existing = await this.orders.findOne({
+      where: { tableId: dto.tableId, status: Not(OrderStatus.Closed) },
+      order: { openedAt: 'DESC' },
+    });
+    if (existing) {
+      const newItems = buildItems(this.dataSource.manager);
+      existing.items = [...(existing.items || []), ...newItems];
+      // Yangi taomlar tayyorlanishi kerak — buyurtma yana faollashadi
+      if (existing.status === OrderStatus.Ready) {
+        existing.status = OrderStatus.Cooking;
+      }
+      const savedExisting = await this.orders.save(existing);
+      const dtoOut = this.toDto(savedExisting, table.number);
+      this.gateway.emitOrderUpdated(dtoOut); // -> KDS yangi taomlarni ko'radi
+      return dtoOut;
+    }
+
     const saved = await this.dataSource.transaction(async (manager) => {
       const order = manager.create(OrderEntity, {
         tableId: dto.tableId,
         waiterId,
         status: OrderStatus.Accepted,
-        items: dto.items.map((i) => {
-          const mi = menuById.get(i.menuItemId);
-          if (!mi) {
-            throw new BadRequestException(`Taom topilmadi: ${i.menuItemId}`);
-          }
-          return manager.create(OrderItemEntity, {
-            menuItemId: mi.id,
-            menuItemName: mi.name,
-            price: mi.price,
-            quantity: i.quantity,
-            note: i.note ?? null,
-            status: OrderItemStatus.Pending,
-            exciseRequired: mi.exciseRequired, // aksiz bayrog'ini ko'chiramiz
-            exciseCode: null,
-          });
-        }),
+        items: buildItems(manager),
       });
       const result = await manager.save(order);
 
@@ -276,6 +377,43 @@ export class OrdersService {
     return { order: dtoOut, receipt };
   }
 
+  // Vozvrat — to'langan (yopilgan) chekni qaytarish. Faqat Direktor/Administrator
+  // (ruxsat controllerda RolesGuard bilan tekshiriladi). Sabab jurnalga yoziladi.
+  async refund(
+    id: string,
+    reason: string,
+    userId: string,
+    byName = 'Admin',
+  ): Promise<Order> {
+    const order = await this.orders.findOne({ where: { id } });
+    if (!order) throw new NotFoundException('Buyurtma topilmadi');
+    if (order.status !== OrderStatus.Closed) {
+      throw new BadRequestException('Faqat to‘langan (yopilgan) chek qaytariladi');
+    }
+    if (order.refunded) {
+      throw new BadRequestException('Bu chek allaqachon qaytarilgan');
+    }
+    order.refunded = true;
+    order.refundReason = reason?.trim() || null;
+    order.refundedAt = new Date();
+    order.refundedBy = userId;
+    const saved = await this.orders.save(order);
+    const table = await this.tables.findOne({ where: { id: saved.tableId } });
+    const dto = this.toDto(saved, table?.number);
+
+    // Direktorga Telegram orqali vozvrat cheki (TZ #10) — xato bo'lsa ham davom etadi
+    this.telegram
+      .notifyRefund({
+        tableNumber: table?.number,
+        total: dto.total ?? 0,
+        reason: order.refundReason ?? '',
+        by: byName,
+      })
+      .catch(() => undefined);
+
+    return dto;
+  }
+
   private toDto(o: OrderEntity, tableNumber?: number): Order {
     const total = (o.items || []).reduce(
       (sum, it) => sum + Number(it.price) * it.quantity,
@@ -291,6 +429,9 @@ export class OrdersService {
       queueNumber: o.queueNumber ?? null,
       tableNumber,
       total,
+      refunded: o.refunded ?? false,
+      refundReason: o.refundReason ?? null,
+      refundedAt: o.refundedAt ? o.refundedAt.toISOString() : null,
       items: (o.items || []).map((it) => ({
         id: it.id,
         orderId: it.orderId,

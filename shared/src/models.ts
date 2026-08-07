@@ -16,8 +16,10 @@ export interface User {
   id: string;
   name: string; // ism
   role: UserRole; // rol
-  login: string;
+  login?: string | null;
+  pin?: string | null; // 4 xonali kirish kodi
   active: boolean; // faol
+  permissions?: string[]; // qo'shimcha ruxsatlar (direktor beradi)
   // parol_hash faqat serverda saqlanadi, mijozga yuborilmaydi
 }
 
@@ -44,6 +46,7 @@ export interface MenuItem {
   price: number; // narx
   categoryId: string; // kategoriya_id
   image?: string | null; // rasm
+  ingredients?: string | null; // taomga ketadigan mahsulotlar
   available: boolean; // mavjud
   exciseRequired: boolean; // aksiz_kerakmi (2-bosqich)
 }
@@ -79,6 +82,9 @@ export interface Order {
   total?: number; // jami summa
   waiterName?: string | null; // ofitsiant ismi (tarix uchun)
   paymentType?: PaymentType; // to'lov turi (yopilgan bo'lsa)
+  refunded?: boolean; // vozvrat qilinganmi
+  refundReason?: string | null; // vozvrat sababi
+  refundedAt?: string | null; // vozvrat vaqti (ISO)
 }
 
 /** payments — to'lovlar */

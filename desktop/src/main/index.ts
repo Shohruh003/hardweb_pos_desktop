@@ -2,12 +2,14 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import { join } from 'path';
 import {
   getConfig,
+  listPrinters,
+  printKitchen,
   printReceipt,
   setConfig,
   testPrint,
   PrinterConfig,
 } from './printer';
-import type { Receipt } from '@hardweb-pos/shared';
+import type { Order, Receipt } from '@hardweb-pos/shared';
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -38,6 +40,10 @@ function createWindow(): void {
 ipcMain.handle('printer:print-receipt', (_e, receipt: Receipt) =>
   printReceipt(receipt),
 );
+ipcMain.handle('printer:print-kitchen', (_e, order: Order) =>
+  printKitchen(order),
+);
+ipcMain.handle('printer:list', () => listPrinters());
 ipcMain.handle('printer:test', () => testPrint());
 ipcMain.handle('printer:get-config', () => getConfig());
 ipcMain.handle('printer:set-config', (_e, cfg: Partial<PrinterConfig>) =>

@@ -1,6 +1,6 @@
 // Minimal ESC/POS enkoder (tashqi kutubxonasiz) — TZ 6-bo'lim.
 // Chekni bayt buferiga aylantiradi. Termal printerlar uchun standart protokol.
-import type { Receipt, ReceiptLine } from '@hardweb-pos/shared';
+import type { Order, Receipt, ReceiptLine } from '@hardweb-pos/shared';
 
 const ESC = 0x1b;
 const GS = 0x1d;
@@ -18,12 +18,19 @@ class EscPosBuilder {
     return this;
   }
 
+  // Tayyor bayt buferini qo'shish (masalan raster rasm)
+  rawBuffer(buf: Buffer) {
+    this.chunks.push(buf);
+    return this;
+  }
+
   // Lotin/raqamlardan tashqari belgilarni ASCII'ga moslab tozalash
   private encode(text: string): Buffer {
     const clean = text
       .replace(/[‘’ʻ]/g, "'")
       .replace(/[“”]/g, '"')
       .replace(/[—–]/g, '-')
+      .replace(/№/g, 'No ')
       .replace(/[^\x00-\x7F]/g, '?'); // qolgan non-ASCII
     return Buffer.from(clean, 'ascii');
   }
@@ -101,10 +108,10 @@ function money(n: number): string {
 }
 
 // Mijoz cheki (TZ F-6.3): restoran nomi, stol, ofitsiant, taomlar, jami, to'lov
-export function buildReceiptBuffer(receipt: Receipt, width = 32): Buffer {
+export function buildReceiptBuffer(receipt: Receipt, width = 32, autoCut = true): Buffer {
   const b = new EscPosBuilder(width);
 
-  b.align('center').bold(true).size(true).line('HardWeb Restoran').size(false);
+  b.align('center').bold(true).size(true).line('DasturXon').size(false);
   b.bold(false).line('Toshkent sh.');
   b.divider();
 
@@ -139,6 +146,29 @@ export function buildReceiptBuffer(receipt: Receipt, width = 32): Buffer {
     b.line('[ Fiskal QR uchun joy ]');
   }
 
-  b.feed(1).line('Rahmat! Yana keling').feed(3).cut();
+  b.feed(1).line('Rahmat! Yana keling').feed(3);
+  if (autoCut) b.cut();
+  return b.build();
+}
+
+// Oshxona cheki (KDS/oshpaz uchun) — narxsiz, katta shrift: stol, vaqt, taomlar.
+// Oshxonaga qo'yilgan LAN printerlarga yuboriladi.
+export function buildKitchenTicketBuffer(order: Order, width = 48, autoCut = true): Buffer {
+  const b = new EscPosBuilder(width);
+
+  b.align('center').bold(true).size(true).line('* OSHXONA *').size(false);
+  b.bold(true).size(true).line(`STOL №${order.tableNumber ?? '-'}`).size(false);
+  b.bold(false).line(new Date(order.openedAt).toLocaleTimeString('uz-UZ'));
+  b.divider();
+
+  b.align('left');
+  (order.items || []).forEach((it) => {
+    b.bold(true).size(true).line(`${it.quantity} x ${it.menuItemName}`).size(false).bold(false);
+    if (it.note) b.line(`   >> ${it.note}`);
+  });
+
+  b.divider();
+  b.feed(2);
+  if (autoCut) b.cut();
   return b.build();
 }

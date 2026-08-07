@@ -46,14 +46,14 @@ export class TablesController {
   // --- Boshqaruv (faqat admin) — TZ F-4.2 ---
 
   @UseGuards(RolesGuard)
-  @Roles(UserRole.Admin)
+  @Roles(UserRole.Admin, UserRole.Director, UserRole.SuperAdmin)
   @Post()
   create(@Body() dto: TableDto) {
     return this.tables.save(this.tables.create(dto));
   }
 
   @UseGuards(RolesGuard)
-  @Roles(UserRole.Admin)
+  @Roles(UserRole.Admin, UserRole.Director, UserRole.SuperAdmin)
   @Patch(':id')
   async update(@Param('id') id: string, @Body() dto: TablePatchDto) {
     await this.tables.update(id, dto);
@@ -61,7 +61,7 @@ export class TablesController {
   }
 
   @UseGuards(RolesGuard)
-  @Roles(UserRole.Admin)
+  @Roles(UserRole.Admin, UserRole.Director, UserRole.SuperAdmin)
   @Delete(':id')
   async remove(@Param('id') id: string) {
     await this.tables.delete(id);

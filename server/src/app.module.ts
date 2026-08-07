@@ -10,6 +10,11 @@ import { OrdersModule } from './orders/orders.module';
 import { UsersModule } from './users/users.module';
 import { QueueModule } from './queue/queue.module';
 import { ReportsModule } from './reports/reports.module';
+import { ExpensesModule } from './expenses/expenses.module';
+import { TelegramModule } from './telegram/telegram.module';
+import { SettingsModule } from './settings/settings.module';
+import { TerminalsModule } from './terminals/terminals.module';
+import { MaintenanceModule } from './maintenance/maintenance.module';
 import { SyncModule } from './sync/sync.module';
 import { SeedModule } from './seed/seed.module';
 
@@ -36,6 +41,11 @@ import { SeedModule } from './seed/seed.module';
     UsersModule,
     QueueModule,
     ReportsModule,
+    ExpensesModule,
+    TelegramModule,
+    SettingsModule,
+    TerminalsModule,
+    MaintenanceModule,
     SyncModule,
     SeedModule,
   ],

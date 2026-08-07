@@ -41,7 +41,7 @@ export function QueueScreen() {
   return (
     <div className="h-full flex flex-col bg-bg text-text">
       <header className="flex items-center justify-between px-8 py-4 border-b border-border">
-        <div className="text-primary font-extrabold text-2xl">HardWeb Restoran</div>
+        <div className="text-primary font-extrabold text-2xl">DasturXon</div>
         <div className="flex items-center gap-4">
           {MOCK && <DemoSwitcher />}
           <div className="text-2xl text-muted">{now}</div>

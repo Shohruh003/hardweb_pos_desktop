@@ -5,6 +5,7 @@ import { api, setToken } from '../lib/api';
 interface AuthState {
   user: User | null;
   login: (login: string, password: string) => Promise<void>;
+  loginByPin: (pin: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -31,6 +32,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(res.user);
   }
 
+  async function loginByPin(pin: string) {
+    const res = await api.post<LoginResponse>('/auth/login-pin', { pin });
+    setToken(res.token);
+    localStorage.setItem('user', JSON.stringify(res.user));
+    setUser(res.user);
+  }
+
   function logout() {
     setToken(null);
     localStorage.removeItem('user');
@@ -38,7 +46,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>
+    <AuthContext.Provider value={{ user, login, loginByPin, logout }}>
       {children}
     </AuthContext.Provider>
   );

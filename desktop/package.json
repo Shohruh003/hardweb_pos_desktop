@@ -2,8 +2,8 @@
   "name": "@hardweb-pos/desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "HardWeb POS terminal ilovasi (Electron + React)",
-  "author": "HardWeb",
+  "description": "DasturXon terminal ilovasi (Electron + React)",
+  "author": "DasturXon",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -15,8 +15,8 @@
     "dist:mock": "electron-vite build --mode mock && electron-builder --win"
   },
   "build": {
-    "appId": "com.hardweb.pos",
-    "productName": "HardWeb POS",
+    "appId": "com.dasturxon.pos",
+    "productName": "DasturXon",
     "electronVersion": "31.3.1",
     "directories": {
       "output": "release"
@@ -33,7 +33,7 @@
       "perMachine": false,
       "createDesktopShortcut": true,
       "runAfterFinish": true,
-      "artifactName": "HardWeb-POS-Setup-${version}.${ext}"
+      "artifactName": "DasturXon-Setup-${version}.${ext}"
     }
   },
   "devDependencies": {

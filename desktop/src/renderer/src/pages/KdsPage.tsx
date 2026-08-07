@@ -5,6 +5,7 @@ import { StatusBadge, formatTime, minutesSince } from '../components/ui';
 import { OrderHistory } from '../components/OrderHistory';
 import { api } from '../lib/api';
 import { getSocket } from '../lib/socket';
+import { useI18n } from '../state/i18n';
 
 // Oshxona ekrani (KDS) — TZ 5.2. Faqat yangi va tayyorlanayotgan buyurtmalar;
 // tayyor bo'lganlar ekrandan chiqadi (qaytarish imkoni bilan). Tarix alohida tabda.
@@ -14,6 +15,7 @@ export function KdsPage() {
   const [history, setHistory] = useState<Order[]>([]);
   const [now, setNow] = useState(Date.now());
   const [undo, setUndo] = useState<{ id: string; table?: number } | null>(null);
+  const { t } = useI18n();
   const undoTimer = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -41,7 +43,11 @@ export function KdsPage() {
   }, []);
 
   useEffect(() => {
-    if (view === 'history') api.get<Order[]>('/orders/history').then(setHistory).catch(() => {});
+    if (view === 'history')
+      api
+        .get<{ items: Order[] }>('/orders/history?limit=50')
+        .then((r) => setHistory(r.items))
+        .catch(() => {});
   }, [view, orders]);
 
   async function advance(order: Order) {
@@ -67,22 +73,22 @@ export function KdsPage() {
     .sort((a, b) => a.openedAt.localeCompare(b.openedAt));
 
   return (
-    <AppShell title="Oshxona ekrani (KDS)">
+    <AppShell title={t('title.kds')}>
       <div className="h-full flex flex-col">
         {/* Tablar */}
-        <div className="flex gap-2 px-6 pt-4">
+        <div className="flex gap-2 px-3 sm:px-6 pt-3 sm:pt-4">
           <Tab active={view === 'board'} onClick={() => setView('board')}>
-            Faol buyurtmalar
+            {t('kds.active')}
           </Tab>
           <Tab active={view === 'history'} onClick={() => setView('history')}>
-            Tarix
+            {t('kds.history')}
           </Tab>
         </div>
 
         {view === 'board' ? (
-          <div className="flex-1 overflow-auto p-6 pb-24">
+          <div className="flex-1 overflow-auto p-3 sm:p-6 pb-24">
             {visible.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-muted">Hozircha yangi buyurtma yo‘q</div>
+              <div className="h-full flex items-center justify-center text-muted">{t('kds.noNew')}</div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {visible.map((order, idx) => {
@@ -125,7 +131,7 @@ export function KdsPage() {
                           order.status === OrderStatus.Accepted ? 'bg-warning text-black' : 'bg-success text-white'
                         }`}
                       >
-                        {order.status === OrderStatus.Accepted ? <>🔥 Boshlash</> : <>✅ Tayyor</>}
+                        {order.status === OrderStatus.Accepted ? <>🔥 {t('kds.startCooking')}</> : <>✅ {t('kds.ready')}</>}
                       </button>
                     </div>
                   );
@@ -140,7 +146,7 @@ export function KdsPage() {
                 orders={history}
                 onRevert={async (o) => {
                   await api.patch(`/orders/${o.id}/status`, { status: OrderStatus.Cooking });
-                  setHistory(await api.get<Order[]>('/orders/history'));
+                  setHistory((await api.get<{ items: Order[] }>('/orders/history?limit=50')).items);
                 }}
               />
             </div>

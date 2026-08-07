@@ -17,6 +17,10 @@ export class MenuItemEntity {
   @Column({ nullable: true, type: 'text' })
   image: string | null;
 
+  // Taomga ketadigan mahsulotlar/ingredientlar (matn — har birini yangi qatordan)
+  @Column({ nullable: true, type: 'text' })
+  ingredients: string | null;
+
   @Column({ default: true })
   available: boolean;
 

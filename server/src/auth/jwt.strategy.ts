@@ -15,6 +15,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
   // Tokendagi payload req.user ga aylanadi
   async validate(payload: any) {
-    return { id: payload.sub, role: payload.role, name: payload.name };
+    return {
+      id: payload.sub,
+      role: payload.role,
+      name: payload.name,
+      permissions: payload.permissions ?? [],
+    };
   }
 }

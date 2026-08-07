@@ -9,13 +9,15 @@ import {
 } from '@hardweb-pos/shared';
 import { AppShell } from '../components/AppShell';
 import { formatSum } from '../components/ui';
+import { SettingsPanel } from '../components/SettingsPanel';
 import { api } from '../lib/api';
 import { getSocket } from '../lib/socket';
+import { useI18n } from '../state/i18n';
 
-const PERIODS: { key: ReportPeriod; label: string }[] = [
-  { key: 'day', label: 'Bugun' },
-  { key: 'week', label: '7 kun' },
-  { key: 'month', label: '30 kun' },
+const PERIOD_KEYS: { key: ReportPeriod; tkey: string }[] = [
+  { key: 'day', tkey: 'filter.today' },
+  { key: 'week', tkey: 'filter.week' },
+  { key: 'month', tkey: 'filter.month' },
 ];
 
 const PAYMENT_LABEL: Record<PaymentType, string> = {
@@ -26,7 +28,9 @@ const PAYMENT_LABEL: Record<PaymentType, string> = {
 
 // Direktor hisobotlari (TZ 5.5) — lokal serverdan, deyarli jonli
 export function DirectorPage() {
+  const { t } = useI18n();
   const [period, setPeriod] = useState<ReportPeriod>('day');
+  const [showSettings, setShowSettings] = useState(false);
   const [summary, setSummary] = useState<ReportSummary | null>(null);
   const [topItems, setTopItems] = useState<TopItem[]>([]);
   const [waiters, setWaiters] = useState<WaiterStat[]>([]);
@@ -61,35 +65,43 @@ export function DirectorPage() {
   );
 
   return (
-    <AppShell title="Direktor — hisobotlar">
-      <div className="h-full overflow-auto p-6">
-        {/* Davr tanlash */}
-        <div className="flex gap-2 mb-6">
-          {PERIODS.map((p) => (
+    <AppShell title={t('title.director')}>
+      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
+      <div className="h-full overflow-auto p-3 sm:p-6">
+        {/* Davr tanlash + sozlamalar */}
+        <div className="flex items-center gap-2 mb-4 sm:mb-6">
+          {PERIOD_KEYS.map((p) => (
             <button
               key={p.key}
               onClick={() => setPeriod(p.key)}
-              className={`px-5 py-2.5 rounded-lg font-semibold ${
+              className={`px-4 sm:px-5 py-2.5 rounded-lg font-semibold ${
                 period === p.key
                   ? 'bg-primary text-white'
                   : 'bg-surface border border-border text-muted hover:text-text'
               }`}
             >
-              {p.label}
+              {t(p.tkey)}
             </button>
           ))}
+          <button
+            onClick={() => setShowSettings(true)}
+            className="ml-auto px-3 py-2.5 rounded-lg bg-surface border border-border hover:border-primary font-semibold"
+            title="Sozlamalar"
+          >
+            ⚙️
+          </button>
         </div>
 
         {/* Asosiy ko'rsatkichlar */}
-        <div className="grid grid-cols-3 gap-4 mb-6">
-          <StatCard label="Tushum" value={formatSum(summary?.revenue ?? 0)} accent />
-          <StatCard label="Hisoblar soni" value={String(summary?.ordersCount ?? 0)} />
-          <StatCard label="O‘rtacha chek" value={formatSum(summary?.avgCheck ?? 0)} />
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-4 sm:mb-6">
+          <StatCard label={t('director.revenue')} value={formatSum(summary?.revenue ?? 0)} accent />
+          <StatCard label={t('director.ordersCount')} value={String(summary?.ordersCount ?? 0)} />
+          <StatCard label={t('director.avgCheck')} value={formatSum(summary?.avgCheck ?? 0)} />
         </div>
 
-        <div className="grid grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
           {/* To'lov turlari */}
-          <Panel title="To‘lov turlari bo‘yicha">
+          <Panel title={t('director.byPayment')}>
             {summary && summary.paymentBreakdown.length > 0 ? (
               summary.paymentBreakdown.map((p) => (
                 <Bar
@@ -106,7 +118,7 @@ export function DirectorPage() {
           </Panel>
 
           {/* Ofitsiantlar statistikasi */}
-          <Panel title="Ofitsiantlar bo‘yicha">
+          <Panel title={t('director.byWaiter')}>
             {waiters.length > 0 ? (
               waiters.map((w) => (
                 <Bar
@@ -123,7 +135,7 @@ export function DirectorPage() {
           </Panel>
 
           {/* Eng ko'p sotilgan taomlar */}
-          <Panel title="Eng ko‘p sotilgan taomlar" wide>
+          <Panel title={t('director.topItems')} wide>
             {topItems.length > 0 ? (
               topItems.map((t) => (
                 <Bar
@@ -177,7 +189,7 @@ function Panel({
   return (
     <div
       className={`bg-surface border border-border rounded-2xl p-5 animate-card-in ${
-        wide ? 'col-span-2' : ''
+        wide ? 'lg:col-span-2' : ''
       }`}
     >
       <div className="font-bold mb-4">{title}</div>
@@ -214,5 +226,6 @@ function Bar({
 }
 
 function Empty() {
-  return <div className="text-muted text-sm">Ma‘lumot yo‘q</div>;
+  const { t } = useI18n();
+  return <div className="text-muted text-sm">{t('common.noData')}</div>;
 }

@@ -1,10 +1,20 @@
-import type { Receipt } from '@hardweb-pos/shared';
+import type { Order, Receipt } from '@hardweb-pos/shared';
 
-export interface PrinterConfig {
-  type: 'network' | 'none';
+export interface KitchenPrinter {
+  name: string;
   host: string;
   port: number;
   width: number;
+}
+
+export interface PrinterConfig {
+  type: 'network' | 'usb' | 'none';
+  host: string;
+  port: number;
+  width: number;
+  printerName: string;
+  autoCut: boolean;
+  kitchen: KitchenPrinter[];
 }
 export interface PrintResult {
   ok: boolean;
@@ -19,7 +29,9 @@ declare global {
       version: string;
       printer: {
         printReceipt: (receipt: Receipt) => Promise<PrintResult>;
+        printKitchen: (order: Order) => Promise<PrintResult>;
         test: () => Promise<PrintResult>;
+        list: () => Promise<string[]>;
         getConfig: () => Promise<PrinterConfig>;
         setConfig: (cfg: Partial<PrinterConfig>) => Promise<PrinterConfig>;
       };

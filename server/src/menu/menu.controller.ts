@@ -34,6 +34,7 @@ class MenuItemDto {
   @IsNumber() @Min(0) price: number;
   @IsUUID() categoryId: string;
   @IsOptional() @IsString() image?: string;
+  @IsOptional() @IsString() ingredients?: string;
   @IsOptional() @IsBoolean() available?: boolean;
   @IsOptional() @IsBoolean() exciseRequired?: boolean;
 }
@@ -42,6 +43,7 @@ class MenuItemPatchDto {
   @IsOptional() @IsString() name?: string;
   @IsOptional() @IsNumber() @Min(0) price?: number;
   @IsOptional() @IsUUID() categoryId?: string;
+  @IsOptional() @IsString() ingredients?: string;
   @IsOptional() @IsBoolean() available?: boolean;
   @IsOptional() @IsBoolean() exciseRequired?: boolean;
 }
@@ -71,7 +73,7 @@ export class MenuController {
 
   // Admin uchun: barcha taomlar (mavjud bo'lmaganlar ham)
   @UseGuards(RolesGuard)
-  @Roles(UserRole.Admin)
+  @Roles(UserRole.Admin, UserRole.Director, UserRole.SuperAdmin)
   @Get('all-items')
   findAllItems() {
     return this.items.find();
@@ -80,14 +82,14 @@ export class MenuController {
   // --- Boshqaruv (faqat admin) — TZ F-4.1 ---
 
   @UseGuards(RolesGuard)
-  @Roles(UserRole.Admin)
+  @Roles(UserRole.Admin, UserRole.Director, UserRole.SuperAdmin)
   @Post('categories')
   createCategory(@Body() dto: CategoryDto) {
     return this.categories.save(this.categories.create(dto));
   }
 
   @UseGuards(RolesGuard)
-  @Roles(UserRole.Admin)
+  @Roles(UserRole.Admin, UserRole.Director, UserRole.SuperAdmin)
   @Patch('categories/:id')
   async updateCategory(@Param('id') id: string, @Body() dto: CategoryDto) {
     await this.categories.update(id, dto);
@@ -95,14 +97,14 @@ export class MenuController {
   }
 
   @UseGuards(RolesGuard)
-  @Roles(UserRole.Admin)
+  @Roles(UserRole.Admin, UserRole.Director, UserRole.SuperAdmin)
   @Post('items')
   createItem(@Body() dto: MenuItemDto) {
     return this.items.save(this.items.create(dto));
   }
 
   @UseGuards(RolesGuard)
-  @Roles(UserRole.Admin)
+  @Roles(UserRole.Admin, UserRole.Director, UserRole.SuperAdmin)
   @Patch('items/:id')
   async updateItem(@Param('id') id: string, @Body() dto: MenuItemPatchDto) {
     await this.items.update(id, dto);
@@ -110,7 +112,7 @@ export class MenuController {
   }
 
   @UseGuards(RolesGuard)
-  @Roles(UserRole.Admin)
+  @Roles(UserRole.Admin, UserRole.Director, UserRole.SuperAdmin)
   @Delete('items/:id')
   async deleteItem(@Param('id') id: string) {
     await this.items.delete(id);
@@ -118,7 +120,7 @@ export class MenuController {
   }
 
   @UseGuards(RolesGuard)
-  @Roles(UserRole.Admin)
+  @Roles(UserRole.Admin, UserRole.Director, UserRole.SuperAdmin)
   @Delete('categories/:id')
   async deleteCategory(@Param('id') id: string) {
     await this.categories.delete(id);

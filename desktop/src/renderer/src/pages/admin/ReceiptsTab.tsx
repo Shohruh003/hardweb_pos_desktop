@@ -1,95 +1,197 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Order, OrderStatus } from '@hardweb-pos/shared';
+import { OrderStatus, PaymentType, Table, User, hasCapability } from '@hardweb-pos/shared';
 import { Button } from '../../components/ui';
 import { Select } from '../../components/Select';
 import { OrderHistory } from '../../components/OrderHistory';
 import { api } from '../../lib/api';
+import { useI18n } from '../../state/i18n';
+import { useAuth } from '../../state/auth';
+import {
+  OrderFilters,
+  useInfiniteOrders,
+  useScrollSentinel,
+} from '../../hooks/useInfiniteOrders';
 
-function localDay(iso: string): string {
-  const d = new Date(iso);
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${m}-${day}`;
+type DatePreset = 'all' | 'today' | 'week' | 'month';
+
+// Preset -> ISO sana oralig'i
+function presetRange(p: DatePreset): { dateFrom?: string; dateTo?: string } {
+  if (p === 'all') return {};
+  const now = new Date();
+  const from = new Date();
+  from.setHours(0, 0, 0, 0);
+  if (p === 'week') from.setDate(from.getDate() - 6);
+  if (p === 'month') from.setDate(from.getDate() - 29);
+  return { dateFrom: from.toISOString(), dateTo: now.toISOString() };
 }
 
-const STATUS_OPTIONS = [
-  { value: '', label: 'Barcha holatlar' },
-  { value: OrderStatus.Accepted, label: 'Qabul qilindi' },
-  { value: OrderStatus.Cooking, label: 'Tayyorlanmoqda' },
-  { value: OrderStatus.Ready, label: 'Tayyor' },
-  { value: OrderStatus.Closed, label: 'Yopilgan' },
-];
-
-// Cheklar / buyurtmalar tarixi — sana, zal, stol, holat va matn bo'yicha filtr
+// Cheklar / buyurtmalar tarixi — server-side pagination (20/sahifa) + infinite scroll + filtrlar
 export function ReceiptsTab() {
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [q, setQ] = useState('');
-  const [date, setDate] = useState('');
+  const { t } = useI18n();
+  const { user } = useAuth();
+  const canRefund = hasCapability(user, 'refund');
+  const [preset, setPreset] = useState<DatePreset>('all');
+  const [waiterId, setWaiterId] = useState('');
   const [hall, setHall] = useState('');
-  const [table, setTable] = useState('');
   const [status, setStatus] = useState('');
+  const [paymentType, setPaymentType] = useState('');
+  const [search, setSearch] = useState('');
 
-  async function load() {
-    setOrders(await api.get<Order[]>('/orders/history'));
-  }
+  const [waiters, setWaiters] = useState<User[]>([]);
+  const [halls, setHalls] = useState<string[]>([]);
+
   useEffect(() => {
-    load().catch(() => {});
+    api.get<User[]>('/users/waiters').then(setWaiters).catch(() => {});
+    api
+      .get<Table[]>('/tables')
+      .then((ts) => setHalls(Array.from(new Set(ts.map((x) => x.hall)))))
+      .catch(() => {});
   }, []);
 
-  const halls = useMemo(
-    () => Array.from(new Set(orders.map((o) => o.hall).filter(Boolean))) as string[],
-    [orders],
-  );
-  const tableNos = useMemo(
-    () => Array.from(new Set(orders.map((o) => o.tableNumber).filter((n) => n != null))).sort((a, b) => (a as number) - (b as number)) as number[],
-    [orders],
-  );
+  const filters: OrderFilters = useMemo(() => {
+    const { dateFrom, dateTo } = presetRange(preset);
+    return {
+      waiterId: waiterId || undefined,
+      hall: hall || undefined,
+      status: status || undefined,
+      paymentType: paymentType || undefined,
+      search: search.trim() || undefined,
+      dateFrom,
+      dateTo,
+    };
+  }, [preset, waiterId, hall, status, paymentType, search]);
 
-  const query = q.trim().toLowerCase();
-  const filtered = orders.filter((o) => {
-    if (date && localDay(o.openedAt) !== date) return false;
-    if (hall && o.hall !== hall) return false;
-    if (table && String(o.tableNumber) !== table) return false;
-    if (status && o.status !== status) return false;
-    if (query) {
-      const hay = `${o.tableNumber} ${o.waiterName ?? ''} ${o.items.map((i) => i.menuItemName).join(' ')}`.toLowerCase();
-      if (!hay.includes(query)) return false;
-    }
-    return true;
-  });
+  const { items, total, hasMore, loading, loadMore, reload } =
+    useInfiniteOrders(filters, 20);
+  const sentinelRef = useScrollSentinel(loadMore, hasMore && !loading);
 
-  function clear() {
-    setQ(''); setDate(''); setHall(''); setTable(''); setStatus('');
+  // Vozvrat (Direktor/Admin) — sabab bilan, keyin ro'yxatni yangilaymiz
+  async function refund(order: { id: string }, reason: string) {
+    await api.post(`/orders/${order.id}/refund`, { reason });
+    reload();
   }
 
-  const hallOptions = [{ value: '', label: 'Barcha zallar' }, ...halls.map((h) => ({ value: h, label: h }))];
-  const tableOptions = [{ value: '', label: 'Barcha stollar' }, ...tableNos.map((n) => ({ value: String(n), label: `Stol №${n}` }))];
-  const active = q || date || hall || table || status;
+  function clear() {
+    setPreset('all');
+    setWaiterId('');
+    setHall('');
+    setStatus('');
+    setPaymentType('');
+    setSearch('');
+  }
+  const active =
+    preset !== 'all' || waiterId || hall || status || paymentType || search;
+
+  const PRESETS: { key: DatePreset; label: string }[] = [
+    { key: 'all', label: t('common.all') },
+    { key: 'today', label: t('filter.today') },
+    { key: 'week', label: t('filter.week') },
+    { key: 'month', label: t('filter.month') },
+  ];
 
   return (
     <div className="w-full">
       {/* Filtrlar */}
       <div className="bg-surface border border-border rounded-2xl p-4 mb-4">
+        {/* Sana presetlari */}
+        <div className="flex flex-wrap gap-2 mb-3">
+          {PRESETS.map((p) => (
+            <button
+              key={p.key}
+              onClick={() => setPreset(p.key)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+                preset === p.key
+                  ? 'bg-primary text-white border-primary'
+                  : 'border-border text-muted hover:border-primary hover:text-text'
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Taom / ofitsiant qidirish..."
-            className="px-3 py-2.5 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-            className="px-3 py-2.5 rounded-lg bg-bg border border-border outline-none focus:border-primary [color-scheme:dark]" />
-          <Select value={hall} onChange={setHall} options={hallOptions} />
-          <Select value={table} onChange={setTable} options={tableOptions} />
-          <Select value={status} onChange={setStatus} options={STATUS_OPTIONS} />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={`${t('filter.hall')} №...`}
+            className="px-3 py-2.5 rounded-lg bg-bg border border-border outline-none focus:border-primary"
+          />
+          <Select
+            value={waiterId}
+            onChange={setWaiterId}
+            options={[
+              { value: '', label: `${t('common.all')} — ${t('filter.waiter')}` },
+              ...waiters.map((w) => ({ value: w.id, label: w.name })),
+            ]}
+          />
+          <Select
+            value={hall}
+            onChange={setHall}
+            options={[
+              { value: '', label: `${t('common.all')} — ${t('filter.hall')}` },
+              ...halls.map((h) => ({ value: h, label: h })),
+            ]}
+          />
+          <Select
+            value={status}
+            onChange={setStatus}
+            options={[
+              { value: '', label: `${t('common.all')} — ${t('filter.status')}` },
+              { value: OrderStatus.Accepted, label: t('status.qabul_qilindi') },
+              { value: OrderStatus.Cooking, label: t('status.tayyorlanmoqda') },
+              { value: OrderStatus.Ready, label: t('status.tayyor') },
+              { value: OrderStatus.Closed, label: t('status.yopildi') },
+            ]}
+          />
+          <Select
+            value={paymentType}
+            onChange={setPaymentType}
+            options={[
+              { value: '', label: `${t('common.all')} — ${t('filter.payType')}` },
+              { value: PaymentType.Cash, label: t('pay.naqd') },
+              { value: PaymentType.Card, label: t('pay.karta') },
+              { value: PaymentType.QR, label: t('pay.qr') },
+            ]}
+          />
         </div>
         <div className="flex items-center justify-between mt-3">
-          <div className="text-sm text-muted">{filtered.length} ta buyurtma topildi</div>
+          <div className="text-sm text-muted">
+            {total} ta buyurtma{loading ? ' · yuklanmoqda...' : ''}
+          </div>
           <div className="flex gap-2">
-            {active && <Button variant="ghost" onClick={clear}>Filtrni tozalash</Button>}
-            <Button variant="ghost" onClick={() => load()}>Yangilash</Button>
+            {active && (
+              <Button variant="ghost" onClick={clear}>
+                {t('common.cancel')} filtr
+              </Button>
+            )}
+            <Button variant="ghost" onClick={reload}>
+              {t('common.loading').replace('...', '')}
+            </Button>
           </div>
         </div>
       </div>
 
+      {/* Ro'yxat — infinite scroll (parent konteyner skroll qiladi) */}
       <div className="bg-surface border border-border rounded-2xl p-4">
-        <OrderHistory orders={filtered} />
+        {items.length === 0 && !loading ? (
+          <div className="text-center text-muted py-16">{t('common.noData')}</div>
+        ) : (
+          <>
+            <OrderHistory orders={items} onRefund={canRefund ? refund : undefined} />
+            {/* Sentinel — ko'ringanda keyingi sahifa yuklanadi */}
+            <div ref={sentinelRef} className="h-8" />
+            {loading && (
+              <div className="text-center text-muted text-sm py-3">
+                {t('common.loading')}
+              </div>
+            )}
+            {!hasMore && items.length > 0 && (
+              <div className="text-center text-muted/60 text-xs py-3">
+                — {total} ta buyurtma —
+              </div>
+            )}
+          </>
+        )}
       </div>
     </div>
   );

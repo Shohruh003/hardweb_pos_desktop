@@ -23,6 +23,7 @@ interface ItemForm {
   categoryId: string;
   exciseRequired: boolean;
   image: string | null;
+  ingredients: string;
 }
 
 // Taomlarni boshqarish (TZ F-4.1): "+ Yangi taom" modal orqali, to'liq CRUD + rasm
@@ -48,10 +49,10 @@ export function MenuTab() {
   }, []);
 
   function openAdd() {
-    setForm({ name: '', price: '', categoryId: categories[0]?.id ?? '', exciseRequired: false, image: null });
+    setForm({ name: '', price: '', categoryId: categories[0]?.id ?? '', exciseRequired: false, image: null, ingredients: '' });
   }
   function openEdit(it: MenuItem) {
-    setForm({ id: it.id, name: it.name, price: String(it.price), categoryId: it.categoryId, exciseRequired: it.exciseRequired, image: it.image ?? null });
+    setForm({ id: it.id, name: it.name, price: String(it.price), categoryId: it.categoryId, exciseRequired: it.exciseRequired, image: it.image ?? null, ingredients: it.ingredients ?? '' });
   }
 
   async function pickImage(e: React.ChangeEvent<HTMLInputElement>) {
@@ -67,6 +68,7 @@ export function MenuTab() {
       categoryId: form.categoryId,
       exciseRequired: form.exciseRequired,
       image: form.image ?? null,
+      ingredients: form.ingredients.trim() || null,
     };
     if (form.id) await api.patch(`/menu/items/${form.id}`, body);
     else await api.post('/menu/items', body);
@@ -165,6 +167,14 @@ export function MenuTab() {
             className="w-full mb-3 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
           <label className="block text-sm text-muted mb-1">Kategoriya</label>
           <Select className="mb-3" value={form.categoryId} onChange={(v) => setForm({ ...form, categoryId: v })} options={catOptions} placeholder="Kategoriya tanlang" />
+          <label className="block text-sm text-muted mb-1">Ketadigan mahsulotlar (ingredientlar)</label>
+          <textarea
+            value={form.ingredients}
+            onChange={(e) => setForm({ ...form, ingredients: e.target.value })}
+            rows={3}
+            placeholder="Masalan:&#10;Guruch 200g&#10;Go‘sht 150g&#10;Sabzi 100g"
+            className="w-full mb-3 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary text-sm"
+          />
           <label className="flex items-center gap-2 mb-4 text-sm cursor-pointer select-none">
             <input type="checkbox" checked={form.exciseRequired} onChange={(e) => setForm({ ...form, exciseRequired: e.target.checked })} className="w-4 h-4 accent-[#059669]" />
             Aksizli mahsulot (kassada kod skanerlanadi)

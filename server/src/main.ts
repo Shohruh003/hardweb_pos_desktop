@@ -19,6 +19,6 @@ async function bootstrap() {
   // 0.0.0.0 — boshqa kompyuterlardagi terminallar ham ulana olishi uchun
   await app.listen(port, '0.0.0.0');
   // eslint-disable-next-line no-console
-  console.log(`[HardWeb POS] Lokal server: http://localhost:${port}/api`);
+  console.log(`[DasturXon] Lokal server: http://localhost:${port}/api`);
 }
 bootstrap();

@@ -7,6 +7,7 @@ export enum UserRole {
   Cashier = 'kassir',
   Admin = 'administrator',
   Director = 'direktor',
+  SuperAdmin = 'superadmin', // vendor — restoranlarni va sozlamalarni boshqaradi
 }
 
 /** Stol holati (TZ F-1.2) */
