@@ -77,7 +77,7 @@ export function AdminPage() {
           className="w-full flex items-center gap-3 px-3 py-3 rounded-xl font-semibold text-primary hover:bg-primary/10 transition-colors"
         >
           <span className="text-xl leading-none">←</span>
-          <span className="truncate">Bosh sahifa</span>
+          <span className="truncate">Orqaga</span>
         </button>
       </div>
     </>

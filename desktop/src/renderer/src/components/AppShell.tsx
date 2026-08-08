@@ -1,12 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { hasCapability } from '@hardweb-pos/shared';
 import { useAuth } from '../state/auth';
 import { useConnectivity } from '../state/connectivity';
 import { MOCK } from '../lib/api';
 import { DemoSwitcher } from './DemoSwitcher';
 import { ThemeLangControls } from './ThemeLangControls';
 import { useI18n } from '../state/i18n';
-import { useAppNav } from '../state/appNav';
 
 // Barcha ekranlar uchun umumiy ramka: yuqori panel + kontent
 export function AppShell({
@@ -21,19 +19,8 @@ export function AppShell({
   const { user, logout } = useAuth();
   const { online, pending } = useConnectivity();
   const { t } = useI18n();
-  const { goHome } = useAppNav();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-
-  // Foydalanuvchida nechta modul bor — bitta bo'lsa "Bosh sahifa" keraksiz
-  const manageCaps = ['history', 'menu', 'tables', 'staff', 'devices', 'terminals', 'settings'];
-  let moduleCount = 0;
-  if (hasCapability(user, 'waiter')) moduleCount++;
-  if (hasCapability(user, 'kitchen')) moduleCount++;
-  if (hasCapability(user, 'cashier')) moduleCount++;
-  if (hasCapability(user, 'reports')) moduleCount++;
-  if (manageCaps.some((c) => hasCapability(user, c))) moduleCount++;
-  const showHome = !hideHome && moduleCount > 1;
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -48,22 +35,11 @@ export function AppShell({
     <div className="h-full flex flex-col app-bg text-text">
       <header className="flex items-center justify-between gap-2 px-3 sm:px-6 py-2.5 glass border-b border-border">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-          {showHome && (
-            <button
-              onClick={goHome}
-              title="Bosh sahifaga qaytish"
-              className="shrink-0 flex items-center gap-1.5 px-2.5 sm:px-3 h-9 rounded-lg border border-border hover:border-primary hover:bg-surface-hover font-semibold"
-            >
-              <span className="text-lg leading-none">←</span>
-              <span className="hidden sm:inline text-sm">Bosh sahifa</span>
-              <span className="sm:hidden text-lg leading-none">🏠</span>
-            </button>
-          )}
-          <span className="text-primary font-extrabold text-lg tracking-tight shrink-0 hidden lg:inline">
+          <span className="text-primary font-extrabold text-lg tracking-tight shrink-0">
             DasturXon
           </span>
           <span className="text-muted hidden lg:inline">/</span>
-          <span className="font-semibold truncate">{title}</span>
+          <span className="font-semibold truncate hidden lg:inline">{title}</span>
         </div>
 
         {/* Demo: panel almashtirgich (faqat mock rejimda) */}

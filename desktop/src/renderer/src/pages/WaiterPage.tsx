@@ -5,6 +5,7 @@ import { Button, formatSum } from '../components/ui';
 import { MenuTile } from '../components/MenuTile';
 import { FeedbackModal, FeedbackVariant } from '../components/FeedbackModal';
 import { MyOrdersView } from '../components/MyOrdersView';
+import { BackButton } from '../components/BackButton';
 import { api } from '../lib/api';
 import { enqueue } from '../lib/offlineQueue';
 import { useConnectivity } from '../state/connectivity';
@@ -185,6 +186,7 @@ export function WaiterPage() {
             <Button variant="ghost" className="ml-auto" onClick={() => setShowHistory(true)}>
               🧾 {t('waiter.myOrders')}
             </Button>
+            <BackButton />
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-3">
             {hallTables.map((tbl) => {

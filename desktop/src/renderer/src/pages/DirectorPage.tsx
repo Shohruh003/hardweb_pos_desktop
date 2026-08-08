@@ -10,6 +10,7 @@ import {
 import { AppShell } from '../components/AppShell';
 import { formatSum } from '../components/ui';
 import { SettingsPanel } from '../components/SettingsPanel';
+import { BackButton } from '../components/BackButton';
 import { api } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { useI18n } from '../state/i18n';
@@ -69,7 +70,7 @@ export function DirectorPage() {
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
       <div className="h-full overflow-auto p-3 sm:p-6">
         {/* Davr tanlash + sozlamalar */}
-        <div className="flex items-center gap-2 mb-4 sm:mb-6">
+        <div className="flex items-center gap-2 mb-4 sm:mb-6 flex-wrap">
           {PERIOD_KEYS.map((p) => (
             <button
               key={p.key}
@@ -90,6 +91,7 @@ export function DirectorPage() {
           >
             ⚙️
           </button>
+          <BackButton />
         </div>
 
         {/* Asosiy ko'rsatkichlar */}

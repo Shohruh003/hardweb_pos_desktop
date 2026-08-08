@@ -51,17 +51,32 @@ const tables = [
   ...[1, 2, 3, 4, 5, 6].map((n) => ({ id: uid(), number: n, hall: 'Asosiy zal', capacity: 4, status: TableStatus.Free })),
   ...[7, 8, 9, 10].map((n) => ({ id: uid(), number: n, hall: 'VIP zal', capacity: 6, status: TableStatus.Free })),
 ];
-const users = [
-  { id: uid(), name: 'Aziz Karimov', role: UserRole.Waiter, login: 'ofitsiant', active: true },
-  { id: uid(), name: 'Sardor To‘rayev', role: UserRole.Waiter, login: 'ofitsiant2', active: true },
-  { id: uid(), name: 'Jasur Rahimov', role: UserRole.Waiter, login: 'ofitsiant3', active: true },
-  { id: uid(), name: 'Bekzod (oshpaz)', role: UserRole.Cook, login: 'oshpaz', active: true },
-  { id: uid(), name: 'Dilnoza (kassir)', role: UserRole.Cashier, login: 'kassir', active: true },
-  { id: uid(), name: 'Admin', role: UserRole.Admin, login: 'admin', active: true },
-  { id: uid(), name: 'Direktor', role: UserRole.Director, login: 'direktor', active: true },
+const A_CAPS = ['history', 'reports', 'menu', 'tables', 'staff', 'devices', 'terminals', 'settings', 'refund', 'cashier'];
+const users: any[] = [
+  { id: uid(), name: 'Aziz Karimov', role: UserRole.Waiter, login: 'ofitsiant', pin: '1111', active: true, permissions: ['waiter'] },
+  { id: uid(), name: 'Sardor To‘rayev', role: UserRole.Waiter, login: 'ofitsiant2', pin: '1112', active: true, permissions: ['waiter'] },
+  { id: uid(), name: 'Jasur Rahimov', role: UserRole.Waiter, login: 'ofitsiant3', pin: '1113', active: true, permissions: ['waiter'] },
+  { id: uid(), name: 'Bekzod (oshpaz)', role: UserRole.Cook, login: 'oshpaz', pin: '5555', active: true, permissions: ['kitchen'] },
+  { id: uid(), name: 'Dilnoza (kassir)', role: UserRole.Cashier, login: 'kassir', pin: '1234', active: true, permissions: ['cashier', 'history'] },
+  { id: uid(), name: 'Admin', role: UserRole.Admin, login: 'admin', pin: '9999', active: true, permissions: A_CAPS },
+  { id: uid(), name: 'Direktor', role: UserRole.Director, login: 'direktor', pin: '0000', active: true, permissions: [] },
 ];
 const waiter = users[0];
 const cashier = users.find((u) => u.role === UserRole.Cashier)!;
+
+// Demo uchun: sozlamalar, terminallar, rasxodlar (in-memory)
+const settings = {
+  id: 'main',
+  restaurantName: 'DasturXon',
+  telegramToken: '',
+  telegramChatId: '',
+  dailyReportTime: '23:59',
+};
+const terminals: any[] = [
+  { id: uid(), name: 'Kassa 1', hall: 'Asosiy zal', note: null },
+  { id: uid(), name: 'Ofitsiant terminali', hall: 'VIP zal', note: null },
+];
+const expenses: any[] = [];
 
 // Rollar registri (admin CRUD qiladi). Har rol qaysi panelga kirishini belgilaydi.
 const roles: { key: string; label: string; description: string; panel: string; builtin: boolean }[] = [
@@ -159,6 +174,44 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     const u = users.find((x) => x.login === body.login);
     if (!u || body.password !== '1234') return fail('Login yoki parol noto‘g‘ri');
     return ok({ token: 'mock-token', user: u });
+  }
+  if (path === '/auth/login-pin' && method === 'POST') {
+    const u = users.find((x) => x.pin === body.pin);
+    if (!u) return fail('PIN noto‘g‘ri');
+    return ok({ token: 'mock-token', user: u });
+  }
+
+  // Settings (demo)
+  if (path === '/settings' && method === 'GET') return ok({ ...settings });
+  if (path === '/settings' && method === 'PATCH') {
+    Object.assign(settings, body);
+    return ok({ ...settings });
+  }
+  if (seg[0] === 'settings' && (seg[1] === 'telegram-test' || seg[1] === 'telegram-report' || seg[1] === 'telegram-detect')) {
+    return ok({ ok: true, chatId: settings.telegramChatId || '123456789' });
+  }
+
+  // Terminallar (demo)
+  if (path === '/terminals' && method === 'GET') return ok([...terminals]);
+  if (path === '/terminals' && method === 'POST') {
+    const tr = { id: uid(), name: body.name, hall: body.hall ?? null, note: body.note ?? null };
+    terminals.push(tr); return ok(tr);
+  }
+  if (seg[0] === 'terminals' && seg[1] && method === 'PATCH') {
+    const tr = terminals.find((x) => x.id === seg[1]); if (tr) Object.assign(tr, body); return ok(tr);
+  }
+  if (seg[0] === 'terminals' && seg[1] && method === 'DELETE') {
+    const i = terminals.findIndex((x) => x.id === seg[1]); if (i >= 0) terminals.splice(i, 1); return ok({ ok: true });
+  }
+
+  // Rasxodlar (demo)
+  if (path === '/expenses' && method === 'GET') {
+    const total = expenses.reduce((s, e) => s + Number(e.amount), 0);
+    return ok({ items: [...expenses].reverse(), total });
+  }
+  if (path === '/expenses' && method === 'POST') {
+    const e = { id: uid(), amount: Number(body.amount), note: body.note ?? null, cashierName: 'Kassir', createdAt: new Date().toISOString() };
+    expenses.push(e); return ok(e);
   }
 
   // Tables

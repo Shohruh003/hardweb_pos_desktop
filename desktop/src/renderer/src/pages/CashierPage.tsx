@@ -11,7 +11,8 @@ import { AppShell } from '../components/AppShell';
 import { Button, StatusBadge, formatSum } from '../components/ui';
 import { ReceiptPreview } from '../components/ReceiptPreview';
 import { Modal } from '../components/Modal';
-import { OrderHistory } from '../components/OrderHistory';
+import { ReceiptsTab } from './admin/ReceiptsTab';
+import { BackButton } from '../components/BackButton';
 import { api } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { useI18n } from '../state/i18n';
@@ -37,7 +38,6 @@ export function CashierPage() {
   const { user } = useAuth();
   const canHistory = (user?.permissions ?? []).includes('history');
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyItems, setHistoryItems] = useState<Order[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [selected, setSelected] = useState<Order | null>(null);
   const [discount, setDiscount] = useState(0);
@@ -70,15 +70,6 @@ export function CashierPage() {
     api.get<{ items: ExpenseRow[]; total: number }>('/expenses').then(setExpenses).catch(() => {});
   }
 
-  async function openHistory() {
-    setHistoryOpen(true);
-    try {
-      const r = await api.get<{ items: Order[] }>('/orders/history?limit=100');
-      setHistoryItems(r.items);
-    } catch {
-      setHistoryItems([]);
-    }
-  }
 
   useEffect(() => {
     refresh();
@@ -170,6 +161,26 @@ export function CashierPage() {
 
   const payLabel: Record<string, string> = { naqd: 'Naqd', karta: 'Karta', qr: 'QR' };
 
+  // Cheklar tarixi — alohida sahifa (filtrlar + infinite scroll, ReceiptsTab qayta ishlatiladi)
+  if (historyOpen) {
+    return (
+      <AppShell title="Cheklar tarixi">
+        <div className="h-full overflow-auto p-3 sm:p-6">
+          <div className="flex items-center justify-between gap-2 mb-4">
+            <div className="text-xl font-bold">🧾 Cheklar tarixi</div>
+            <button
+              onClick={() => setHistoryOpen(false)}
+              className="shrink-0 flex items-center gap-1.5 px-3 h-9 rounded-lg border border-border hover:border-primary hover:bg-surface-hover font-semibold"
+            >
+              <span className="text-lg leading-none">←</span> Orqaga
+            </button>
+          </div>
+          <ReceiptsTab />
+        </div>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell title={t('title.cashier')}>
       <div className="h-full flex flex-col">
@@ -193,29 +204,24 @@ export function CashierPage() {
           </button>
           {canHistory && (
             <button
-              onClick={openHistory}
+              onClick={() => setHistoryOpen(true)}
               className="shrink-0 px-3 py-2 rounded-lg bg-surface border border-border hover:border-primary text-sm font-semibold whitespace-nowrap"
             >
               🧾 Cheklar tarixi
             </button>
           )}
+          <BackButton className="ml-auto" />
         </div>
 
-        {historyOpen && (
-          <Modal title="Cheklar tarixi" onClose={() => setHistoryOpen(false)}>
-            <OrderHistory orders={historyItems} />
-          </Modal>
-        )}
-
         {showExpenses && (
-          <Modal title="Kunlik rasxodlar" onClose={() => setShowExpenses(false)}>
-            <div className="flex gap-2 mb-3">
+          <Modal title="Kunlik rasxodlar" onClose={() => setShowExpenses(false)} wide>
+            <div className="flex flex-col sm:flex-row gap-2 mb-3">
               <input
                 value={expAmount}
                 inputMode="numeric"
                 onChange={(e) => setExpAmount(e.target.value.replace(/\D/g, ''))}
                 placeholder="Summa"
-                className="w-32 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary"
+                className="w-full sm:w-36 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary"
               />
               <input
                 value={expNote}
@@ -224,9 +230,9 @@ export function CashierPage() {
                 className="flex-1 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary"
                 onKeyDown={(e) => e.key === 'Enter' && addExpense()}
               />
-              <Button onClick={addExpense}>Qo‘shish</Button>
+              <Button onClick={addExpense} className="shrink-0">Qo‘shish</Button>
             </div>
-            <div className="bg-bg rounded-xl divide-y divide-border max-h-72 overflow-auto">
+            <div className="bg-bg rounded-xl divide-y divide-border max-h-[45vh] overflow-auto">
               {expenses.items.length === 0 ? (
                 <div className="text-muted text-sm p-4 text-center">Bugun rasxod yo‘q</div>
               ) : (

@@ -3,6 +3,7 @@ import { Order, OrderStatus, SOCKET_EVENTS } from '@hardweb-pos/shared';
 import { AppShell } from '../components/AppShell';
 import { StatusBadge, formatTime, minutesSince } from '../components/ui';
 import { OrderHistory } from '../components/OrderHistory';
+import { BackButton } from '../components/BackButton';
 import { api } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { useI18n } from '../state/i18n';
@@ -76,13 +77,14 @@ export function KdsPage() {
     <AppShell title={t('title.kds')}>
       <div className="h-full flex flex-col">
         {/* Tablar */}
-        <div className="flex gap-2 px-3 sm:px-6 pt-3 sm:pt-4">
+        <div className="flex gap-2 px-3 sm:px-6 pt-3 sm:pt-4 items-center">
           <Tab active={view === 'board'} onClick={() => setView('board')}>
             {t('kds.active')}
           </Tab>
           <Tab active={view === 'history'} onClick={() => setView('history')}>
             {t('kds.history')}
           </Tab>
+          <BackButton className="ml-auto" />
         </div>
 
         {view === 'board' ? (

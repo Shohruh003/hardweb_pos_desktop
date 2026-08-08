@@ -5,10 +5,12 @@ export function Modal({
   title,
   onClose,
   children,
+  wide,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
+  wide?: boolean;
 }) {
   return (
     <div
@@ -16,7 +18,7 @@ export function Modal({
       onClick={onClose}
     >
       <div
-        className="bg-surface border border-border rounded-2xl w-full max-w-[440px] max-h-[90vh] overflow-auto animate-pop-in"
+        className={`bg-surface border border-border rounded-2xl w-full ${wide ? 'max-w-[600px]' : 'max-w-[440px]'} max-h-[90vh] overflow-auto animate-pop-in`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-5 py-3.5 border-b border-border font-bold flex items-center justify-between sticky top-0 bg-surface z-10">
