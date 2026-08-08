@@ -52,6 +52,12 @@ export class OrdersController {
     return this.orders.updateStatus(id, dto);
   }
 
+  // Schot so'raldi — stol "hisob kutilmoqda" bo'ladi (ofitsiant bosadi)
+  @Post(':id/request-bill')
+  requestBill(@Param('id') id: string) {
+    return this.orders.requestBill(id);
+  }
+
   // Aksiz kodlarini skanerlab saqlash (TZ F-8.6)
   @Post(':id/excise')
   addExcise(@Param('id') id: string, @Body() dto: AddExciseDto) {

@@ -256,6 +256,21 @@ export class OrdersService {
     return dtoOut;
   }
 
+  // Schot (hisob) so'raldi — stolni "hisob kutilmoqda" holatiga o'tkazamiz.
+  // Ofitsiant "Schot" bosганda chaqiriladi; to'lovdan keyin stol bo'shaydi.
+  async requestBill(id: string): Promise<Order> {
+    const order = await this.orders.findOne({ where: { id } });
+    if (!order) throw new NotFoundException('Buyurtma topilmadi');
+    const table = await this.tables.findOne({ where: { id: order.tableId } });
+    if (table && table.status !== TableStatus.Free) {
+      table.status = TableStatus.AwaitingBill;
+      await this.tables.save(table);
+    }
+    const dto = this.toDto(order, table?.number);
+    this.gateway.emitOrderUpdated(dto);
+    return dto;
+  }
+
   // Buyurtma holatini o'zgartirish (TZ F-2.3): qabul -> tayyorlanmoqda -> tayyor
   async updateStatus(id: string, dto: UpdateOrderStatusDto): Promise<Order> {
     const order = await this.orders.findOne({ where: { id } });

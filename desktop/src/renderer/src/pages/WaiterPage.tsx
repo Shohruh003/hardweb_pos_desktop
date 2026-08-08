@@ -253,8 +253,11 @@ export function WaiterPage() {
     }
     const tableNo = selectedTable?.number;
     setPrintingBill(true);
+    // Stolni "hisob kutilmoqda" holatiga o'tkazamiz (mijoz hisob so'radi)
+    await api.post(`/orders/${existingOrder.id}/request-bill`).catch(() => undefined);
     try {
       const res = await window.hardweb?.printer?.printBill?.(existingOrder);
+      await loadTables();
       if (res?.ok) {
         // Chek chiqdi — stollar sahifasiga qaytamiz (boshiga)
         setPrintingBill(false);
@@ -367,19 +370,25 @@ export function WaiterPage() {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-3">
             {hallTables.map((tbl) => {
+              const awaiting = tbl.status === TableStatus.AwaitingBill;
               const busy = tbl.status !== TableStatus.Free;
+              const cls = awaiting
+                ? 'bg-info/10 border-info/50 hover:bg-info/20'
+                : busy
+                  ? 'bg-warning/10 border-warning/40 hover:bg-warning/20'
+                  : 'bg-surface border-border hover:bg-surface-hover';
+              const statusText = awaiting ? 'Hisob kutilmoqda' : busy ? t('waiter.busy') : t('waiter.free');
+              const statusColor = awaiting ? 'text-info' : busy ? 'text-warning' : 'text-success';
               return (
                 <button
                   key={tbl.id}
                   onClick={() => openTable(tbl)}
-                  className={`aspect-square rounded-2xl border flex flex-col items-center justify-center lift animate-card-in ${
-                    busy ? 'bg-warning/10 border-warning/40 hover:bg-warning/20' : 'bg-surface border-border hover:bg-surface-hover'
-                  }`}
+                  className={`aspect-square rounded-2xl border flex flex-col items-center justify-center lift animate-card-in ${cls}`}
                 >
                   <span className="text-2xl font-bold">№{tbl.number}</span>
                   <span className="text-xs text-muted mt-1">{tbl.capacity} {t('waiter.people')}</span>
-                  <span className={`text-xs mt-1 font-semibold ${busy ? 'text-warning' : 'text-success'}`}>
-                    {busy ? t('waiter.busy') : t('waiter.free')}
+                  <span className={`text-xs mt-1 font-semibold text-center px-1 ${statusColor}`}>
+                    {statusText}
                   </span>
                 </button>
               );

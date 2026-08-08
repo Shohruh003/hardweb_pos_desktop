@@ -407,6 +407,15 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     emit(SOCKET_EVENTS.ORDER_CREATED, { order });
     return ok(order);
   }
+  if (seg[0] === 'orders' && seg[2] === 'request-bill' && method === 'POST') {
+    const o = orders.find((x) => x.id === seg[1]);
+    if (o) {
+      const table = tables.find((t) => t.id === o.tableId);
+      if (table && table.status !== TableStatus.Free) table.status = TableStatus.AwaitingBill;
+      emit(SOCKET_EVENTS.ORDER_UPDATED, { orderId: o.id, status: o.status, order: o });
+    }
+    return ok(o);
+  }
   if (seg[0] === 'orders' && seg[2] === 'status' && method === 'PATCH') {
     const o = orders.find((x) => x.id === seg[1]);
     if (o) {
