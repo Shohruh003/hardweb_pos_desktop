@@ -142,16 +142,28 @@ export function LoginPage() {
           </button>
         </div>
 
-        {/* Server sozlamasi — yashirin (logoni 5 marta bosganda ochiladi) */}
+        {/* Server manzili — boshqa kompyuterda (terminalda) server IP'sini kiritish uchun */}
+        <button
+          onClick={() => setShowServer((s) => !s)}
+          className="mt-6 text-xs text-muted hover:text-primary flex items-center gap-1"
+        >
+          ⚙ Server manzili
+        </button>
         {showServer && (
-          <div className="mt-6 text-center">
-            <div className="text-xs text-muted mb-1">Server manzili</div>
+          <div className="mt-2 text-center">
+            <div className="text-xs text-muted mb-1">
+              Kassa (server) kompyuteri manzili
+            </div>
             <input
               value={server}
               onChange={(e) => setServer(e.target.value)}
+              onBlur={() => setServerUrl(server.trim())}
               className="px-3 py-2 rounded-lg bg-surface border border-border text-text text-sm outline-none focus:border-primary w-64"
-              placeholder="http://127.0.0.1:3100"
+              placeholder="http://192.168.1.10:3100"
             />
+            <div className="text-[11px] text-muted mt-1">
+              Masalan: http://192.168.1.10:3100 (kassa IP'si)
+            </div>
           </div>
         )}
       </div>
