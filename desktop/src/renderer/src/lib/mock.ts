@@ -136,11 +136,12 @@ interface MockItem {
   exciseRequired: boolean; exciseCode: string | null;
 }
 interface MockOrder {
-  id: string; tableId: string; tableNumber: number; waiterId: string; waiterName: string;
+  id: string; tableId: string; tableNumber: number; hall: string | null; waiterId: string; waiterName: string;
   status: OrderStatus; openedAt: string; closedAt: string | null;
   queueNumber: number | null; items: MockItem[]; total: number;
   refunded?: boolean; refundReason?: string | null; refundedAt?: string | null;
 }
+const hallOf = (tableId: string): string | null => tables.find((t) => t.id === tableId)?.hall ?? null;
 const orders: MockOrder[] = [];
 const payments: { id: string; orderId: string; amount: number; type: PaymentType; cashierId: string; createdAt: string }[] = [];
 let fiscalCounter = 0;
@@ -161,7 +162,7 @@ function total(items: MockItem[]) {
 function seed() {
   // Faol buyurtmalar (KDS va kassada ko'rinadi)
   const o1: MockOrder = {
-    id: uid(), tableId: tables[0].id, tableNumber: tables[0].number, waiterId: waiter.id, waiterName: waiter.name,
+    id: uid(), tableId: tables[0].id, tableNumber: tables[0].number, hall: tables[0].hall, waiterId: waiter.id, waiterName: waiter.name,
     status: OrderStatus.Cooking, openedAt: new Date().toISOString(), closedAt: null, queueNumber: null, items: [], total: 0,
   };
   o1.items = [makeItem(o1.id, menu[0].id, 2), makeItem(o1.id, menu[5].id, 2)];
@@ -169,7 +170,7 @@ function seed() {
   tables[0].status = TableStatus.Busy;
 
   const o2: MockOrder = {
-    id: uid(), tableId: tables[6].id, tableNumber: tables[6].number, waiterId: waiter.id, waiterName: waiter.name,
+    id: uid(), tableId: tables[6].id, tableNumber: tables[6].number, hall: tables[6].hall, waiterId: waiter.id, waiterName: waiter.name,
     status: OrderStatus.Accepted, openedAt: new Date().toISOString(), closedAt: null, queueNumber: null, items: [], total: 0,
   };
   o2.items = [makeItem(o2.id, menu[2].id, 1), makeItem(o2.id, menu[4].id, 1)];
@@ -186,7 +187,7 @@ function seed() {
   ];
   closedDefs.forEach((def, i) => {
     const o: MockOrder = {
-      id: uid(), tableId: tables[i + 1].id, tableNumber: tables[i + 1].number, waiterId: waiter.id, waiterName: waiter.name,
+      id: uid(), tableId: tables[i + 1].id, tableNumber: tables[i + 1].number, hall: tables[i + 1].hall, waiterId: waiter.id, waiterName: waiter.name,
       status: OrderStatus.Closed, openedAt: new Date().toISOString(), closedAt: new Date().toISOString(), queueNumber: null, items: [], total: 0,
     };
     o.items = def.items.map(([mid, q]) => makeItem(o.id, mid as string, q as number));
@@ -397,7 +398,7 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     const w = users.find((u) => u.id === body.waiterId) || waiter;
     const id = uid();
     const order: MockOrder = {
-      id, tableId: body.tableId, tableNumber: table.number, waiterId: w.id, waiterName: w.name,
+      id, tableId: body.tableId, tableNumber: table.number, hall: table.hall, waiterId: w.id, waiterName: w.name,
       status: OrderStatus.Accepted, openedAt: new Date().toISOString(), closedAt: null, queueNumber: null,
       items: body.items.map((i: any) => makeItem(id, i.menuItemId, i.quantity, i.note)), total: 0,
     };
@@ -460,7 +461,7 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     const fiscalQr = `https://ofd.soliq.uz/check?fn=${fiscalNumber}&sum=${grand}&t=${Date.now()}`;
     emit(SOCKET_EVENTS.ORDER_CLOSED, { order: o });
     const receipt = {
-      orderId: o.id, tableNumber: o.tableNumber, waiterName: o.waiterName, cashierName: cashier.name,
+      orderId: o.id, tableNumber: o.tableNumber, hall: o.hall ?? hallOf(o.tableId), waiterName: o.waiterName, cashierName: cashier.name,
       lines: o.items.map((it) => ({ name: it.menuItemName, quantity: it.quantity, price: it.price, sum: it.price * it.quantity, unit: it.unit ?? MenuUnit.Piece })),
       subtotal, discountPercent: body.discountPercent || 0, discountAmount,
       serviceFeePercent: body.serviceFeePercent || 0, serviceFeeAmount, total: grand,

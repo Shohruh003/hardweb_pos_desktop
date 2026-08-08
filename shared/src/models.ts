@@ -160,6 +160,7 @@ export interface ReceiptLine {
 export interface Receipt {
   orderId: string;
   tableNumber?: number;
+  hall?: string | null; // zal / etaj nomi (chekда ko'rsatiladi)
   waiterName?: string;
   cashierName?: string;
   lines: ReceiptLine[];

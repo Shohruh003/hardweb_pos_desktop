@@ -379,6 +379,7 @@ export class OrdersService {
     const receipt: Receipt = {
       orderId: order.id,
       tableNumber: table?.number,
+      hall: table?.hall ?? null,
       waiterName: waiter?.name,
       cashierName: cashier?.name,
       lines: (order.items || []).map((it) => ({

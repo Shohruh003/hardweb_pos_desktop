@@ -58,6 +58,7 @@ export function ReceiptPreview({
               <span>Stol: №{receipt.tableNumber ?? '—'}</span>
               <span>{new Date(receipt.createdAt).toLocaleString('uz-UZ')}</span>
             </div>
+            {receipt.hall && <div className="text-[11px]">Zal: {receipt.hall}</div>}
             <div className="text-[11px]">Ofitsiant: {receipt.waiterName ?? '—'}</div>
             <div className="text-[11px]">Kassir: {receipt.cashierName ?? '—'}</div>
             <div className="border-t border-dashed border-black/40 my-2" />

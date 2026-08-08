@@ -145,6 +145,7 @@ export function buildReceiptBuffer(receipt: Receipt, width = 32, autoCut = true)
 
   b.align('left');
   b.cols(`Stol: №${receipt.tableNumber ?? '-'}`, fmtDateTime(new Date(receipt.createdAt)));
+  if (receipt.hall) b.line(`Zal: ${receipt.hall}`);
   b.line(`Ofitsiant: ${receipt.waiterName ?? '-'}`);
   b.line(`Kassir: ${receipt.cashierName ?? '-'}`);
   b.divider();
@@ -186,6 +187,7 @@ export function buildBillBuffer(order: Order, width = 48, autoCut = true): Buffe
 
   b.align('left');
   b.cols(`Stol: №${order.tableNumber ?? '-'}`, fmtDateTime(new Date()));
+  if (order.hall) b.line(`Zal: ${order.hall}`);
   if (order.waiterName) b.line(`Ofitsiant: ${order.waiterName}`);
   b.divider();
 
@@ -215,6 +217,7 @@ export function buildKitchenTicketBuffer(order: Order, width = 48, autoCut = tru
 
   b.align('center').bold(true).size(true).line('* OSHXONA *').size(false);
   b.bold(true).size(true).line(`STOL №${order.tableNumber ?? '-'}`).size(false);
+  if (order.hall) b.bold(true).line(order.hall).bold(false);
   b.bold(false).line(new Date(order.openedAt).toLocaleTimeString('uz-UZ'));
   b.divider();
 
