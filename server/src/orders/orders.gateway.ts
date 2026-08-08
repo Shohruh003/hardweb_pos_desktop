@@ -3,7 +3,7 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Server } from 'socket.io';
-import { SOCKET_EVENTS, Order } from '@hardweb-pos/shared';
+import { SOCKET_EVENTS, Order, Receipt } from '@hardweb-pos/shared';
 
 // Real-time markaz: KDS, navbat ekrani va ofitsiantlar shu yerga ulanadi (TZ 2.2)
 @WebSocketGateway({ cors: { origin: true } })
@@ -30,5 +30,10 @@ export class OrdersGateway {
   // Hisob (schot) chekini printerli terminalда (kassa) chop etish (relay)
   emitPrintBill(order: Order) {
     this.server.emit(SOCKET_EVENTS.PRINT_BILL, { order });
+  }
+
+  // To'lov chekini printerli terminalда (kassa) chop etish (relay)
+  emitPrintReceipt(receipt: Receipt) {
+    this.server.emit(SOCKET_EVENTS.PRINT_RECEIPT, { receipt });
   }
 }

@@ -90,21 +90,34 @@ export function CashierPage() {
         window.hardweb?.printer?.printOrderTicket?.(order).catch(() => undefined);
       }
     };
-    // Ofitsiant (boshqa terminal) Schot bossa — kassa printeridan chiqaramiz (relay)
-    const onPrintBill = (payload: { order?: Order }) => {
-      if (payload?.order) {
-        window.hardweb?.printer?.printBill?.(payload.order).catch(() => undefined);
+    // Faqat printeri sozlangan terminal (kassa) relay cheklarни chop etadi
+    const printIfHost = async (fn: () => Promise<unknown> | undefined) => {
+      try {
+        const cfg = await window.hardweb?.printer?.getConfig?.();
+        if (cfg && cfg.type !== 'none') await fn();
+      } catch {
+        /* ignore */
       }
+    };
+    // Boshqa terminal Schot bossa — kassa printeridan hisob chiqadi (relay)
+    const onPrintBill = (payload: { order?: Order }) => {
+      if (payload?.order) printIfHost(() => window.hardweb?.printer?.printBill?.(payload.order!));
+    };
+    // Boshqa terminal to'lov qilса — kassa printeridan chek chiqadi (relay)
+    const onPrintReceipt = (payload: { receipt?: Receipt }) => {
+      if (payload?.receipt) printIfHost(() => window.hardweb?.printer?.printReceipt?.(payload.receipt!));
     };
     socket.on(SOCKET_EVENTS.ORDER_CREATED, onCreated);
     socket.on(SOCKET_EVENTS.ORDER_UPDATED, onChange);
     socket.on(SOCKET_EVENTS.ORDER_CLOSED, onChange);
     socket.on(SOCKET_EVENTS.PRINT_BILL, onPrintBill);
+    socket.on(SOCKET_EVENTS.PRINT_RECEIPT, onPrintReceipt);
     return () => {
       socket.off(SOCKET_EVENTS.ORDER_CREATED, onCreated);
       socket.off(SOCKET_EVENTS.ORDER_UPDATED, onChange);
       socket.off(SOCKET_EVENTS.ORDER_CLOSED, onChange);
       socket.off(SOCKET_EVENTS.PRINT_BILL, onPrintBill);
+      socket.off(SOCKET_EVENTS.PRINT_RECEIPT, onPrintReceipt);
     };
   }, []);
 

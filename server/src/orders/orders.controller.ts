@@ -10,6 +10,7 @@ import {
   Request,
   UseGuards,
 } from '@nestjs/common';
+import { Receipt } from '@hardweb-pos/shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { HistoryQuery, OrdersService } from './orders.service';
 import {
@@ -62,6 +63,13 @@ export class OrdersController {
   @Post(':id/print-bill')
   printBill(@Param('id') id: string) {
     return this.orders.printBillRelay(id);
+  }
+
+  // To'lov chekini kassa (printerli terminal) chop etsin (relay).
+  // Printersiz terminalда to'lov qilinganда chek kassadan chiqadi.
+  @Post('print-receipt')
+  printReceipt(@Body() receipt: Receipt) {
+    return this.orders.printReceiptRelay(receipt);
   }
 
   // Aksiz kodlarini skanerlab saqlash (TZ F-8.6)

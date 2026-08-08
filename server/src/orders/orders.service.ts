@@ -285,6 +285,13 @@ export class OrdersService {
     return dto;
   }
 
+  // To'lov chekini printerli terminalга (kassa) yuborish — relay.
+  // Kassa boshqa terminalда (printersiz) to'lov qilса, chek kassa printeridan chiqadi.
+  printReceiptRelay(receipt: Receipt): { ok: boolean } {
+    this.gateway.emitPrintReceipt(receipt);
+    return { ok: true };
+  }
+
   // Buyurtma holatini o'zgartirish (TZ F-2.3): qabul -> tayyorlanmoqda -> tayyor
   async updateStatus(id: string, dto: UpdateOrderStatusDto): Promise<Order> {
     const order = await this.orders.findOne({ where: { id } });

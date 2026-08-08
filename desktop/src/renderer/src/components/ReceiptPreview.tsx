@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { MenuUnit, Receipt, PaymentType } from '@hardweb-pos/shared';
 import { Button, formatSum } from './ui';
+import { api } from '../lib/api';
 
 const PAYMENT_LABEL: Record<PaymentType, string> = {
   [PaymentType.Cash]: 'Naqd',
@@ -21,20 +22,26 @@ export function ReceiptPreview({
   async function print() {
     setPrintMsg('Chop etilmoqda...');
     try {
-      const res = await window.hardweb.printer.printReceipt(receipt);
-      // Muvaffaqiyatli chop etilsa — oynani yopamiz
-      if (res.ok) {
-        onClose();
+      // Shu terminalда printer bormi?
+      const cfg = await window.hardweb?.printer?.getConfig?.().catch(() => null);
+      const hasLocalPrinter = !!cfg && cfg.type !== 'none';
+
+      if (hasLocalPrinter) {
+        const res = await window.hardweb!.printer.printReceipt(receipt);
+        if (res.ok) {
+          onClose();
+          return;
+        }
+        setPrintMsg(res.message || 'Printer xatosi');
         return;
       }
-      // Sozlanmagan bo'lsa — aniq yo'naltiruvchi xabar (OT oynasi ochilmaydi)
-      if (res.message.includes('sozlanmagan')) {
-        setPrintMsg('⚠️ Printer sozlanmagan: Admin → Qurilmalar → USB (DasturXon-POS80)');
-      } else {
-        setPrintMsg(res.message);
-      }
+
+      // Printer yo'q (masalan zal terminali) — chekни kassa printeriga yuboramiz
+      await api.post('/orders/print-receipt', receipt);
+      setPrintMsg('✓ Chek kassa printeriga yuborildi');
+      setTimeout(onClose, 900);
     } catch {
-      setPrintMsg('⚠️ Printer topilmadi. Admin → Qurilmalar bo‘limidan sozlang.');
+      setPrintMsg('⚠️ Chek yuborilmadi. Qayta urinib ko‘ring.');
     }
   }
 
