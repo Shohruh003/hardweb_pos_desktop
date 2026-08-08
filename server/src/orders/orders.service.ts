@@ -408,6 +408,9 @@ export class OrdersService {
         total: dto.total ?? 0,
         reason: order.refundReason ?? '',
         by: byName,
+        items: (order.items || [])
+          .map((it) => `${it.quantity}× ${it.menuItemName}`)
+          .join(', '),
       })
       .catch(() => undefined);
 

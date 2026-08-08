@@ -45,7 +45,7 @@ export function ReceiptPreview({
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="bg-surface border border-border rounded-2xl w-[380px] max-h-full flex flex-col">
+      <div className="bg-surface border border-border rounded-2xl w-full max-w-[380px] max-h-full flex flex-col">
         <div className="px-5 py-3 border-b border-border font-bold flex items-center justify-between">
           <span>Chek</span>
           <span className="text-success text-sm">To‘lov qabul qilindi ✓</span>

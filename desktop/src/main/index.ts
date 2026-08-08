@@ -4,6 +4,7 @@ import {
   getConfig,
   listPrinters,
   printKitchen,
+  printOrderTicket,
   printReceipt,
   setConfig,
   testPrint,
@@ -42,6 +43,9 @@ ipcMain.handle('printer:print-receipt', (_e, receipt: Receipt) =>
 );
 ipcMain.handle('printer:print-kitchen', (_e, order: Order) =>
   printKitchen(order),
+);
+ipcMain.handle('printer:print-order-ticket', (_e, order: Order) =>
+  printOrderTicket(order),
 );
 ipcMain.handle('printer:list', () => listPrinters());
 ipcMain.handle('printer:test', () => testPrint());

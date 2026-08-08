@@ -37,7 +37,7 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
           onClick={() => close(false)}
         >
           <div
-            className="bg-surface border border-border rounded-3xl w-[400px] p-7 text-center animate-pop-in"
+            className="bg-surface border border-border rounded-3xl w-full max-w-[400px] p-6 sm:p-7 text-center animate-pop-in"
             onClick={(e) => e.stopPropagation()}
           >
             <div

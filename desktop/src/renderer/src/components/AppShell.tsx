@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { hasCapability } from '@hardweb-pos/shared';
 import { useAuth } from '../state/auth';
 import { useConnectivity } from '../state/connectivity';
 import { MOCK } from '../lib/api';
@@ -24,6 +25,16 @@ export function AppShell({
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // Foydalanuvchida nechta modul bor — bitta bo'lsa "Bosh sahifa" keraksiz
+  const manageCaps = ['history', 'menu', 'tables', 'staff', 'devices', 'terminals', 'settings'];
+  let moduleCount = 0;
+  if (hasCapability(user, 'waiter')) moduleCount++;
+  if (hasCapability(user, 'kitchen')) moduleCount++;
+  if (hasCapability(user, 'cashier')) moduleCount++;
+  if (hasCapability(user, 'reports')) moduleCount++;
+  if (manageCaps.some((c) => hasCapability(user, c))) moduleCount++;
+  const showHome = !hideHome && moduleCount > 1;
+
   useEffect(() => {
     if (!menuOpen) return;
     const onDoc = (e: MouseEvent) => {
@@ -37,7 +48,7 @@ export function AppShell({
     <div className="h-full flex flex-col app-bg text-text">
       <header className="flex items-center justify-between gap-2 px-3 sm:px-6 py-2.5 glass border-b border-border">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-          {!hideHome && (
+          {showHome && (
             <button
               onClick={goHome}
               title="Bosh sahifaga qaytish"

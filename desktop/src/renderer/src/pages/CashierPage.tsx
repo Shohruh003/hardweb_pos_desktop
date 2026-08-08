@@ -84,11 +84,20 @@ export function CashierPage() {
     refresh();
     const socket = getSocket();
     const onChange = () => refresh();
-    socket.on(SOCKET_EVENTS.ORDER_CREATED, onChange);
+    // Yangi zakas kelganda — kassa printeridan avtomatik chek (#11).
+    // Printer sozlanmagan bo'lsa hech narsa chiqmaydi (best-effort).
+    const onCreated = (payload: { order?: Order }) => {
+      refresh();
+      const order = payload?.order;
+      if (order) {
+        window.hardweb?.printer?.printOrderTicket?.(order).catch(() => undefined);
+      }
+    };
+    socket.on(SOCKET_EVENTS.ORDER_CREATED, onCreated);
     socket.on(SOCKET_EVENTS.ORDER_UPDATED, onChange);
     socket.on(SOCKET_EVENTS.ORDER_CLOSED, onChange);
     return () => {
-      socket.off(SOCKET_EVENTS.ORDER_CREATED, onChange);
+      socket.off(SOCKET_EVENTS.ORDER_CREATED, onCreated);
       socket.off(SOCKET_EVENTS.ORDER_UPDATED, onChange);
       socket.off(SOCKET_EVENTS.ORDER_CLOSED, onChange);
     };

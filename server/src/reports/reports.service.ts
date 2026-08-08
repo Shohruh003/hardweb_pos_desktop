@@ -43,10 +43,12 @@ export class ReportsService {
 
     const rows = await this.payments
       .createQueryBuilder('p')
+      .innerJoin(OrderEntity, 'o', 'o.id = p.order_id')
       .select('p.type', 'type')
       .addSelect('SUM(p.amount)', 'amount')
       .addSelect('COUNT(DISTINCT p.order_id)', 'orders')
       .where('p.created_at >= :start', { start })
+      .andWhere('o.refunded = false') // vozvrat qilinganlar hisobga olinmaydi
       .groupBy('p.type')
       .getRawMany<{ type: PaymentType; amount: string; orders: string }>();
 
@@ -78,6 +80,7 @@ export class ReportsService {
       .addSelect('SUM(oi.price * oi.quantity)', 'sum')
       .where('o.status = :closed', { closed: OrderStatus.Closed })
       .andWhere('o.closed_at >= :start', { start })
+      .andWhere('o.refunded = false')
       .groupBy('oi.menu_item_name')
       .orderBy('quantity', 'DESC')
       .limit(limit)
@@ -102,6 +105,7 @@ export class ReportsService {
       .addSelect('SUM(p.amount)', 'revenue')
       .where('o.status = :closed', { closed: OrderStatus.Closed })
       .andWhere('o.closed_at >= :start', { start })
+      .andWhere('o.refunded = false')
       .groupBy('u.name')
       .orderBy('revenue', 'DESC')
       .getRawMany<{

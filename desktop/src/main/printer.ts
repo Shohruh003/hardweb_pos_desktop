@@ -185,6 +185,21 @@ export async function printKitchen(order: Order): Promise<PrintResult> {
   };
 }
 
+// Zakas cheki — asosiy (kassa) printerga. Har terminaldagi buyurtma kassada chiqadi (#11).
+export async function printOrderTicket(order: Order): Promise<PrintResult> {
+  const cfg = getConfig();
+  if (cfg.type === 'none') {
+    return { ok: false, message: 'Printer sozlanmagan' };
+  }
+  try {
+    const buffer = buildKitchenTicketBuffer(order, cfg.width, cfg.autoCut);
+    await sendBuffer(cfg, buffer);
+    return { ok: true, message: 'Zakas cheki chop etildi' };
+  } catch (e) {
+    return { ok: false, message: `Printer xatosi: ${(e as Error).message}` };
+  }
+}
+
 // Sinov cheki (Admin sozlamalarini tekshirish uchun)
 export async function testPrint(): Promise<PrintResult> {
   const demo: Receipt = {

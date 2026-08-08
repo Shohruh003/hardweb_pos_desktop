@@ -100,17 +100,19 @@ export class TelegramService implements OnModuleInit {
     }
   }
 
-  // Vozvrat bo'lganda direktorga xabar
+  // Vozvrat bo'lganda direktorga darhol xabar (mahsulotlari bilan)
   async notifyRefund(info: {
     tableNumber?: number;
     total: number;
     reason: string;
     by: string;
+    items?: string;
   }) {
     const money = new Intl.NumberFormat('uz-UZ').format(info.total);
     await this.sendMessage(
       `🔴 <b>VOZVRAT</b>\n` +
         `Stol: №${info.tableNumber ?? '-'}\n` +
+        (info.items ? `Mahsulotlar: ${info.items}\n` : '') +
         `Summa: <b>${money} so'm</b>\n` +
         `Sabab: ${info.reason || '—'}\n` +
         `Kim: ${info.by}`,
@@ -135,32 +137,63 @@ export class TelegramService implements OnModuleInit {
     const end = new Date();
     end.setHours(23, 59, 59, 999);
 
-    const pays = await this.payments.find({
-      where: { createdAt: Between(start, end) },
-    });
-    const revenue = pays.reduce((s, p) => s + Number(p.amount), 0);
+    // Tushum — vozvrat qilinmagan cheklar bo'yicha
+    const revRow = await this.payments
+      .createQueryBuilder('p')
+      .innerJoin(OrderEntity, 'o', 'o.id = p.order_id')
+      .select('COALESCE(SUM(p.amount), 0)', 'sum')
+      .where('p.created_at BETWEEN :s AND :e', {
+        s: start.toISOString(),
+        e: end.toISOString(),
+      })
+      .andWhere('o.refunded = false')
+      .getRawOne<{ sum: string }>();
+    const revenue = Number(revRow?.sum ?? 0);
 
     const exps = await this.expenses.find({
       where: { createdAt: Between(start, end) },
     });
     const expenseTotal = exps.reduce((s, e) => s + Number(e.amount), 0);
 
-    const refunds = await this.orders.count({
+    // Vozvratlar — mahsulotlari va umumiy summasi bilan
+    const refundedOrders = await this.orders.find({
       where: { refunded: true, refundedAt: Between(start, end) },
+      order: { refundedAt: 'DESC' },
     });
+    const refundTotal = refundedOrders.reduce(
+      (s, o) =>
+        s + (o.items || []).reduce((a, it) => a + Number(it.price) * it.quantity, 0),
+      0,
+    );
     const closedCount = await this.orders.count({
       where: { status: OrderStatus.Closed, closedAt: Between(start, end) },
     });
 
     const fmt = (n: number) => new Intl.NumberFormat('uz-UZ').format(n);
+
+    // Vozvrat qilingan mahsulotlar ro'yxati (eng ko'pi 15 ta chek)
+    let refundBlock = '';
+    if (refundedOrders.length) {
+      const lines = refundedOrders.slice(0, 15).map((o) => {
+        const sum = (o.items || []).reduce((a, it) => a + Number(it.price) * it.quantity, 0);
+        const items = (o.items || []).map((it) => `${it.quantity}× ${it.menuItemName}`).join(', ');
+        const reason = o.refundReason ? ` — ${o.refundReason}` : '';
+        return `  • ${items} = ${fmt(sum)}${reason}`;
+      });
+      refundBlock =
+        `\n<b>Qaytarilgan mahsulotlar:</b>\n${lines.join('\n')}` +
+        (refundedOrders.length > 15 ? `\n  ...yana ${refundedOrders.length - 15} ta` : '');
+    }
+
     await this.sendMessage(
       `📊 <b>Kunlik hisobot</b> (${start.toLocaleDateString('uz-UZ')})\n\n` +
-        `💰 Tushum: <b>${fmt(revenue)} so'm</b>\n` +
+        `💰 Tushum (sof): <b>${fmt(revenue)} so'm</b>\n` +
         `🧾 Yopilgan cheklar: ${closedCount}\n` +
         `💸 Rasxod: ${fmt(expenseTotal)} so'm\n` +
-        `↩️ Vozvratlar: ${refunds} ta\n` +
-        `━━━━━━━━━━━━\n` +
-        `✅ Sof: <b>${fmt(revenue - expenseTotal)} so'm</b>`,
+        `↩️ Vozvratlar: ${refundedOrders.length} ta — <b>${fmt(refundTotal)} so'm</b>\n` +
+        refundBlock +
+        `\n━━━━━━━━━━━━\n` +
+        `✅ Sof (rasxodsiz): <b>${fmt(revenue - expenseTotal)} so'm</b>`,
     );
   }
 }

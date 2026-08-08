@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { hasCapability } from '@hardweb-pos/shared';
 import { useAuth } from './state/auth';
 import { useDemoNav } from './state/demoNav';
 import { useAppNav } from './state/appNav';
@@ -28,7 +29,19 @@ export function App() {
 
   if (!user) return <LoginPage />;
 
-  switch (module) {
+  // Foydalanuvchiga ochiq modullar
+  const manageCaps = ['history', 'menu', 'tables', 'staff', 'devices', 'terminals', 'settings'];
+  const mods: string[] = [];
+  if (hasCapability(user, 'waiter')) mods.push('waiter');
+  if (hasCapability(user, 'kitchen')) mods.push('kitchen');
+  if (hasCapability(user, 'cashier')) mods.push('cashier');
+  if (hasCapability(user, 'reports')) mods.push('reports');
+  if (manageCaps.some((c) => hasCapability(user, c))) mods.push('admin');
+
+  // Bitta modul bo'lsa — to'g'ridan-to'g'ri o'sha ekran (launcher ko'rsatilmaydi)
+  const effective = module ?? (mods.length === 1 ? mods[0] : null);
+
+  switch (effective) {
     case 'waiter':
       return <WaiterPage />;
     case 'kitchen':

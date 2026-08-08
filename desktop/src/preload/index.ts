@@ -32,6 +32,8 @@ contextBridge.exposeInMainWorld('hardweb', {
       ipcRenderer.invoke('printer:print-receipt', receipt),
     printKitchen: (order: Order): Promise<PrintResult> =>
       ipcRenderer.invoke('printer:print-kitchen', order),
+    printOrderTicket: (order: Order): Promise<PrintResult> =>
+      ipcRenderer.invoke('printer:print-order-ticket', order),
     test: (): Promise<PrintResult> => ipcRenderer.invoke('printer:test'),
     list: (): Promise<string[]> => ipcRenderer.invoke('printer:list'),
     getConfig: (): Promise<PrinterConfig> =>
