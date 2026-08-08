@@ -168,7 +168,9 @@ export function buildReceiptBuffer(receipt: Receipt, width = 32, autoCut = true)
   // Fiskal QR hozircha o'chirilgan (keyinchalik yoqiladi)
   b.align('center');
 
-  b.feed(1).line('Rahmat! Yana keling').feed(3);
+  // Cutter yoqilgan bo'lsa — kesamiz; o'chiq bo'lsa qog'ozni yirtish chizig'igacha suramiz
+  b.feed(1).line('Rahmat! Yana keling');
+  b.feed(autoCut ? 2 : 6);
   if (autoCut) b.cut();
   return b.build();
 }
@@ -200,7 +202,8 @@ export function buildBillBuffer(order: Order, width = 48, autoCut = true): Buffe
   b.bold(true).size(true).cols('JAMI', money(subtotal), 2).size(false).bold(false);
   b.feed(1).align('center');
   b.line("* To'lov kutilmoqda *");
-  b.feed(1).line('Rahmat! Yana keling').feed(3);
+  b.feed(1).line('Rahmat! Yana keling');
+  b.feed(autoCut ? 2 : 6);
   if (autoCut) b.cut();
   return b.build();
 }
@@ -222,7 +225,7 @@ export function buildKitchenTicketBuffer(order: Order, width = 48, autoCut = tru
   });
 
   b.divider();
-  b.feed(2);
+  b.feed(autoCut ? 2 : 6);
   if (autoCut) b.cut();
   return b.build();
 }
