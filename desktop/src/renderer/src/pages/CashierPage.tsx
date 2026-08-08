@@ -51,6 +51,8 @@ export function CashierPage() {
   const [payType, setPayType] = useState<PaymentType>(PaymentType.Cash);
   const [paying, setPaying] = useState(false);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  // To'langan, lekin hali chek chiqarilmagan hisoblar — chop etilgunча ro'yxatда qoladi
+  const [unprinted, setUnprinted] = useState<{ order: Order; receipt: Receipt }[]>([]);
   const [exciseInputs, setExciseInputs] = useState<Record<string, string>>({});
   const [savingExcise, setSavingExcise] = useState(false);
   const [summary, setSummary] = useState<ReportSummary | null>(null);
@@ -122,9 +124,24 @@ export function CashierPage() {
   }, []);
 
   const active = orders.filter((o) => o.status !== OrderStatus.Closed);
+  // Faol hisoblar + to'langan-lekin-chop etilmagan hisoblar (belgi bilan)
+  type Bill = Order & { _unprinted?: boolean; _receipt?: Receipt };
+  const bills: Bill[] = [
+    ...active.map((o) => ({ ...o })),
+    ...unprinted.map((u) => ({ ...u.order, _unprinted: true, _receipt: u.receipt })),
+  ];
   // Zallar bo'yicha bo'lish (VIP, oddiy va h.k.)
-  const halls = Array.from(new Set(active.map((o) => o.hall).filter(Boolean))) as string[];
-  const shown = hallFilter ? active.filter((o) => o.hall === hallFilter) : active;
+  const halls = Array.from(new Set(bills.map((o) => o.hall).filter(Boolean))) as string[];
+  const shown = hallFilter ? bills.filter((o) => o.hall === hallFilter) : bills;
+
+  // Ro'yxatдаги hisobни bosish: chop etilmagan bo'lsa chek oynasi, aks holda to'lov
+  function openBill(o: Bill) {
+    if (o._unprinted && o._receipt) setReceipt(o._receipt);
+    else selectOrder(o);
+  }
+  function removeUnprinted(orderId: string) {
+    setUnprinted((prev) => prev.filter((u) => u.order.id !== orderId));
+  }
 
   function selectOrder(o: Order) {
     setSelected(o);
@@ -176,6 +193,8 @@ export function CashierPage() {
           serviceFeePercent: serviceFee,
         },
       );
+      // To'landi — lekin chek chiqarilgunча ro'yxatда "chek chiqmadi" bo'lib qoladi
+      if (selected) setUnprinted((prev) => [...prev, { order: selected, receipt: res.receipt }]);
       setReceipt(res.receipt);
       setSelected(null);
       refresh();
@@ -333,19 +352,26 @@ export function CashierPage() {
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4">
             {shown.map((o) => {
               const ready = o.status === OrderStatus.Ready;
+              const unp = !!o._unprinted;
               return (
                 <button
-                  key={o.id}
-                  onClick={() => selectOrder(o)}
+                  key={unp ? `u-${o.id}` : o.id}
+                  onClick={() => openBill(o)}
                   className={`group text-left rounded-2xl border p-4 lift animate-card-in transition-all hover:border-primary hover:-translate-y-0.5 ${
-                    ready ? 'bg-success/5 border-success/30' : 'bg-surface border-border'
+                    unp ? 'bg-warning/10 border-warning/50' : ready ? 'bg-success/5 border-success/30' : 'bg-surface border-border'
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="text-2xl font-extrabold leading-none">
                       <span className="text-muted text-lg font-bold">№</span>{o.tableNumber ?? '—'}
                     </div>
-                    <StatusBadge status={o.status} />
+                    {unp ? (
+                      <span className="text-[11px] font-bold text-warning bg-warning/20 rounded px-1.5 py-0.5">
+                        chek chiqmadi
+                      </span>
+                    ) : (
+                      <StatusBadge status={o.status} />
+                    )}
                   </div>
                   <div className="text-xs text-muted mt-2 truncate">
                     {o.hall ? `${o.hall} · ` : ''}{o.items.length} ta taom
@@ -353,8 +379,8 @@ export function CashierPage() {
                   <div className="mt-4 text-xl font-extrabold text-primary">
                     {formatSum(o.total ?? 0)}
                   </div>
-                  <div className="mt-2 text-xs font-semibold text-muted group-hover:text-primary transition-colors">
-                    To‘lov uchun bosing →
+                  <div className={`mt-2 text-xs font-semibold transition-colors ${unp ? 'text-warning' : 'text-muted group-hover:text-primary'}`}>
+                    {unp ? '🖨 Chek chiqarish uchun bosing →' : 'To‘lov uchun bosing →'}
                   </div>
                 </button>
               );
@@ -494,7 +520,11 @@ export function CashierPage() {
       )}
 
       {receipt && (
-        <ReceiptPreview receipt={receipt} onClose={() => setReceipt(null)} />
+        <ReceiptPreview
+          receipt={receipt}
+          onPrinted={() => removeUnprinted(receipt.orderId)}
+          onClose={() => setReceipt(null)}
+        />
       )}
     </AppShell>
   );

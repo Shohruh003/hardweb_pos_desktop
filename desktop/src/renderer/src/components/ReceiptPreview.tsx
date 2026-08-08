@@ -13,9 +13,11 @@ const PAYMENT_LABEL: Record<PaymentType, string> = {
 export function ReceiptPreview({
   receipt,
   onClose,
+  onPrinted,
 }: {
   receipt: Receipt;
   onClose: () => void;
+  onPrinted?: () => void; // chek muvaffaqiyatli chiqarilganда (ro'yxatдан o'chirish uchun)
 }) {
   const [printMsg, setPrintMsg] = useState('');
 
@@ -29,6 +31,7 @@ export function ReceiptPreview({
       if (hasLocalPrinter) {
         const res = await window.hardweb!.printer.printReceipt(receipt);
         if (res.ok) {
+          onPrinted?.();
           onClose();
           return;
         }
@@ -38,6 +41,7 @@ export function ReceiptPreview({
 
       // Printer yo'q (masalan zal terminali) — chekни kassa printeriga yuboramiz
       await api.post('/orders/print-receipt', receipt);
+      onPrinted?.();
       setPrintMsg('✓ Chek kassa printeriga yuborildi');
       setTimeout(onClose, 900);
     } catch {
