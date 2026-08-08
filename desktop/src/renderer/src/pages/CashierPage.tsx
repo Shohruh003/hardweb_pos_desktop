@@ -165,8 +165,8 @@ export function CashierPage() {
   if (historyOpen) {
     return (
       <AppShell title="Cheklar tarixi">
-        <div className="h-full overflow-auto p-3 sm:p-6">
-          <div className="flex items-center justify-between gap-2 mb-4">
+        <div className="h-full flex flex-col p-3 sm:p-6 overflow-hidden">
+          <div className="flex items-center justify-between gap-2 mb-4 shrink-0">
             <div className="text-xl font-bold">🧾 Cheklar tarixi</div>
             <button
               onClick={() => setHistoryOpen(false)}
@@ -175,7 +175,9 @@ export function CashierPage() {
               <span className="text-lg leading-none">←</span> Orqaga
             </button>
           </div>
-          <ReceiptsTab />
+          <div className="flex-1 min-h-0">
+            <ReceiptsTab />
+          </div>
         </div>
       </AppShell>
     );

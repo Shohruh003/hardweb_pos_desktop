@@ -90,9 +90,9 @@ export function ReceiptsTab() {
   ];
 
   return (
-    <div className="w-full">
+    <div className="w-full h-full flex flex-col min-h-0">
       {/* Filtrlar */}
-      <div className="bg-surface border border-border rounded-2xl p-4 mb-4">
+      <div className="bg-surface border border-border rounded-2xl p-4 mb-4 shrink-0">
         {/* Sana presetlari */}
         <div className="flex flex-wrap gap-2 mb-3">
           {PRESETS.map((p) => (
@@ -165,14 +165,14 @@ export function ReceiptsTab() {
               </Button>
             )}
             <Button variant="ghost" onClick={reload}>
-              {t('common.loading').replace('...', '')}
+              ↻ Yangilash
             </Button>
           </div>
         </div>
       </div>
 
-      {/* Ro'yxat — infinite scroll (parent konteyner skroll qiladi) */}
-      <div className="bg-surface border border-border rounded-2xl p-4">
+      {/* Ro'yxat — yagona skroll (flex-1); pastga yetganda keyingi sahifa yuklanadi */}
+      <div className="bg-surface border border-border rounded-2xl p-4 flex-1 min-h-0 overflow-auto">
         {items.length === 0 && !loading ? (
           <div className="text-center text-muted py-16">{t('common.noData')}</div>
         ) : (
