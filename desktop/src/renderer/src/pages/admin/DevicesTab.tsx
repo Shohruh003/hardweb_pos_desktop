@@ -73,8 +73,19 @@ export function DevicesTab() {
     setCfg({ ...cfg, kitchen: kitchen.filter((_, idx) => idx !== i) });
   }
 
+  // Printer faqat Electron oynasida ishlaydi — brauzerda ochilsa ogohlantiramiz
+  const noBridge =
+    typeof window === 'undefined' ||
+    !(window as unknown as { hardweb?: unknown }).hardweb;
+
   return (
     <div className="max-w-3xl">
+      {noBridge && (
+        <div className="mb-4 px-4 py-2 rounded-lg text-sm font-semibold bg-danger/15 text-danger">
+          ⚠️ Printer ko‘prigi ulanmagan — ilovani Electron oynasida oching (brauzerda
+          chek chiqmaydi).
+        </div>
+      )}
       {/* Server manzili — bu terminal qaysi serverga ulanadi (boshqa PC'da o'zgartiriladi) */}
       <div className="bg-surface border border-border rounded-xl p-5 mb-4">
         <div className="font-bold mb-1">Server manzili (bu terminal)</div>
@@ -111,20 +122,36 @@ export function DevicesTab() {
         {cfg.type === 'usb' && (
           <div className="mb-4">
             <label className="block text-sm text-muted mb-1">Windows printeri</label>
-            <Select
-              value={cfg.printerName}
-              onChange={(v) => setCfg({ ...cfg, printerName: v })}
-              options={[
-                { value: '', label: '— printerni tanlang —' },
-                ...printers.map((p) => ({ value: p, label: p })),
-              ]}
-            />
-            <button
-              onClick={() => window.hardweb?.printer.list().then(setPrinters)}
-              className="text-xs text-muted hover:text-primary mt-1"
-            >
-              ↻ Ro‘yxatni yangilash
-            </button>
+            {printers.length > 0 ? (
+              <Select
+                value={cfg.printerName}
+                onChange={(v) => setCfg({ ...cfg, printerName: v })}
+                options={[
+                  { value: '', label: '— printerni tanlang —' },
+                  ...printers.map((p) => ({ value: p, label: p })),
+                ]}
+              />
+            ) : (
+              <input
+                value={cfg.printerName}
+                onChange={(e) => setCfg({ ...cfg, printerName: e.target.value })}
+                placeholder="Masalan: DasturXon-POS80"
+                className="w-full px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary"
+              />
+            )}
+            <div className="flex items-center gap-3 mt-1">
+              <button
+                onClick={() => window.hardweb?.printer.list().then(setPrinters)}
+                className="text-xs text-muted hover:text-primary"
+              >
+                ↻ Ro‘yxatni yangilash
+              </button>
+              {printers.length === 0 && (
+                <span className="text-xs text-muted/70">
+                  Ro‘yxat bo‘sh — printer nomini qo‘lda yozing (Windows → Printerlar)
+                </span>
+              )}
+            </div>
           </div>
         )}
 

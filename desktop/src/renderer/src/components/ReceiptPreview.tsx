@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react';
-import QRCode from 'qrcode';
+import { useState } from 'react';
 import { Receipt, PaymentType } from '@hardweb-pos/shared';
 import { Button, formatSum } from './ui';
 
@@ -18,28 +17,24 @@ export function ReceiptPreview({
   onClose: () => void;
 }) {
   const [printMsg, setPrintMsg] = useState('');
-  const [qrImg, setQrImg] = useState('');
-
-  // Fiskal QR ma'lumotidan QR rasm yaratish (TZ F-8.2)
-  useEffect(() => {
-    if (receipt.fiscalQr) {
-      QRCode.toDataURL(receipt.fiscalQr, { margin: 1, width: 120 })
-        .then(setQrImg)
-        .catch(() => setQrImg(''));
-    }
-  }, [receipt.fiscalQr]);
 
   async function print() {
     setPrintMsg('Chop etilmoqda...');
     try {
       const res = await window.hardweb.printer.printReceipt(receipt);
-      setPrintMsg(res.message);
-      // Printer sozlanmagan bo'lsa — brauzer chopiga tushamiz
-      if (!res.ok && res.message.includes('sozlanmagan')) {
-        window.print();
+      // Muvaffaqiyatli chop etilsa — oynani yopamiz
+      if (res.ok) {
+        onClose();
+        return;
+      }
+      // Sozlanmagan bo'lsa — aniq yo'naltiruvchi xabar (OT oynasi ochilmaydi)
+      if (res.message.includes('sozlanmagan')) {
+        setPrintMsg('⚠️ Printer sozlanmagan: Admin → Qurilmalar → USB (DasturXon-POS80)');
+      } else {
+        setPrintMsg(res.message);
       }
     } catch {
-      window.print(); // Electron tashqarisida yoki xato bo'lsa
+      setPrintMsg('⚠️ Printer topilmadi. Admin → Qurilmalar bo‘limidan sozlang.');
     }
   }
 
@@ -102,24 +97,7 @@ export function ReceiptPreview({
               To‘lov turi: {PAYMENT_LABEL[receipt.paymentType]}
             </div>
 
-            {/* Fiskal QR (TZ F-8.2) — yoqilgan bo'lsa haqiqiy QR */}
-            {receipt.fiscalNumber && (
-              <div className="mt-3 flex flex-col items-center">
-                {qrImg && <img src={qrImg} alt="Fiskal QR" className="w-24 h-24" />}
-                <div className="text-[10px] mt-1">
-                  Fiskal chek № {receipt.fiscalNumber}
-                </div>
-              </div>
-            )}
-            {receipt.fiscalQrPlaceholder && (
-              <div className="mt-3 flex flex-col items-center">
-                <div className="w-20 h-20 border-2 border-dashed border-black/40 flex items-center justify-center text-[9px] text-center text-black/50">
-                  Fiskal QR
-                  <br />
-                  (o‘chirilgan)
-                </div>
-              </div>
-            )}
+            {/* Fiskal QR hozircha o'chirilgan */}
             <div className="text-center text-[11px] mt-3">Rahmat! Yana keling 😊</div>
           </div>
         </div>

@@ -20,3 +20,6 @@ desktop/dist/
 
 # Sinxron watermark holati
 sync-state.json
+
+# Claude Code local files
+.claude/

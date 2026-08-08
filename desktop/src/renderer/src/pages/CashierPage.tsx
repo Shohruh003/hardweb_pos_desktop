@@ -152,6 +152,7 @@ export function CashierPage() {
       setReceipt(res.receipt);
       setSelected(null);
       refresh();
+      // Chek faqat oynadagi "Chop etish" tugmasi bosilganda chiqadi (avtomatik emas)
     } catch (e) {
       alert((e as Error).message);
     } finally {

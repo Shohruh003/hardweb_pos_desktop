@@ -6,6 +6,17 @@ const ESC = 0x1b;
 const GS = 0x1d;
 const LF = 0x0a;
 
+// Lotin/raqamlardan tashqari belgilarni ASCII'ga moslash (№ -> "No " kabi).
+// Bu funksiya ustun kengligini to'g'ri hisoblash uchun ham ishlatiladi.
+function sanitize(text: string): string {
+  return text
+    .replace(/[‘’ʻ]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/[—–]/g, '-')
+    .replace(/№/g, 'No ')
+    .replace(/[^\x00-\x7F]/g, '?');
+}
+
 class EscPosBuilder {
   private chunks: Buffer[] = [];
   // Qog'oz kengligi (belgilarda): 58mm ≈ 32, 80mm ≈ 48
@@ -26,13 +37,7 @@ class EscPosBuilder {
 
   // Lotin/raqamlardan tashqari belgilarni ASCII'ga moslab tozalash
   private encode(text: string): Buffer {
-    const clean = text
-      .replace(/[‘’ʻ]/g, "'")
-      .replace(/[“”]/g, '"')
-      .replace(/[—–]/g, '-')
-      .replace(/№/g, 'No ')
-      .replace(/[^\x00-\x7F]/g, '?'); // qolgan non-ASCII
-    return Buffer.from(clean, 'ascii');
+    return Buffer.from(sanitize(text), 'ascii');
   }
 
   align(a: 'left' | 'center' | 'right') {
@@ -59,9 +64,15 @@ class EscPosBuilder {
     return this.raw([LF]);
   }
 
-  // Chap va o'ng matnni bitta qatorga joylash (narx jadvallari uchun)
-  cols(left: string, right: string) {
-    const space = Math.max(1, this.width - left.length - right.length);
+  // Chap va o'ng matnni bitta qatorga joylash (narx jadvallari uchun).
+  // scale=2 — ikki barobar o'lchamli matn uchun (qator kengligi yarmiga tushadi).
+  // Uzunlik sanitizatsiyadan keyin hisoblanadi (№ -> "No " kabi kengayishlarni hisobga oladi).
+  cols(left: string, right: string, scale = 1) {
+    const effWidth = Math.floor(this.width / scale);
+    const space = Math.max(
+      1,
+      effWidth - sanitize(left).length - sanitize(right).length,
+    );
     return this.line(left + ' '.repeat(space) + right);
   }
 
@@ -116,7 +127,9 @@ export function buildReceiptBuffer(receipt: Receipt, width = 32, autoCut = true)
   b.divider();
 
   b.align('left');
-  b.cols(`Stol: №${receipt.tableNumber ?? '-'}`, new Date(receipt.createdAt).toLocaleDateString('uz-UZ'));
+  const d = new Date(receipt.createdAt);
+  const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  b.cols(`Stol: №${receipt.tableNumber ?? '-'}`, dateStr);
   b.line(`Ofitsiant: ${receipt.waiterName ?? '-'}`);
   b.line(`Kassir: ${receipt.cashierName ?? '-'}`);
   b.divider();
@@ -134,17 +147,11 @@ export function buildReceiptBuffer(receipt: Receipt, width = 32, autoCut = true)
   if (receipt.serviceFeeAmount > 0) {
     b.cols(`Xizmat haqi (${receipt.serviceFeePercent}%)`, `+${money(receipt.serviceFeeAmount)}`);
   }
-  b.bold(true).size(true).cols('JAMI', money(receipt.total)).size(false).bold(false);
+  b.bold(true).size(true).cols('JAMI', money(receipt.total), 2).size(false).bold(false);
   b.line(`To'lov: ${receipt.paymentType}`);
 
-  // Fiskal QR (TZ F-8.2) — yoqilgan bo'lsa native QR, aks holda joy
-  b.feed(1).align('center');
-  if (receipt.fiscalQr && receipt.fiscalNumber) {
-    b.qr(receipt.fiscalQr);
-    b.line(`Fiskal chek N ${receipt.fiscalNumber}`);
-  } else {
-    b.line('[ Fiskal QR uchun joy ]');
-  }
+  // Fiskal QR hozircha o'chirilgan (keyinchalik yoqiladi)
+  b.align('center');
 
   b.feed(1).line('Rahmat! Yana keling').feed(3);
   if (autoCut) b.cut();

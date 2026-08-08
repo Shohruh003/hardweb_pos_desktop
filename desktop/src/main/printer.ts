@@ -84,10 +84,13 @@ function sendToNetwork(
 function sendToUsb(printerName: string, data: Buffer): Promise<void> {
   return new Promise((resolve, reject) => {
     if (!printerName) return reject(new Error('USB printer tanlanmagan'));
-    const stamp = `${process.pid}-${data.length}`;
+    const stamp = `${process.pid}-${data.length}-${data[0] ?? 0}`;
     const binFile = join(tmpdir(), `dasturxon-print-${stamp}.bin`);
+    const ps1File = join(tmpdir(), 'dasturxon-rawprint.ps1');
     writeFileSync(binFile, data);
-    const ps = `
+    // .ps1 faylga yozamiz va -File orqali argumentlar bilan chaqiramiz
+    // (yo'l/qo'shtirnoq muammolarisiz — ishonchli usul)
+    const ps1 = `param([string]$Printer,[string]$Bin)
 $code = @'
 using System;using System.Runtime.InteropServices;
 public class RawPrint {
@@ -103,12 +106,16 @@ public class RawPrint {
 }
 '@
 Add-Type -TypeDefinition $code -Language CSharp
-$b=[System.IO.File]::ReadAllBytes('${binFile.replace(/\\/g, '\\\\')}')
-if([RawPrint]::Send('${printerName.replace(/'/g, "''")}',$b)){exit 0}else{exit 1}
+$b=[System.IO.File]::ReadAllBytes($Bin)
+if([RawPrint]::Send($Printer,$b)){exit 0}else{exit 1}
 `;
+    writeFileSync(ps1File, ps1, 'utf-8');
     const child = spawn(
       'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+      [
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', ps1File, '-Printer', printerName, '-Bin', binFile,
+      ],
       { windowsHide: true },
     );
     let err = '';
@@ -121,19 +128,51 @@ if([RawPrint]::Send('${printerName.replace(/'/g, "''")}',$b)){exit 0}else{exit 1
   });
 }
 
-// Windows'dagi o'rnatilgan printerlar ro'yxati (USB tanlash uchun)
+// Windows'dagi o'rnatilgan printerlar ro'yxati (USB tanlash uchun).
+// Ba'zi tizimlarda Get-Printer moduli bo'lmasligi mumkin — WMI fallback bilan.
 export function listPrinters(): Promise<string[]> {
   return new Promise((resolve) => {
-    const child = spawn(
+    const psExe = join(
+      process.env.SystemRoot || 'C:\\Windows',
+      'System32',
+      'WindowsPowerShell',
+      'v1.0',
       'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-Command', 'Get-Printer | Select-Object -ExpandProperty Name'],
+    );
+    const script =
+      "$ErrorActionPreference='SilentlyContinue';" +
+      '$n = Get-Printer | Select-Object -ExpandProperty Name;' +
+      "if(-not $n){ $n = Get-CimInstance Win32_Printer | Select-Object -ExpandProperty Name }" +
+      "if(-not $n){ $n = Get-WmiObject Win32_Printer | Select-Object -ExpandProperty Name }" +
+      '$n';
+    const exe = existsSync(psExe) ? psExe : 'powershell.exe';
+    const child = spawn(
+      exe,
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
       { windowsHide: true },
     );
     let out = '';
+    let err = '';
     child.stdout.on('data', (d) => (out += d.toString()));
-    child.on('error', () => resolve([]));
+    child.stderr.on('data', (d) => (err += d.toString()));
+    child.on('error', (e) => {
+      try {
+        writeFileSync(join(tmpdir(), 'dasturxon-list-error.txt'), String(e));
+      } catch {
+        /* ignore */
+      }
+      resolve([]);
+    });
     child.on('close', () => {
-      resolve(out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean));
+      const names = out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      if (names.length === 0 && err) {
+        try {
+          writeFileSync(join(tmpdir(), 'dasturxon-list-error.txt'), err);
+        } catch {
+          /* ignore */
+        }
+      }
+      resolve(names);
     });
   });
 }
