@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Category,
   MenuItem,
   MenuUnit,
   Order,
+  SOCKET_EVENTS,
   Table,
   TableStatus,
 } from '@hardweb-pos/shared';
@@ -15,6 +16,7 @@ import { FeedbackModal, FeedbackVariant } from '../components/FeedbackModal';
 import { MyOrdersView } from '../components/MyOrdersView';
 import { BackButton } from '../components/BackButton';
 import { api } from '../lib/api';
+import { getSocket } from '../lib/socket';
 import { enqueue } from '../lib/offlineQueue';
 import { useConnectivity } from '../state/connectivity';
 import { useI18n } from '../state/i18n';
@@ -84,6 +86,33 @@ export function WaiterPage() {
       setActiveCat(c[0]?.id ?? null);
     });
     api.get<MenuItem[]>('/menu/items').then(setMenu);
+  }, []);
+
+  // Stol holatlarini real-time yangilash (boshqa terminalда to'lov/zakaz bo'lса)
+  const selectedTableRef = useRef<Table | null>(null);
+  useEffect(() => {
+    selectedTableRef.current = selectedTable;
+  }, [selectedTable]);
+  useEffect(() => {
+    const socket = getSocket();
+    const refresh = () => {
+      loadTables().catch(() => {});
+      const tbl = selectedTableRef.current;
+      if (tbl) {
+        api
+          .get<Order[]>('/orders')
+          .then((a) => setExistingOrder(a.find((o) => o.tableId === tbl.id) ?? null))
+          .catch(() => {});
+      }
+    };
+    socket.on(SOCKET_EVENTS.ORDER_CREATED, refresh);
+    socket.on(SOCKET_EVENTS.ORDER_UPDATED, refresh);
+    socket.on(SOCKET_EVENTS.ORDER_CLOSED, refresh);
+    return () => {
+      socket.off(SOCKET_EVENTS.ORDER_CREATED, refresh);
+      socket.off(SOCKET_EVENTS.ORDER_UPDATED, refresh);
+      socket.off(SOCKET_EVENTS.ORDER_CLOSED, refresh);
+    };
   }, []);
 
   const halls = useMemo(
