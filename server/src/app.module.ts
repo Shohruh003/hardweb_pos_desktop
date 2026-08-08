@@ -6,6 +6,7 @@ import * as entities from './entities';
 import { AuthModule } from './auth/auth.module';
 import { TablesModule } from './tables/tables.module';
 import { MenuModule } from './menu/menu.module';
+import { InventoryModule } from './inventory/inventory.module';
 import { OrdersModule } from './orders/orders.module';
 import { UsersModule } from './users/users.module';
 import { QueueModule } from './queue/queue.module';
@@ -37,6 +38,7 @@ import { SeedModule } from './seed/seed.module';
     AuthModule,
     TablesModule,
     MenuModule,
+    InventoryModule,
     OrdersModule,
     UsersModule,
     QueueModule,

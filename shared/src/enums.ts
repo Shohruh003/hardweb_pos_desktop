@@ -32,6 +32,21 @@ export enum OrderItemStatus {
   Ready = 'tayyor',
 }
 
+/** Taom o'lchov birligi — donada yoki kiloda sotiladi */
+export enum MenuUnit {
+  Piece = 'dona', // dona (bo'lakda)
+  Weight = 'kg', // kiloda (og'irlik bo'yicha)
+}
+
+/** Sklad mahsuloti o'lchov birligi */
+export enum ProductUnit {
+  Kg = 'kg', // kilogramm
+  Gram = 'g', // gramm
+  Litr = 'l', // litr
+  Ml = 'ml', // millilitr
+  Dona = 'dona', // dona
+}
+
 /** To'lov turi (TZ F-3.2) */
 export enum PaymentType {
   Cash = 'naqd', // naqd

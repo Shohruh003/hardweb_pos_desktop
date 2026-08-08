@@ -1,7 +1,6 @@
 import {
   IsArray,
   IsEnum,
-  IsInt,
   IsNumber,
   IsOptional,
   IsString,
@@ -17,8 +16,9 @@ export class CreateOrderItemDto {
   @IsUUID()
   menuItemId: string;
 
-  @IsInt()
-  @Min(1)
+  // Miqdor — dona uchun butun, kg uchun kasr (0.5, 1.75) bo'lishi mumkin
+  @IsNumber({ maxDecimalPlaces: 3 })
+  @Min(0.001)
   quantity: number;
 
   @IsOptional()

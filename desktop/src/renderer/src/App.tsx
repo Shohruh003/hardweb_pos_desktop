@@ -38,8 +38,11 @@ export function App() {
   if (hasCapability(user, 'reports')) mods.push('reports');
   if (manageCaps.some((c) => hasCapability(user, c))) mods.push('admin');
 
-  // Bitta modul bo'lsa — to'g'ridan-to'g'ri o'sha ekran (launcher ko'rsatilmaydi)
-  const effective = module ?? (mods.length === 1 ? mods[0] : null);
+  // Tanlangan modul faqat foydalanuvchiga ruxsat berilgan bo'lsa ochiladi
+  // (eski/stale modul holatida ruxsatsiz ekranga tushib qolmasligi uchun).
+  // Bitta modul bo'lsa — to'g'ridan-to'g'ri o'sha ekran (launcher ko'rsatilmaydi).
+  const validModule = module && mods.includes(module) ? module : null;
+  const effective = validModule ?? (mods.length === 1 ? mods[0] : null);
 
   switch (effective) {
     case 'waiter':

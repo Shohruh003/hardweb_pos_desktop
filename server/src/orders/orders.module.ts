@@ -14,6 +14,7 @@ import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { OrdersGateway } from './orders.gateway';
 import { TelegramModule } from '../telegram/telegram.module';
+import { InventoryModule } from '../inventory/inventory.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { TelegramModule } from '../telegram/telegram.module';
       ExciseCodeEntity,
     ]),
     TelegramModule,
+    InventoryModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService, OrdersGateway],

@@ -9,13 +9,17 @@ import {
   OrderEntity,
   OrderItemEntity,
   PaymentEntity,
+  ProductEntity,
+  RecipeItemEntity,
   TableEntity,
   UserEntity,
 } from '../entities';
 import {
+  MenuUnit,
   OrderItemStatus,
   OrderStatus,
   PaymentType,
+  ProductUnit,
   TableStatus,
   UserRole,
 } from '@hardweb-pos/shared';
@@ -40,6 +44,10 @@ export class SeedService implements OnModuleInit {
     private readonly orders: Repository<OrderEntity>,
     @InjectRepository(PaymentEntity)
     private readonly payments: Repository<PaymentEntity>,
+    @InjectRepository(ProductEntity)
+    private readonly products: Repository<ProductEntity>,
+    @InjectRepository(RecipeItemEntity)
+    private readonly recipeItems: Repository<RecipeItemEntity>,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -57,6 +65,7 @@ export class SeedService implements OnModuleInit {
     const staff = await this.seedUsers();
     const tables = await this.seedTables();
     const menu = await this.seedMenu();
+    await this.seedInventory(menu);
     await this.seedHistory(staff, tables, menu);
     await this.seedActiveOrders(staff, tables, menu);
 
@@ -71,8 +80,8 @@ export class SeedService implements OnModuleInit {
     // Har rol uchun standart ruxsatlar (capabilities). Direktor/SuperAdmin — barchasi avtomatik.
     const W = ['waiter'];
     const K = ['kitchen'];
-    const C = ['cashier', 'history'];
-    const A = ['history', 'reports', 'menu', 'tables', 'staff', 'devices', 'terminals', 'settings', 'refund', 'cashier'];
+    const C = ['cashier', 'history', 'revenue'];
+    const A = ['history', 'reports', 'menu', 'inventory', 'tables', 'staff', 'devices', 'terminals', 'settings', 'refund', 'cashier'];
     // Har bir xodim UNIKAL 4 xonali PIN bilan kiradi
     const rows = await this.users.save([
       { name: 'Aziz Karimov', role: UserRole.Waiter, login: 'ofitsiant', pin: '1111', passwordHash, active: true, permissions: W },
@@ -129,6 +138,7 @@ export class SeedService implements OnModuleInit {
       { name: 'Shashlik (qo‘y)', price: 32000, categoryId: issiq.id },
       { name: 'Tovuq shashlik', price: 24000, categoryId: issiq.id },
       { name: 'Kabob', price: 30000, categoryId: issiq.id },
+      { name: 'Qovurilgan go‘sht', price: 200000, categoryId: issiq.id, unit: MenuUnit.Weight },
       { name: 'Sho‘rva', price: 26000, categoryId: issiq.id },
       { name: 'Mastava', price: 24000, categoryId: issiq.id },
       // Salatlar
@@ -163,6 +173,46 @@ export class SeedService implements OnModuleInit {
     return this.menuItems.save(
       items.map((i) => ({ available: true, exciseRequired: false, ...i })) as Partial<MenuItemEntity>[],
     );
+  }
+
+  // ---- Sklad (ombor): mahsulotlar + bir necha taom retsepti ----
+  private async seedInventory(menu: MenuItemEntity[]) {
+    const P = ProductUnit;
+    const products = await this.products.save([
+      { name: 'Guruch', unit: P.Kg, stock: 50, minStock: 10 },
+      { name: 'Go‘sht (mol)', unit: P.Kg, stock: 30, minStock: 8 },
+      { name: 'Sabzi', unit: P.Kg, stock: 25, minStock: 5 },
+      { name: 'Piyoz', unit: P.Kg, stock: 20, minStock: 5 },
+      { name: 'Yog‘', unit: P.Litr, stock: 15, minStock: 3 },
+      { name: 'Un', unit: P.Kg, stock: 40, minStock: 10 },
+      { name: 'Non', unit: P.Dona, stock: 100, minStock: 20 },
+      { name: 'Kartoshka', unit: P.Kg, stock: 35, minStock: 8 },
+      { name: 'Tovuq', unit: P.Kg, stock: 18, minStock: 5 },
+    ] as Partial<ProductEntity>[]);
+
+    const prod = (name: string) => products.find((p) => p.name === name)!.id;
+    const dish = (name: string) => menu.find((m) => m.name === name);
+
+    // Retseptlar: taomning 1 birligiga ketadigan miqdor (mahsulot birligida)
+    const recipes: { dish: string; lines: [string, number][] }[] = [
+      { dish: 'Osh (palov)', lines: [['Guruch', 0.2], ['Go‘sht (mol)', 0.15], ['Sabzi', 0.1], ['Piyoz', 0.05], ['Yog‘', 0.05]] },
+      { dish: 'Qovurilgan go‘sht', lines: [['Go‘sht (mol)', 1], ['Yog‘', 0.05], ['Piyoz', 0.1]] }, // 1 kg taomga
+      { dish: 'Lag‘mon', lines: [['Un', 0.15], ['Go‘sht (mol)', 0.1], ['Sabzi', 0.1], ['Piyoz', 0.05]] },
+      { dish: 'Manti (6 dona)', lines: [['Un', 0.2], ['Go‘sht (mol)', 0.15], ['Piyoz', 0.1]] },
+      { dish: 'Gamburger', lines: [['Non', 1], ['Go‘sht (mol)', 0.12], ['Kartoshka', 0.1]] },
+      { dish: 'Tovuq shashlik', lines: [['Tovuq', 0.25], ['Piyoz', 0.05]] },
+    ];
+
+    const rows: Partial<RecipeItemEntity>[] = [];
+    for (const r of recipes) {
+      const d = dish(r.dish);
+      if (!d) continue;
+      for (const [pname, amount] of r.lines) {
+        rows.push({ menuItemId: d.id, productId: prod(pname), amount });
+      }
+    }
+    if (rows.length) await this.recipeItems.save(rows);
+    this.logger.log(`Sklad: ${products.length} mahsulot, ${rows.length} retsept qatori`);
   }
 
   // ---- Tarix: ~80 ta yopilgan buyurtma (oxirgi ~20 kun) ----

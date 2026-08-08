@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react';
 import {
+  MenuUnit,
   Order,
   OrderStatus,
   PaymentType,
   Receipt,
   ReportSummary,
   SOCKET_EVENTS,
+  hasCapability,
 } from '@hardweb-pos/shared';
 import { AppShell } from '../components/AppShell';
 import { Button, StatusBadge, formatSum } from '../components/ui';
 import { ReceiptPreview } from '../components/ReceiptPreview';
+import { Dashboard } from '../components/Dashboard';
 import { Modal } from '../components/Modal';
 import { ReceiptsTab } from './admin/ReceiptsTab';
 import { BackButton } from '../components/BackButton';
@@ -37,7 +40,10 @@ export function CashierPage() {
   const { t } = useI18n();
   const { user } = useAuth();
   const canHistory = (user?.permissions ?? []).includes('history');
+  // Tushum/statistikani ko'rish ruxsati (direktor bera oladi)
+  const canRevenue = hasCapability(user, 'revenue') || hasCapability(user, 'reports');
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [dashboardOpen, setDashboardOpen] = useState(false);
   const [orders, setOrders] = useState<Order[]>([]);
   const [selected, setSelected] = useState<Order | null>(null);
   const [discount, setDiscount] = useState(0);
@@ -184,21 +190,31 @@ export function CashierPage() {
     );
   }
 
+  if (dashboardOpen && canRevenue) {
+    return (
+      <AppShell title="Hisobot">
+        <Dashboard onBack={() => setDashboardOpen(false)} />
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell title={t('title.cashier')}>
       <div className="h-full flex flex-col">
-        {/* Bugungi tushum / smena yakuni */}
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-border overflow-x-auto">
-          <SummaryStat label="Bugungi tushum" value={formatSum(summary?.revenue ?? 0)} accent />
-          <SummaryStat label="Yopilgan cheklar" value={String(summary?.ordersCount ?? 0)} />
-          <SummaryStat label="O‘rtacha chek" value={formatSum(summary?.avgCheck ?? 0)} />
-          <div className="h-8 w-px bg-border mx-1" />
-          {(summary?.paymentBreakdown ?? []).map((p) => (
-            <SummaryStat key={p.type} label={payLabel[p.type] || p.type} value={formatSum(p.amount)} />
-          ))}
-          <div className="h-8 w-px bg-border mx-1" />
-          <SummaryStat label="Rasxod" value={formatSum(expenses.total)} />
-          <SummaryStat label="Sof tushum" value={formatSum((summary?.revenue ?? 0) - expenses.total)} accent />
+        {/* Soddalashtirilgan tepa panel: tugmalar (tushum ko'rsatkichlari ruxsatga bog'liq) */}
+        <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border overflow-x-auto">
+          {canRevenue && (
+            <>
+              <SummaryStat label="Bugungi tushum" value={formatSum(summary?.revenue ?? 0)} accent />
+              <SummaryStat label="Sof tushum" value={formatSum((summary?.revenue ?? 0) - expenses.total)} />
+              <button
+                onClick={() => setDashboardOpen(true)}
+                className="shrink-0 px-3.5 py-2 rounded-lg bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 text-sm font-bold whitespace-nowrap"
+              >
+                📊 Hisobot
+              </button>
+            </>
+          )}
           <button
             onClick={() => setShowExpenses(true)}
             className="shrink-0 px-3 py-2 rounded-lg bg-surface border border-border hover:border-primary text-sm font-semibold whitespace-nowrap"
@@ -258,82 +274,98 @@ export function CashierPage() {
           </Modal>
         )}
 
-      <div className="flex-1 flex flex-col md:flex-row min-h-0">
-        {/* Faol hisoblar ro'yxati */}
-        <div className="w-full md:w-[320px] shrink-0 border-b md:border-b-0 md:border-r border-border overflow-auto max-h-[35vh] md:max-h-none">
-          <div className="px-4 py-3 font-bold border-b border-border">
-            {t('cashier.openBills')} ({shown.length})
-          </div>
-          {/* Zal bo'yicha filtr (VIP / oddiy / terrasa) */}
-          {halls.length > 1 && (
-            <div className="flex gap-1.5 flex-wrap p-2 border-b border-border">
+      {/* Ochiq hisoblar — kartochka to'ri (bosilsa to'lov modal ochiladi) */}
+      <div className="flex-1 overflow-auto p-4 sm:p-6">
+        {/* Zal bo'yicha filtr (VIP / oddiy / terrasa) */}
+        {halls.length > 1 && (
+          <div className="flex gap-2 flex-wrap mb-4">
+            <button
+              onClick={() => setHallFilter('')}
+              className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold border transition-colors ${
+                hallFilter === '' ? 'bg-primary text-white border-primary' : 'bg-surface border-border text-muted hover:text-text'
+              }`}
+            >
+              {t('common.all')}
+            </button>
+            {halls.map((h) => (
               <button
-                onClick={() => setHallFilter('')}
-                className={`px-2.5 py-1 rounded-md text-xs font-semibold ${
-                  hallFilter === '' ? 'bg-primary text-white' : 'bg-bg border border-border text-muted hover:text-text'
+                key={h}
+                onClick={() => setHallFilter(h)}
+                className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold border transition-colors ${
+                  hallFilter === h ? 'bg-primary text-white border-primary' : 'bg-surface border-border text-muted hover:text-text'
                 }`}
               >
-                {t('common.all')}
+                {h}
               </button>
-              {halls.map((h) => (
+            ))}
+          </div>
+        )}
+        <div className="text-sm text-muted mb-3">
+          {t('cashier.openBills')} — {shown.length} ta
+        </div>
+        {shown.length === 0 ? (
+          <div className="flex flex-col items-center justify-center text-muted py-24">
+            <div className="text-5xl mb-3">🍽️</div>
+            <div>{t('cashier.noBills')}</div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4">
+            {shown.map((o) => {
+              const ready = o.status === OrderStatus.Ready;
+              return (
                 <button
-                  key={h}
-                  onClick={() => setHallFilter(h)}
-                  className={`px-2.5 py-1 rounded-md text-xs font-semibold ${
-                    hallFilter === h ? 'bg-primary text-white' : 'bg-bg border border-border text-muted hover:text-text'
+                  key={o.id}
+                  onClick={() => selectOrder(o)}
+                  className={`group text-left rounded-2xl border p-4 lift animate-card-in transition-all hover:border-primary hover:-translate-y-0.5 ${
+                    ready ? 'bg-success/5 border-success/30' : 'bg-surface border-border'
                   }`}
                 >
-                  {h}
-                </button>
-              ))}
-            </div>
-          )}
-          {shown.length === 0 ? (
-            <div className="text-muted text-sm p-4">{t('cashier.noBills')}</div>
-          ) : (
-            shown.map((o) => (
-              <button
-                key={o.id}
-                onClick={() => selectOrder(o)}
-                className={`w-full text-left px-4 py-3 border-b border-border flex items-center justify-between ${
-                  selected?.id === o.id
-                    ? 'bg-primary/15'
-                    : 'hover:bg-surface-hover'
-                }`}
-              >
-                <div>
-                  <div className="font-semibold">Stol №{o.tableNumber ?? '—'}</div>
-                  <div className="text-xs text-muted">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="text-2xl font-extrabold leading-none">
+                      <span className="text-muted text-lg font-bold">№</span>{o.tableNumber ?? '—'}
+                    </div>
+                    <StatusBadge status={o.status} />
+                  </div>
+                  <div className="text-xs text-muted mt-2 truncate">
                     {o.hall ? `${o.hall} · ` : ''}{o.items.length} ta taom
                   </div>
-                </div>
-                <div className="text-right">
-                  <div className="font-bold">{formatSum(o.total ?? 0)}</div>
-                  <StatusBadge status={o.status} />
-                </div>
+                  <div className="mt-4 text-xl font-extrabold text-primary">
+                    {formatSum(o.total ?? 0)}
+                  </div>
+                  <div className="mt-2 text-xs font-semibold text-muted group-hover:text-primary transition-colors">
+                    To‘lov uchun bosing →
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      </div>
+
+      {/* To'lov modal oynasi — kartochka bosilganda ochiladi */}
+      {selected && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 animate-overlay-in p-4"
+          onClick={() => setSelected(null)}
+        >
+          <div
+            className="bg-surface border border-border rounded-2xl w-full max-w-[520px] max-h-[92vh] flex flex-col animate-pop-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-3.5 border-b border-border font-bold flex items-center justify-between sticky top-0 bg-surface rounded-t-2xl">
+              <span>Stol №{selected.tableNumber ?? '—'} — hisob</span>
+              <button onClick={() => setSelected(null)} className="text-muted hover:text-text text-xl leading-none">
+                ✕
               </button>
-            ))
-          )}
-        </div>
-
-        {/* Hisob tafsiloti va to'lov */}
-        <div className="flex-1 overflow-auto">
-          {!selected ? (
-            <div className="h-full flex items-center justify-center text-muted">
-              {t('cashier.selectBill')}
             </div>
-          ) : (
-            <div className="max-w-2xl mx-auto p-6">
-              <div className="text-xl font-bold mb-4">
-                Stol №{selected.tableNumber ?? '—'} — hisob
-              </div>
-
-              <div className="bg-surface border border-border rounded-xl divide-y divide-border mb-5">
+            <div className="p-5 overflow-auto">
+              <div className="bg-bg border border-border rounded-xl divide-y divide-border mb-5">
                 {selected.items.map((it) => (
                   <div key={it.id} className="flex justify-between px-4 py-2.5">
                     <span>
                       <span className="text-primary font-semibold">
-                        {it.quantity}×
+                        {it.unit === MenuUnit.Weight ? `${it.quantity} kg` : `${it.quantity}×`}
                       </span>{' '}
                       {it.menuItemName}
                       {it.note && (
@@ -341,7 +373,7 @@ export function CashierPage() {
                       )}
                     </span>
                     <span className="font-semibold">
-                      {formatSum(it.price * it.quantity)}
+                      {formatSum((it.price ?? 0) * it.quantity)}
                     </span>
                   </div>
                 ))}
@@ -364,7 +396,6 @@ export function CashierPage() {
                             setExciseInputs((p) => ({ ...p, [it.id]: e.target.value }))
                           }
                           onKeyDown={(e) => {
-                            // HID skaner kod oxirida Enter yuboradi
                             if (e.key === 'Enter') saveExcise();
                           }}
                           placeholder="Aksiz kodini skanerlang yoki kiriting"
@@ -386,16 +417,8 @@ export function CashierPage() {
 
               {/* Chegirma va xizmat haqi (TZ F-3.3) */}
               <div className="grid grid-cols-2 gap-4 mb-5">
-                <Field
-                  label={t('cashier.discount')}
-                  value={discount}
-                  onChange={setDiscount}
-                />
-                <Field
-                  label={t('cashier.serviceFee')}
-                  value={serviceFee}
-                  onChange={setServiceFee}
-                />
+                <Field label={t('cashier.discount')} value={discount} onChange={setDiscount} />
+                <Field label={t('cashier.serviceFee')} value={serviceFee} onChange={setServiceFee} />
               </div>
 
               {/* To'lov turi (TZ F-3.2) */}
@@ -409,7 +432,7 @@ export function CashierPage() {
                       className={`flex-1 py-3 rounded-lg font-semibold ${
                         payType === p.type
                           ? 'bg-primary text-white'
-                          : 'bg-surface border border-border text-muted hover:text-text'
+                          : 'bg-bg border border-border text-muted hover:text-text'
                       }`}
                     >
                       {t(`pay.${p.type}`)}
@@ -419,20 +442,13 @@ export function CashierPage() {
               </div>
 
               {/* Yakuniy summa */}
-              <div className="bg-surface border border-border rounded-xl p-4 mb-5 space-y-1.5">
+              <div className="bg-bg border border-border rounded-xl p-4 mb-5 space-y-1.5">
                 <SumRow label="Jami" value={formatSum(subtotal)} />
                 {discountAmount > 0 && (
-                  <SumRow
-                    label={`Chegirma (${discount}%)`}
-                    value={`- ${formatSum(discountAmount)}`}
-                    color="text-danger"
-                  />
+                  <SumRow label={`Chegirma (${discount}%)`} value={`- ${formatSum(discountAmount)}`} color="text-danger" />
                 )}
                 {serviceFeeAmount > 0 && (
-                  <SumRow
-                    label={`Xizmat haqi (${serviceFee}%)`}
-                    value={`+ ${formatSum(serviceFeeAmount)}`}
-                  />
+                  <SumRow label={`Xizmat haqi (${serviceFee}%)`} value={`+ ${formatSum(serviceFeeAmount)}`} />
                 )}
                 <div className="border-t border-border pt-2 flex justify-between text-lg font-bold">
                   <span>To‘lanadi</span>
@@ -452,10 +468,9 @@ export function CashierPage() {
                     : t('cashier.pay')}
               </Button>
             </div>
-          )}
+          </div>
         </div>
-      </div>
-      </div>
+      )}
 
       {receipt && (
         <ReceiptPreview receipt={receipt} onClose={() => setReceipt(null)} />
@@ -474,9 +489,13 @@ function SummaryStat({
   accent?: boolean;
 }) {
   return (
-    <div className="px-3 whitespace-nowrap">
-      <div className="text-xs text-muted">{label}</div>
-      <div className={`font-bold ${accent ? 'text-primary text-lg' : ''}`}>{value}</div>
+    <div
+      className={`shrink-0 rounded-xl border px-4 py-2 whitespace-nowrap ${
+        accent ? 'bg-primary/10 border-primary/30' : 'bg-surface border-border'
+      }`}
+    >
+      <div className="text-[11px] text-muted">{label}</div>
+      <div className={`font-bold ${accent ? 'text-primary text-lg' : 'text-base'}`}>{value}</div>
     </div>
   );
 }

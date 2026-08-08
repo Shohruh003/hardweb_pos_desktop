@@ -93,6 +93,35 @@ export class ReportsService {
     }));
   }
 
+  // Kunlik tushum qatori (dashboard chiziqli grafigi uchun) — oxirgi N kun.
+  // closed_at bo'yicha (tarix bir necha kunga taqsimlangan).
+  async daily(days = 7): Promise<{ date: string; revenue: number }[]> {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - (days - 1));
+
+    const rows = await this.orders
+      .createQueryBuilder('o')
+      .innerJoin(PaymentEntity, 'p', 'p.order_id = o.id')
+      .select("to_char(o.closed_at, 'YYYY-MM-DD')", 'date')
+      .addSelect('SUM(p.amount)', 'revenue')
+      .where('o.status = :closed', { closed: OrderStatus.Closed })
+      .andWhere('o.closed_at >= :start', { start })
+      .andWhere('o.refunded = false')
+      .groupBy('date')
+      .getRawMany<{ date: string; revenue: string }>();
+
+    const map = new Map(rows.map((r) => [r.date, Number(r.revenue)]));
+    const out: { date: string; revenue: number }[] = [];
+    for (let i = 0; i < days; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      out.push({ date: key, revenue: map.get(key) || 0 });
+    }
+    return out;
+  }
+
   // Ofitsiantlar bo'yicha statistika (TZ F-5.4)
   async waiterStats(period: ReportPeriod): Promise<WaiterStat[]> {
     const start = this.periodStart(period);

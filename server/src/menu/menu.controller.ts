@@ -12,6 +12,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
   IsBoolean,
+  IsEnum,
   IsNumber,
   IsOptional,
   IsString,
@@ -22,7 +23,7 @@ import { CategoryEntity, MenuItemEntity } from '../entities';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
-import { UserRole } from '@hardweb-pos/shared';
+import { MenuUnit, UserRole } from '@hardweb-pos/shared';
 
 class CategoryDto {
   @IsString() name: string;
@@ -37,6 +38,7 @@ class MenuItemDto {
   @IsOptional() @IsString() ingredients?: string;
   @IsOptional() @IsBoolean() available?: boolean;
   @IsOptional() @IsBoolean() exciseRequired?: boolean;
+  @IsOptional() @IsEnum(MenuUnit) unit?: MenuUnit;
 }
 
 class MenuItemPatchDto {
@@ -46,6 +48,7 @@ class MenuItemPatchDto {
   @IsOptional() @IsString() ingredients?: string;
   @IsOptional() @IsBoolean() available?: boolean;
   @IsOptional() @IsBoolean() exciseRequired?: boolean;
+  @IsOptional() @IsEnum(MenuUnit) unit?: MenuUnit;
 }
 
 @UseGuards(JwtAuthGuard)

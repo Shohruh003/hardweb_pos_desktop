@@ -2,6 +2,10 @@
 // Chekni bayt buferiga aylantiradi. Termal printerlar uchun standart protokol.
 import type { Order, Receipt, ReceiptLine } from '@hardweb-pos/shared';
 
+// MenuUnit.Weight qiymati ('kg') — main jarayon shared'dan faqat type oladi,
+// shuning uchun bu yerda string literal bilan solishtiramiz.
+const UNIT_KG = 'kg';
+
 const ESC = 0x1b;
 const GS = 0x1d;
 const LF = 0x0a;
@@ -118,6 +122,19 @@ function money(n: number): string {
   return new Intl.NumberFormat('uz-UZ').format(n);
 }
 
+// Miqdorni birlik bilan ko'rsatish: dona -> "2", kg -> "2 kg" / "1.5 kg"
+function qtyText(quantity: number, unit?: string): string {
+  const q = Number(quantity);
+  if (unit === UNIT_KG) return `${q} kg`;
+  return String(q);
+}
+
+// Sana-vaqtni chek uchun barqaror formatlash (2026-08-08 12:43)
+function fmtDateTime(date: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}`;
+}
+
 // Mijoz cheki (TZ F-6.3): restoran nomi, stol, ofitsiant, taomlar, jami, to'lov
 export function buildReceiptBuffer(receipt: Receipt, width = 32, autoCut = true): Buffer {
   const b = new EscPosBuilder(width);
@@ -127,16 +144,14 @@ export function buildReceiptBuffer(receipt: Receipt, width = 32, autoCut = true)
   b.divider();
 
   b.align('left');
-  const d = new Date(receipt.createdAt);
-  const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  b.cols(`Stol: №${receipt.tableNumber ?? '-'}`, dateStr);
+  b.cols(`Stol: №${receipt.tableNumber ?? '-'}`, fmtDateTime(new Date(receipt.createdAt)));
   b.line(`Ofitsiant: ${receipt.waiterName ?? '-'}`);
   b.line(`Kassir: ${receipt.cashierName ?? '-'}`);
   b.divider();
 
   receipt.lines.forEach((l: ReceiptLine) => {
     b.line(l.name);
-    b.cols(`  ${l.quantity} x ${money(l.price)}`, money(l.sum));
+    b.cols(`  ${qtyText(l.quantity, l.unit)} x ${money(l.price)}`, money(l.sum));
   });
 
   b.divider();
@@ -158,6 +173,38 @@ export function buildReceiptBuffer(receipt: Receipt, width = 32, autoCut = true)
   return b.build();
 }
 
+// Hisob (SCHOT) — to'lovdan oldin mijozga beriladigan hisob. Fiskal emas.
+// Ofitsiant/kassa "Schot" tugmasini bosганda kassa printeridan chiqadi.
+export function buildBillBuffer(order: Order, width = 48, autoCut = true): Buffer {
+  const b = new EscPosBuilder(width);
+
+  b.align('center').bold(true).size(true).line('DasturXon').size(false);
+  b.bold(true).line('HISOB (SCHOT)').bold(false);
+  b.divider();
+
+  b.align('left');
+  b.cols(`Stol: №${order.tableNumber ?? '-'}`, fmtDateTime(new Date()));
+  if (order.waiterName) b.line(`Ofitsiant: ${order.waiterName}`);
+  b.divider();
+
+  let subtotal = 0;
+  (order.items || []).forEach((it) => {
+    const price = Number(it.price) || 0;
+    const sum = price * Number(it.quantity);
+    subtotal += sum;
+    b.line(it.menuItemName ?? '');
+    b.cols(`  ${qtyText(it.quantity, it.unit)} x ${money(price)}`, money(sum));
+  });
+
+  b.divider();
+  b.bold(true).size(true).cols('JAMI', money(subtotal), 2).size(false).bold(false);
+  b.feed(1).align('center');
+  b.line("* To'lov kutilmoqda *");
+  b.feed(1).line('Rahmat! Yana keling').feed(3);
+  if (autoCut) b.cut();
+  return b.build();
+}
+
 // Oshxona cheki (KDS/oshpaz uchun) — narxsiz, katta shrift: stol, vaqt, taomlar.
 // Oshxonaga qo'yilgan LAN printerlarga yuboriladi.
 export function buildKitchenTicketBuffer(order: Order, width = 48, autoCut = true): Buffer {
@@ -170,7 +217,7 @@ export function buildKitchenTicketBuffer(order: Order, width = 48, autoCut = tru
 
   b.align('left');
   (order.items || []).forEach((it) => {
-    b.bold(true).size(true).line(`${it.quantity} x ${it.menuItemName}`).size(false).bold(false);
+    b.bold(true).size(true).line(`${qtyText(it.quantity, it.unit)} x ${it.menuItemName}`).size(false).bold(false);
     if (it.note) b.line(`   >> ${it.note}`);
   });
 

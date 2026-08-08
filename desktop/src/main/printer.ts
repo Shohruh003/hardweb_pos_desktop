@@ -7,7 +7,7 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { Order, Receipt } from '@hardweb-pos/shared';
-import { buildKitchenTicketBuffer, buildReceiptBuffer } from './escpos';
+import { buildBillBuffer, buildKitchenTicketBuffer, buildReceiptBuffer } from './escpos';
 
 // Oshxona printeri (LAN) — bir nechta bo'lishi mumkin (2-3 ta)
 export interface KitchenPrinter {
@@ -222,6 +222,22 @@ export async function printKitchen(order: Order): Promise<PrintResult> {
     ok: ok > 0,
     message: fail === 0 ? `Oshxonaga chop etildi (${ok})` : `${ok} ta chop etildi, ${fail} ta xato`,
   };
+}
+
+// Hisob (SCHOT) — to'lovdan oldin mijozga beriladigan hisob (fiskal emas).
+// Ofitsiant yoki kassa "Schot" tugmasini bosганda kassa printeridan chiqadi.
+export async function printBill(order: Order): Promise<PrintResult> {
+  const cfg = getConfig();
+  if (cfg.type === 'none') {
+    return { ok: false, message: 'Printer sozlanmagan (Administrator → Qurilmalar)' };
+  }
+  try {
+    const buffer = buildBillBuffer(order, cfg.width, cfg.autoCut);
+    await sendBuffer(cfg, buffer);
+    return { ok: true, message: 'Hisob (schot) chop etildi' };
+  } catch (e) {
+    return { ok: false, message: `Printer xatosi: ${(e as Error).message}` };
+  }
 }
 
 // Zakas cheki — asosiy (kassa) printerga. Har terminaldagi buyurtma kassada chiqadi (#11).

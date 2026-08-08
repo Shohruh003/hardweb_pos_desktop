@@ -68,8 +68,15 @@ export function StaffTab() {
     });
   }
 
+  // Shu PIN boshqa xodimга berilganmi? (o'zidan tashqari)
+  const pinOwner =
+    form && form.pin.length === 4
+      ? users.find((u) => u.pin === form.pin && u.id !== form.id)
+      : null;
+
   async function save() {
     if (!form || !form.name) return;
+    if (pinOwner) return; // takroriy PIN — saqlashga yo'l qo'ymaymiz
     const permissions = isFullAccessRole(form.role) ? [] : form.permissions;
     try {
       if (form.id) {
@@ -162,7 +169,13 @@ export function StaffTab() {
               </div>
             </div>
           </div>
-          <div className="text-xs text-muted mb-3">Bu PIN'ni xodimga ayting — u shu bilan tizimga kiradi.</div>
+          {pinOwner ? (
+            <div className="text-sm text-danger font-semibold mb-3 bg-danger/10 border border-danger/30 rounded-lg px-3 py-2">
+              ⚠️ Bunday PIN allaqachon mavjud — <b>{pinOwner.name}</b> ({ROLE_LABEL[pinOwner.role] ?? pinOwner.role})ga berilgan. Boshqa PIN tanlang.
+            </div>
+          ) : (
+            <div className="text-xs text-muted mb-3">Bu PIN'ni xodimga ayting — u shu bilan tizimga kiradi.</div>
+          )}
 
           {/* Ruxsatlar (capabilities) */}
           {fullAccess ? (
@@ -201,7 +214,7 @@ export function StaffTab() {
           )}
           <div className="flex gap-2">
             <Button variant="ghost" className="flex-1" onClick={() => setForm(null)}>Bekor</Button>
-            <Button className="flex-1" onClick={save}>{form.id ? 'Saqlash' : 'Qo‘shish'}</Button>
+            <Button className="flex-1" disabled={!!pinOwner} onClick={save}>{form.id ? 'Saqlash' : 'Qo‘shish'}</Button>
           </div>
         </Modal>
       )}

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Receipt, PaymentType } from '@hardweb-pos/shared';
+import { MenuUnit, Receipt, PaymentType } from '@hardweb-pos/shared';
 import { Button, formatSum } from './ui';
 
 const PAYMENT_LABEL: Record<PaymentType, string> = {
@@ -67,7 +67,7 @@ export function ReceiptPreview({
                 <div>{l.name}</div>
                 <div className="flex justify-between">
                   <span>
-                    {l.quantity} x {formatSum(l.price)}
+                    {l.unit === MenuUnit.Weight ? `${l.quantity} kg` : l.quantity} x {formatSum(l.price)}
                   </span>
                   <span>{formatSum(l.sum)}</span>
                 </div>

@@ -2,9 +2,11 @@
 // barcha ekranlar ishlaydi; real-time (KDS/navbat) ham simulyatsiya qilinadi.
 // VITE_MOCK=1 bo'lganda api.ts va socket.ts shu yerga yo'naltiriladi.
 import {
+  MenuUnit,
   OrderStatus,
   OrderItemStatus,
   PaymentType,
+  ProductUnit,
   SOCKET_EVENTS,
   TableStatus,
   UserRole,
@@ -37,27 +39,64 @@ const categories = [
   { id: uid(), name: 'Salatlar', sortOrder: 2 },
   { id: uid(), name: 'Ichimliklar', sortOrder: 3 },
 ];
-const menu = [
-  { id: uid(), name: 'Osh', price: 35000, categoryId: categories[0].id, available: true, exciseRequired: false, image: null },
-  { id: uid(), name: 'Lag‘mon', price: 32000, categoryId: categories[0].id, available: true, exciseRequired: false, image: null },
-  { id: uid(), name: 'Shashlik', price: 28000, categoryId: categories[0].id, available: true, exciseRequired: false, image: null },
-  { id: uid(), name: 'Achchiq-chuchuk', price: 18000, categoryId: categories[1].id, available: true, exciseRequired: false, image: null },
-  { id: uid(), name: 'Sezar', price: 30000, categoryId: categories[1].id, available: true, exciseRequired: false, image: null },
-  { id: uid(), name: 'Choy', price: 8000, categoryId: categories[2].id, available: true, exciseRequired: false, image: null },
-  { id: uid(), name: 'Coca-Cola', price: 12000, categoryId: categories[2].id, available: true, exciseRequired: false, image: null },
-  { id: uid(), name: 'Pivo (0.5)', price: 22000, categoryId: categories[2].id, available: true, exciseRequired: true, image: null },
+const menu: any[] = [
+  { id: uid(), name: 'Osh', price: 35000, categoryId: categories[0].id, available: true, exciseRequired: false, image: null, unit: MenuUnit.Piece },
+  { id: uid(), name: 'Lag‘mon', price: 32000, categoryId: categories[0].id, available: true, exciseRequired: false, image: null, unit: MenuUnit.Piece },
+  { id: uid(), name: 'Shashlik', price: 28000, categoryId: categories[0].id, available: true, exciseRequired: false, image: null, unit: MenuUnit.Piece },
+  { id: uid(), name: 'Qovurilgan go‘sht', price: 200000, categoryId: categories[0].id, available: true, exciseRequired: false, image: null, unit: MenuUnit.Weight },
+  { id: uid(), name: 'Achchiq-chuchuk', price: 18000, categoryId: categories[1].id, available: true, exciseRequired: false, image: null, unit: MenuUnit.Piece },
+  { id: uid(), name: 'Sezar', price: 30000, categoryId: categories[1].id, available: true, exciseRequired: false, image: null, unit: MenuUnit.Piece },
+  { id: uid(), name: 'Choy', price: 8000, categoryId: categories[2].id, available: true, exciseRequired: false, image: null, unit: MenuUnit.Piece },
+  { id: uid(), name: 'Coca-Cola', price: 12000, categoryId: categories[2].id, available: true, exciseRequired: false, image: null, unit: MenuUnit.Piece },
+  { id: uid(), name: 'Pivo (0.5)', price: 22000, categoryId: categories[2].id, available: true, exciseRequired: true, image: null, unit: MenuUnit.Piece },
 ];
 const tables = [
   ...[1, 2, 3, 4, 5, 6].map((n) => ({ id: uid(), number: n, hall: 'Asosiy zal', capacity: 4, status: TableStatus.Free })),
   ...[7, 8, 9, 10].map((n) => ({ id: uid(), number: n, hall: 'VIP zal', capacity: 6, status: TableStatus.Free })),
 ];
-const A_CAPS = ['history', 'reports', 'menu', 'tables', 'staff', 'devices', 'terminals', 'settings', 'refund', 'cashier'];
+
+// ---- Sklad (ombor): mahsulotlar + retseptlar ----
+const products: any[] = [
+  { id: uid(), name: 'Guruch', unit: ProductUnit.Kg, stock: 50, minStock: 10 },
+  { id: uid(), name: 'Go‘sht (mol)', unit: ProductUnit.Kg, stock: 30, minStock: 8 },
+  { id: uid(), name: 'Sabzi', unit: ProductUnit.Kg, stock: 25, minStock: 5 },
+  { id: uid(), name: 'Piyoz', unit: ProductUnit.Kg, stock: 20, minStock: 5 },
+  { id: uid(), name: 'Yog‘', unit: ProductUnit.Litr, stock: 15, minStock: 3 },
+  { id: uid(), name: 'Un', unit: ProductUnit.Kg, stock: 40, minStock: 10 },
+];
+const prodId = (name: string) => products.find((p) => p.name === name)!.id;
+// recipe_items: { id, menuItemId, productId, amount } — 1 birlik taomga
+const recipeItems: any[] = [];
+function addRecipe(menuIdx: number, lines: [string, number][]) {
+  const mid = menu[menuIdx]?.id;
+  if (!mid) return;
+  lines.forEach(([pname, amount]) =>
+    recipeItems.push({ id: uid(), menuItemId: mid, productId: prodId(pname), amount }),
+  );
+}
+// menu: 0 Osh, 1 Lag'mon, 3 Qovurilgan go'sht (kg)
+addRecipe(0, [['Guruch', 0.2], ['Go‘sht (mol)', 0.15], ['Sabzi', 0.1], ['Yog‘', 0.05]]);
+addRecipe(1, [['Un', 0.15], ['Go‘sht (mol)', 0.1], ['Sabzi', 0.1]]);
+addRecipe(3, [['Go‘sht (mol)', 1], ['Yog‘', 0.05], ['Piyoz', 0.1]]);
+
+// Taom(lar) sotilganda mahsulotlarni skladdan ayirish
+function deductStock(items: { menuItemId: string; quantity: number }[]) {
+  items.forEach((it) => {
+    recipeItems
+      .filter((r) => r.menuItemId === it.menuItemId)
+      .forEach((r) => {
+        const p = products.find((x) => x.id === r.productId);
+        if (p) p.stock = Number(p.stock) - Number(r.amount) * Number(it.quantity);
+      });
+  });
+}
+const A_CAPS = ['history', 'reports', 'menu', 'inventory', 'tables', 'staff', 'devices', 'terminals', 'settings', 'refund', 'cashier', 'revenue'];
 const users: any[] = [
   { id: uid(), name: 'Aziz Karimov', role: UserRole.Waiter, login: 'ofitsiant', pin: '1111', active: true, permissions: ['waiter'] },
   { id: uid(), name: 'Sardor To‘rayev', role: UserRole.Waiter, login: 'ofitsiant2', pin: '1112', active: true, permissions: ['waiter'] },
   { id: uid(), name: 'Jasur Rahimov', role: UserRole.Waiter, login: 'ofitsiant3', pin: '1113', active: true, permissions: ['waiter'] },
   { id: uid(), name: 'Bekzod (oshpaz)', role: UserRole.Cook, login: 'oshpaz', pin: '5555', active: true, permissions: ['kitchen'] },
-  { id: uid(), name: 'Dilnoza (kassir)', role: UserRole.Cashier, login: 'kassir', pin: '1234', active: true, permissions: ['cashier', 'history'] },
+  { id: uid(), name: 'Dilnoza (kassir)', role: UserRole.Cashier, login: 'kassir', pin: '1234', active: true, permissions: ['cashier', 'history', 'revenue'] },
   { id: uid(), name: 'Admin', role: UserRole.Admin, login: 'admin', pin: '9999', active: true, permissions: A_CAPS },
   { id: uid(), name: 'Direktor', role: UserRole.Director, login: 'direktor', pin: '0000', active: true, permissions: [] },
 ];
@@ -89,13 +128,14 @@ const roles: { key: string; label: string; description: string; panel: string; b
 
 interface MockItem {
   id: string; orderId: string; menuItemId: string; menuItemName: string;
-  price: number; quantity: number; note: string | null; status: OrderItemStatus;
+  price: number; quantity: number; unit: MenuUnit; note: string | null; status: OrderItemStatus;
   exciseRequired: boolean; exciseCode: string | null;
 }
 interface MockOrder {
   id: string; tableId: string; tableNumber: number; waiterId: string; waiterName: string;
   status: OrderStatus; openedAt: string; closedAt: string | null;
   queueNumber: number | null; items: MockItem[]; total: number;
+  refunded?: boolean; refundReason?: string | null; refundedAt?: string | null;
 }
 const orders: MockOrder[] = [];
 const payments: { id: string; orderId: string; amount: number; type: PaymentType; cashierId: string; createdAt: string }[] = [];
@@ -105,7 +145,7 @@ function makeItem(orderId: string, menuItemId: string, quantity: number, note?: 
   const mi = menu.find((m) => m.id === menuItemId)!;
   return {
     id: uid(), orderId, menuItemId, menuItemName: mi.name, price: mi.price,
-    quantity, note: note ?? null, status: OrderItemStatus.Pending,
+    quantity, unit: mi.unit ?? MenuUnit.Piece, note: note ?? null, status: OrderItemStatus.Pending,
     exciseRequired: mi.exciseRequired, exciseCode: null,
   };
 }
@@ -236,7 +276,7 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
   if (path === '/menu/items' && method === 'GET') return ok(menu.filter((m) => m.available));
   if (path === '/menu/all-items' && method === 'GET') return ok([...menu]);
   if (path === '/menu/items' && method === 'POST') {
-    const m = { id: uid(), name: body.name, price: body.price, categoryId: body.categoryId, available: true, exciseRequired: !!body.exciseRequired, image: body.image ?? null };
+    const m = { id: uid(), name: body.name, price: body.price, categoryId: body.categoryId, available: true, exciseRequired: !!body.exciseRequired, image: body.image ?? null, unit: body.unit ?? MenuUnit.Piece };
     menu.push(m); return ok(m);
   }
   if (seg[0] === 'menu' && seg[1] === 'items' && seg[2] && method === 'PATCH') {
@@ -250,6 +290,41 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
   }
   if (seg[0] === 'menu' && seg[1] === 'categories' && seg[2] && method === 'DELETE') {
     const i = categories.findIndex((x) => x.id === seg[2]); if (i >= 0) categories.splice(i, 1); return ok({ ok: true });
+  }
+
+  // Sklad (ombor)
+  if (path === '/inventory/products' && method === 'GET') return ok([...products]);
+  if (path === '/inventory/products' && method === 'POST') {
+    const p = { id: uid(), name: body.name, unit: body.unit ?? ProductUnit.Kg, stock: Number(body.stock) || 0, minStock: Number(body.minStock) || 0 };
+    products.push(p); return ok(p);
+  }
+  if (seg[0] === 'inventory' && seg[1] === 'products' && seg[2] && seg[3] === 'adjust' && method === 'POST') {
+    const p = products.find((x) => x.id === seg[2]);
+    if (p) p.stock = Number(p.stock) + Number(body.delta || 0);
+    return ok(p);
+  }
+  if (seg[0] === 'inventory' && seg[1] === 'products' && seg[2] && method === 'PATCH') {
+    const p = products.find((x) => x.id === seg[2]); if (p) Object.assign(p, body); return ok(p);
+  }
+  if (seg[0] === 'inventory' && seg[1] === 'products' && seg[2] && method === 'DELETE') {
+    const i = products.findIndex((x) => x.id === seg[2]); if (i >= 0) products.splice(i, 1);
+    // Bog'liq retseptlarni ham o'chiramiz
+    for (let k = recipeItems.length - 1; k >= 0; k--) if (recipeItems[k].productId === seg[2]) recipeItems.splice(k, 1);
+    return ok({ ok: true });
+  }
+  if (seg[0] === 'inventory' && seg[1] === 'recipe' && seg[2] && method === 'GET') {
+    const rows = recipeItems.filter((r) => r.menuItemId === seg[2]).map((r) => {
+      const p = products.find((x) => x.id === r.productId);
+      return { ...r, productName: p?.name, productUnit: p?.unit };
+    });
+    return ok(rows);
+  }
+  if (seg[0] === 'inventory' && seg[1] === 'recipe' && seg[2] && method === 'PUT') {
+    for (let k = recipeItems.length - 1; k >= 0; k--) if (recipeItems[k].menuItemId === seg[2]) recipeItems.splice(k, 1);
+    (body.items || []).filter((i: any) => i.productId && Number(i.amount) > 0).forEach((i: any) =>
+      recipeItems.push({ id: uid(), menuItemId: seg[2], productId: i.productId, amount: Number(i.amount) }),
+    );
+    return ok(recipeItems.filter((r) => r.menuItemId === seg[2]));
   }
 
   // Users
@@ -363,6 +438,8 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     const serviceFeeAmount = Math.round((subtotal * (body.serviceFeePercent || 0)) / 100);
     const grand = subtotal - discountAmount + serviceFeeAmount;
     o.status = OrderStatus.Closed; o.closedAt = new Date().toISOString();
+    // Sotildi — mahsulotlarni skladdan ayiramiz
+    deductStock(o.items.map((it) => ({ menuItemId: it.menuItemId, quantity: it.quantity })));
     const table = tables.find((t) => t.id === o.tableId); if (table) table.status = TableStatus.Free;
     payments.push({ id: uid(), orderId: o.id, amount: grand, type: body.type, cashierId: cashier.id, createdAt: new Date().toISOString() });
     fiscalCounter++;
@@ -371,7 +448,7 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     emit(SOCKET_EVENTS.ORDER_CLOSED, { order: o });
     const receipt = {
       orderId: o.id, tableNumber: o.tableNumber, waiterName: o.waiterName, cashierName: cashier.name,
-      lines: o.items.map((it) => ({ name: it.menuItemName, quantity: it.quantity, price: it.price, sum: it.price * it.quantity })),
+      lines: o.items.map((it) => ({ name: it.menuItemName, quantity: it.quantity, price: it.price, sum: it.price * it.quantity, unit: it.unit ?? MenuUnit.Piece })),
       subtotal, discountPercent: body.discountPercent || 0, discountAmount,
       serviceFeePercent: body.serviceFeePercent || 0, serviceFeeAmount, total: grand,
       paymentType: body.type, createdAt: new Date().toISOString(),
@@ -381,6 +458,21 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
   }
 
   // Reports
+  if (path.startsWith('/reports/daily')) {
+    const days = Math.min(60, Math.max(1, Number(new URLSearchParams(query || '').get('days')) || 7));
+    const totalRev = payments.reduce((s, p) => s + p.amount, 0) || 600000;
+    const now = new Date();
+    const out: { date: string; revenue: number }[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(now.getDate() - i);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      // Bugun — haqiqiy; qolgan kunlar demo uchun base atrofida
+      const factor = i === 0 ? 1 : 0.4 + Math.random() * 0.9;
+      out.push({ date: key, revenue: Math.round(totalRev * factor) });
+    }
+    return ok(out);
+  }
   if (path.startsWith('/reports')) {
     const start = periodStart(period);
     const paidInPeriod = payments.filter((p) => new Date(p.createdAt).getTime() >= start);

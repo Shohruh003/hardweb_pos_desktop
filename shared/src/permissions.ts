@@ -14,11 +14,13 @@ export const CAPABILITIES: Capability[] = [
   { key: 'waiter', label: 'Ofitsiantlik (zakaz)', group: 'ops', icon: '🧑‍🍳' },
   { key: 'kitchen', label: 'Oshxona (KDS)', group: 'ops', icon: '🍳' },
   { key: 'cashier', label: 'Kassa (to‘lov)', group: 'ops', icon: '💵' },
+  { key: 'revenue', label: 'Tushum / statistikani ko‘rish', group: 'ops', icon: '📈' },
   { key: 'refund', label: 'Vozvrat qilish', group: 'ops', icon: '↩️' },
   // Boshqaruv
   { key: 'history', label: 'Cheklar tarixi', group: 'manage', icon: '🧾' },
   { key: 'reports', label: 'Hisobotlar (atchot)', group: 'manage', icon: '📊' },
   { key: 'menu', label: 'Menyu boshqarish', group: 'manage', icon: '📋' },
+  { key: 'inventory', label: 'Sklad (ombor)', group: 'manage', icon: '📦' },
   { key: 'tables', label: 'Stollar boshqarish', group: 'manage', icon: '🪑' },
   { key: 'staff', label: 'Xodimlar boshqarish', group: 'manage', icon: '👥' },
   { key: 'devices', label: 'Qurilmalar / printer', group: 'manage', icon: '🖨️' },

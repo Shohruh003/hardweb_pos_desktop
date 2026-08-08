@@ -1,4 +1,5 @@
 import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { MenuUnit } from '@hardweb-pos/shared';
 
 @Entity('menu_items')
 export class MenuItemEntity {
@@ -10,6 +11,10 @@ export class MenuItemEntity {
 
   @Column({ type: 'numeric', precision: 12, scale: 2 })
   price: number;
+
+  // O'lchov birligi: dona (bo'lakda) yoki kg (kiloda sotiladigan taomlar)
+  @Column({ type: 'varchar', default: MenuUnit.Piece })
+  unit: MenuUnit;
 
   @Column({ name: 'category_id', type: 'uuid' })
   categoryId: string;

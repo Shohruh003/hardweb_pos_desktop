@@ -22,10 +22,12 @@ import {
   OrderItemStatus,
   Receipt,
   TableStatus,
+  MenuUnit,
 } from '@hardweb-pos/shared';
 import { CreateOrderDto, PayOrderDto, UpdateOrderStatusDto } from './dto';
 import { OrdersGateway } from './orders.gateway';
 import { TelegramService } from '../telegram/telegram.service';
+import { InventoryService } from '../inventory/inventory.service';
 
 // Tarix uchun filtr/pagination parametrlari
 export interface HistoryQuery {
@@ -66,6 +68,7 @@ export class OrdersService {
     private readonly dataSource: DataSource,
     private readonly gateway: OrdersGateway,
     private readonly telegram: TelegramService,
+    private readonly inventory: InventoryService,
   ) {}
 
   // Faol (yopilmagan) buyurtmalar — KDS va kassa uchun (zal bilan)
@@ -205,6 +208,7 @@ export class OrdersService {
           menuItemName: mi.name,
           price: mi.price,
           quantity: i.quantity,
+          unit: mi.unit ?? MenuUnit.Piece,
           note: i.note ?? null,
           status: OrderItemStatus.Pending,
           exciseRequired: mi.exciseRequired,
@@ -294,7 +298,7 @@ export class OrdersService {
     }
 
     const subtotal = (order.items || []).reduce(
-      (s, it) => s + Number(it.price) * it.quantity,
+      (s, it) => s + Number(it.price) * Number(it.quantity),
       0,
     );
     const discountPercent = dto.discountPercent ?? 0;
@@ -331,6 +335,15 @@ export class OrdersService {
         await manager.save(table);
       }
 
+      // Sotildi — taomlarga ketgan mahsulotlarni skladdan ayiramiz
+      await this.inventory.deductForOrder(
+        manager,
+        (order.items || []).map((it) => ({
+          menuItemId: it.menuItemId,
+          quantity: Number(it.quantity),
+        })),
+      );
+
       if (fiscalEnabled) {
         const count = await manager.count(FiscalDocEntity);
         fiscalNumber = String(count + 1).padStart(10, '0');
@@ -355,9 +368,10 @@ export class OrdersService {
       cashierName: cashier?.name,
       lines: (order.items || []).map((it) => ({
         name: it.menuItemName,
-        quantity: it.quantity,
+        quantity: Number(it.quantity),
         price: Number(it.price),
-        sum: Number(it.price) * it.quantity,
+        sum: Number(it.price) * Number(it.quantity),
+        unit: it.unit ?? MenuUnit.Piece,
       })),
       subtotal,
       discountPercent,
@@ -419,7 +433,7 @@ export class OrdersService {
 
   private toDto(o: OrderEntity, tableNumber?: number): Order {
     const total = (o.items || []).reduce(
-      (sum, it) => sum + Number(it.price) * it.quantity,
+      (sum, it) => sum + Number(it.price) * Number(it.quantity),
       0,
     );
     return {
@@ -441,7 +455,8 @@ export class OrdersService {
         menuItemId: it.menuItemId,
         menuItemName: it.menuItemName,
         price: Number(it.price),
-        quantity: it.quantity,
+        quantity: Number(it.quantity),
+        unit: it.unit ?? MenuUnit.Piece,
         note: it.note,
         status: it.status,
         exciseRequired: it.exciseRequired,

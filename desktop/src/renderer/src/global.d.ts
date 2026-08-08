@@ -31,6 +31,7 @@ declare global {
         printReceipt: (receipt: Receipt) => Promise<PrintResult>;
         printKitchen: (order: Order) => Promise<PrintResult>;
         printOrderTicket: (order: Order) => Promise<PrintResult>;
+        printBill: (order: Order) => Promise<PrintResult>;
         test: () => Promise<PrintResult>;
         list: () => Promise<string[]>;
         getConfig: () => Promise<PrinterConfig>;

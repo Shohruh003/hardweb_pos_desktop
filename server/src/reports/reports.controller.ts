@@ -30,4 +30,10 @@ export class ReportsController {
   waiters(@Query('period') period?: string) {
     return this.reports.waiterStats(normalizePeriod(period));
   }
+
+  @Get('daily')
+  daily(@Query('days') days?: string) {
+    const n = Math.min(60, Math.max(1, Number(days) || 7));
+    return this.reports.daily(n);
+  }
 }

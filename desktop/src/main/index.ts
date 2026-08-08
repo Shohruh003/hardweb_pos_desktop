@@ -3,6 +3,7 @@ import { join } from 'path';
 import {
   getConfig,
   listPrinters,
+  printBill,
   printKitchen,
   printOrderTicket,
   printReceipt,
@@ -47,6 +48,7 @@ ipcMain.handle('printer:print-kitchen', (_e, order: Order) =>
 ipcMain.handle('printer:print-order-ticket', (_e, order: Order) =>
   printOrderTicket(order),
 );
+ipcMain.handle('printer:print-bill', (_e, order: Order) => printBill(order));
 ipcMain.handle('printer:list', () => listPrinters());
 ipcMain.handle('printer:test', () => testPrint());
 ipcMain.handle('printer:get-config', () => getConfig());

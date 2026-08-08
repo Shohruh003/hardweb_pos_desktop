@@ -5,7 +5,7 @@ import {
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
-import { OrderItemStatus } from '@hardweb-pos/shared';
+import { MenuUnit, OrderItemStatus } from '@hardweb-pos/shared';
 import { OrderEntity } from './order.entity';
 
 @Entity('order_items')
@@ -32,8 +32,13 @@ export class OrderItemEntity {
   @Column({ type: 'numeric', precision: 12, scale: 2 })
   price: number;
 
-  @Column({ default: 1 })
+  // Miqdor — dona uchun butun, kg uchun kasr (1.5, 1.75) bo'lishi mumkin
+  @Column({ type: 'numeric', precision: 10, scale: 3, default: 1 })
   quantity: number;
+
+  // O'lchov birligi (buyurtma paytida menyudan ko'chiriladi)
+  @Column({ type: 'varchar', default: MenuUnit.Piece })
+  unit: MenuUnit;
 
   @Column({ type: 'text', nullable: true })
   note: string | null;

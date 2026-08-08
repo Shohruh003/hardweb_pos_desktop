@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Category, MenuItem } from '@hardweb-pos/shared';
+import { Category, MenuItem, MenuUnit, Product, RecipeItem } from '@hardweb-pos/shared';
 import { Button, formatSum } from '../../components/ui';
 import { Select } from '../../components/Select';
 import { Modal } from '../../components/Modal';
@@ -24,6 +24,13 @@ interface ItemForm {
   exciseRequired: boolean;
   image: string | null;
   ingredients: string;
+  unit: MenuUnit;
+}
+
+// Retsept qatori (taomga ketadigan mahsulot)
+interface RecipeRow {
+  productId: string;
+  amount: string;
 }
 
 // Taomlarni boshqarish (TZ F-4.1): "+ Yangi taom" modal orqali, to'liq CRUD + rasm
@@ -35,24 +42,51 @@ export function MenuTab() {
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  // Sklad mahsulotlari va tahrirlanayotgan taom retsepti
+  const [products, setProducts] = useState<Product[]>([]);
+  const [recipe, setRecipe] = useState<RecipeRow[]>([]);
 
   async function load() {
-    const [c, i] = await Promise.all([
+    const [c, i, p] = await Promise.all([
       api.get<Category[]>('/menu/categories'),
       api.get<MenuItem[]>('/menu/all-items'),
+      api.get<Product[]>('/inventory/products').catch(() => [] as Product[]),
     ]);
     setCategories(c);
     setItems(i);
+    setProducts(p);
   }
   useEffect(() => {
     load().catch(() => {});
   }, []);
 
   function openAdd() {
-    setForm({ name: '', price: '', categoryId: categories[0]?.id ?? '', exciseRequired: false, image: null, ingredients: '' });
+    setRecipe([]);
+    setForm({ name: '', price: '', categoryId: categories[0]?.id ?? '', exciseRequired: false, image: null, ingredients: '', unit: MenuUnit.Piece });
   }
-  function openEdit(it: MenuItem) {
-    setForm({ id: it.id, name: it.name, price: String(it.price), categoryId: it.categoryId, exciseRequired: it.exciseRequired, image: it.image ?? null, ingredients: it.ingredients ?? '' });
+  async function openEdit(it: MenuItem) {
+    setRecipe([]);
+    setForm({ id: it.id, name: it.name, price: String(it.price), categoryId: it.categoryId, exciseRequired: it.exciseRequired, image: it.image ?? null, ingredients: it.ingredients ?? '', unit: it.unit ?? MenuUnit.Piece });
+    // Mavjud retseptni yuklaymiz
+    try {
+      const rows = await api.get<RecipeItem[]>(`/inventory/recipe/${it.id}`);
+      setRecipe(rows.map((r) => ({ productId: r.productId, amount: String(r.amount) })));
+    } catch {
+      /* retsept bo'lmasligi mumkin */
+    }
+  }
+
+  function addRecipeRow() {
+    setRecipe((r) => [...r, { productId: products[0]?.id ?? '', amount: '' }]);
+  }
+  function updateRecipeRow(i: number, patch: Partial<RecipeRow>) {
+    setRecipe((r) => r.map((row, idx) => (idx === i ? { ...row, ...patch } : row)));
+  }
+  function removeRecipeRow(i: number) {
+    setRecipe((r) => r.filter((_, idx) => idx !== i));
+  }
+  function unitOf(productId: string): string {
+    return products.find((p) => p.id === productId)?.unit ?? '';
   }
 
   async function pickImage(e: React.ChangeEvent<HTMLInputElement>) {
@@ -69,10 +103,21 @@ export function MenuTab() {
       exciseRequired: form.exciseRequired,
       image: form.image ?? null,
       ingredients: form.ingredients.trim() || null,
+      unit: form.unit,
     };
-    if (form.id) await api.patch(`/menu/items/${form.id}`, body);
-    else await api.post('/menu/items', body);
+    const saved = form.id
+      ? await api.patch<MenuItem>(`/menu/items/${form.id}`, body)
+      : await api.post<MenuItem>('/menu/items', body);
+    // Retseptni saqlaymiz (mahsulot + miqdor) — sotilganda skladdan ayiriladi
+    const menuItemId = saved?.id ?? form.id;
+    if (menuItemId) {
+      const items = recipe
+        .filter((r) => r.productId && Number(r.amount) > 0)
+        .map((r) => ({ productId: r.productId, amount: Number(r.amount) }));
+      await api.put(`/inventory/recipe/${menuItemId}`, { items }).catch(() => {});
+    }
     setForm(null);
+    setRecipe([]);
     await load();
   }
 
@@ -128,10 +173,11 @@ export function MenuTab() {
                 <div className="min-w-0">
                   <div className="font-semibold truncate">
                     {it.name}
+                    {it.unit === MenuUnit.Weight && <span className="ml-2 text-xs font-bold text-warning bg-warning/15 rounded px-1.5 py-0.5">kg</span>}
                     {it.exciseRequired && <span className="ml-2 text-xs text-warning">aksizli</span>}
                   </div>
                   <div className="text-sm text-muted">
-                    {formatSum(Number(it.price))} · {categories.find((c) => c.id === it.categoryId)?.name ?? '—'}
+                    {formatSum(Number(it.price))}{it.unit === MenuUnit.Weight ? '/kg' : ''} · {categories.find((c) => c.id === it.categoryId)?.name ?? '—'}
                   </div>
                 </div>
               </div>
@@ -162,7 +208,28 @@ export function MenuTab() {
           <label className="block text-sm text-muted mb-1">Nomi</label>
           <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
             className="w-full mb-3 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
-          <label className="block text-sm text-muted mb-1">Narxi (so‘m)</label>
+          {/* Sotuv birligi: dona yoki kilo */}
+          <label className="block text-sm text-muted mb-1">Sotuv birligi</label>
+          <div className="flex gap-2 mb-3">
+            {[
+              { v: MenuUnit.Piece, label: 'Dona' },
+              { v: MenuUnit.Weight, label: 'Kilo (kg)' },
+            ].map((o) => (
+              <button
+                key={o.v}
+                type="button"
+                onClick={() => setForm({ ...form, unit: o.v })}
+                className={`flex-1 py-2 rounded-lg font-semibold border ${
+                  form.unit === o.v ? 'bg-primary text-white border-primary' : 'bg-bg border-border text-muted hover:text-text'
+                }`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+          <label className="block text-sm text-muted mb-1">
+            {form.unit === MenuUnit.Weight ? '1 kg narxi (so‘m)' : 'Narxi (so‘m)'}
+          </label>
           <input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })}
             className="w-full mb-3 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
           <label className="block text-sm text-muted mb-1">Kategoriya</label>
@@ -175,6 +242,64 @@ export function MenuTab() {
             placeholder="Masalan:&#10;Guruch 200g&#10;Go‘sht 150g&#10;Sabzi 100g"
             className="w-full mb-3 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary text-sm"
           />
+          {/* Retsept — skladdan ayiriladigan mahsulotlar (universal) */}
+          <div className="mb-4 rounded-xl border border-border bg-bg/40 p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-sm font-semibold">
+                📦 Retsept — skladdan ayiriladigan mahsulotlar
+              </div>
+              <button
+                type="button"
+                onClick={addRecipeRow}
+                disabled={products.length === 0}
+                className="text-xs font-semibold text-primary hover:underline disabled:text-muted disabled:no-underline"
+              >
+                + Mahsulot
+              </button>
+            </div>
+            {products.length === 0 ? (
+              <div className="text-xs text-muted">
+                Avval "Sklad" bo‘limida mahsulot qo‘shing.
+              </div>
+            ) : recipe.length === 0 ? (
+              <div className="text-xs text-muted">
+                Hali mahsulot biriktirilmagan. {form.unit === MenuUnit.Weight ? '1 kg' : '1 dona'} taomga qancha ketishini kiriting.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {recipe.map((row, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <Select
+                        value={row.productId}
+                        onChange={(v) => updateRecipeRow(i, { productId: v })}
+                        options={products.map((p) => ({ value: p.id, label: `${p.name} (${p.unit})` }))}
+                      />
+                    </div>
+                    <input
+                      type="number"
+                      value={row.amount}
+                      onChange={(e) => updateRecipeRow(i, { amount: e.target.value })}
+                      placeholder="miqdor"
+                      className="w-24 px-2.5 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary text-sm"
+                    />
+                    <span className="w-8 text-xs text-muted">{unitOf(row.productId)}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeRecipeRow(i)}
+                      className="shrink-0 w-8 h-8 rounded-lg border border-border text-danger hover:bg-danger/10"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                <div className="text-[11px] text-muted">
+                  Miqdor — {form.unit === MenuUnit.Weight ? '1 kg' : '1 dona/porsiya'} taomga. Taom sotilganda avtomatik ayiriladi.
+                </div>
+              </div>
+            )}
+          </div>
+
           <label className="flex items-center gap-2 mb-4 text-sm cursor-pointer select-none">
             <input type="checkbox" checked={form.exciseRequired} onChange={(e) => setForm({ ...form, exciseRequired: e.target.checked })} className="w-4 h-4 accent-[#059669]" />
             Aksizli mahsulot (kassada kod skanerlanadi)

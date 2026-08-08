@@ -6,6 +6,8 @@ import {
   OrderEntity,
   OrderItemEntity,
   PaymentEntity,
+  ProductEntity,
+  RecipeItemEntity,
   TableEntity,
   UserEntity,
 } from '../entities';
@@ -21,6 +23,8 @@ import { SeedService } from './seed.service';
       OrderEntity,
       OrderItemEntity,
       PaymentEntity,
+      ProductEntity,
+      RecipeItemEntity,
     ]),
   ],
   providers: [SeedService],
