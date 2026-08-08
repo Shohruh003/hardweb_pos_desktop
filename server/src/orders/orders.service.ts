@@ -271,6 +271,20 @@ export class OrdersService {
     return dto;
   }
 
+  // Hisob (schot) chekini printerli terminalга (kassa) yuborish — relay.
+  // Ofitsiant terminalида printer bo'lmasa, kassa terminali chop etadi.
+  async printBillRelay(id: string): Promise<Order> {
+    const order = await this.orders.findOne({ where: { id } });
+    if (!order) throw new NotFoundException('Buyurtma topilmadi');
+    const table = await this.tables.findOne({ where: { id: order.tableId } });
+    const waiter = await this.users.findOne({ where: { id: order.waiterId } });
+    const dto = this.toDto(order, table?.number);
+    dto.hall = table?.hall ?? null;
+    dto.waiterName = waiter?.name ?? null;
+    this.gateway.emitPrintBill(dto);
+    return dto;
+  }
+
   // Buyurtma holatini o'zgartirish (TZ F-2.3): qabul -> tayyorlanmoqda -> tayyor
   async updateStatus(id: string, dto: UpdateOrderStatusDto): Promise<Order> {
     const order = await this.orders.findOne({ where: { id } });

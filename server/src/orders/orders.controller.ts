@@ -58,6 +58,12 @@ export class OrdersController {
     return this.orders.requestBill(id);
   }
 
+  // Hisob chekini kassa (printerli terminal) chop etsin (relay)
+  @Post(':id/print-bill')
+  printBill(@Param('id') id: string) {
+    return this.orders.printBillRelay(id);
+  }
+
   // Aksiz kodlarini skanerlab saqlash (TZ F-8.6)
   @Post(':id/excise')
   addExcise(@Param('id') id: string, @Body() dto: AddExciseDto) {

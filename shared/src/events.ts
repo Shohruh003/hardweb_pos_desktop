@@ -12,6 +12,8 @@ export const SOCKET_EVENTS = {
   ORDER_READY: 'order:ready',
   // Server -> hammaga: buyurtma yopildi (hisob to'landi)
   ORDER_CLOSED: 'order:closed',
+  // Server -> printerli terminal (kassa): hisob (schot) chekini chop et
+  PRINT_BILL: 'print:bill',
 } as const;
 
 export interface OrderCreatedPayload {

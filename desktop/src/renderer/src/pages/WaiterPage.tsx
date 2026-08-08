@@ -256,17 +256,29 @@ export function WaiterPage() {
     // Stolni "hisob kutilmoqda" holatiga o'tkazamiz (mijoz hisob so'radi)
     await api.post(`/orders/${existingOrder.id}/request-bill`).catch(() => undefined);
     try {
-      const res = await window.hardweb?.printer?.printBill?.(existingOrder);
-      await loadTables();
-      if (res?.ok) {
-        // Chek chiqdi — stollar sahifasiga qaytamiz (boshiga)
+      // Shu terminalда printer bormi? (LAN/USB sozlangan bo'lsa — o'zi chiqaradi)
+      const cfg = await window.hardweb?.printer?.getConfig?.().catch(() => null);
+      const hasLocalPrinter = !!cfg && cfg.type !== 'none';
+
+      if (hasLocalPrinter) {
+        const res = await window.hardweb!.printer.printBill(existingOrder);
+        await loadTables();
+        if (res?.ok) {
+          setPrintingBill(false);
+          finishSend({ variant: 'success', title: 'Hisob chop etildi', subtitle: `Stol №${tableNo} — schot chiqdi` });
+          return;
+        }
+        setFeedback({ variant: 'warning', title: 'Chop etilmadi', subtitle: res?.message || 'Printer xatosi' });
+      } else {
+        // Bu terminalда printer yo'q — kassa printeriga yuboramiz (relay)
+        await api.post(`/orders/${existingOrder.id}/print-bill`);
+        await loadTables();
         setPrintingBill(false);
-        finishSend({ variant: 'success', title: 'Hisob chop etildi', subtitle: `Stol №${tableNo} — schot kassadan chiqdi` });
+        finishSend({ variant: 'success', title: 'Hisob kassaga yuborildi', subtitle: `Stol №${tableNo} — schot kassa printeridan chiqadi` });
         return;
       }
-      setFeedback({ variant: 'warning', title: 'Chop etilmadi', subtitle: res?.message || 'Printer sozlanmagan (Admin → Qurilmalar)' });
-    } catch {
-      setFeedback({ variant: 'warning', title: 'Printer topilmadi', subtitle: 'Admin → Qurilmalar bo‘limidan sozlang' });
+    } catch (e) {
+      setFeedback({ variant: 'warning', title: 'Xatolik', subtitle: (e as Error)?.message || 'Hisob yuborilmadi' });
     } finally {
       setPrintingBill(false);
     }

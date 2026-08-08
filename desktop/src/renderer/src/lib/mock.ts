@@ -417,6 +417,11 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     }
     return ok(o);
   }
+  if (seg[0] === 'orders' && seg[2] === 'print-bill' && method === 'POST') {
+    const o = orders.find((x) => x.id === seg[1]);
+    if (o) emit(SOCKET_EVENTS.PRINT_BILL, { order: o });
+    return ok(o);
+  }
   if (seg[0] === 'orders' && seg[2] === 'status' && method === 'PATCH') {
     const o = orders.find((x) => x.id === seg[1]);
     if (o) {

@@ -26,4 +26,9 @@ export class OrdersGateway {
   emitOrderClosed(order: Order) {
     this.server.emit(SOCKET_EVENTS.ORDER_CLOSED, { order });
   }
+
+  // Hisob (schot) chekini printerli terminalда (kassa) chop etish (relay)
+  emitPrintBill(order: Order) {
+    this.server.emit(SOCKET_EVENTS.PRINT_BILL, { order });
+  }
 }
