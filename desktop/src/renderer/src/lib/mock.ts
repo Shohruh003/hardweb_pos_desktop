@@ -91,14 +91,18 @@ function deductStock(items: { menuItemId: string; quantity: number }[]) {
   });
 }
 const A_CAPS = ['history', 'reports', 'menu', 'inventory', 'tables', 'staff', 'devices', 'terminals', 'settings', 'refund', 'cashier', 'revenue'];
+// Real seed bilan bir xil xodimlar (ism, PIN, ruxsatlar)
 const users: any[] = [
   { id: uid(), name: 'Aziz Karimov', role: UserRole.Waiter, login: 'ofitsiant', pin: '1111', active: true, permissions: ['waiter'] },
-  { id: uid(), name: 'Sardor To‘rayev', role: UserRole.Waiter, login: 'ofitsiant2', pin: '1112', active: true, permissions: ['waiter'] },
-  { id: uid(), name: 'Jasur Rahimov', role: UserRole.Waiter, login: 'ofitsiant3', pin: '1113', active: true, permissions: ['waiter'] },
-  { id: uid(), name: 'Bekzod (oshpaz)', role: UserRole.Cook, login: 'oshpaz', pin: '5555', active: true, permissions: ['kitchen'] },
-  { id: uid(), name: 'Dilnoza (kassir)', role: UserRole.Cashier, login: 'kassir', pin: '1234', active: true, permissions: ['cashier', 'history', 'revenue'] },
-  { id: uid(), name: 'Admin', role: UserRole.Admin, login: 'admin', pin: '9999', active: true, permissions: A_CAPS },
+  { id: uid(), name: 'Kamola Yusupova', role: UserRole.Waiter, login: 'kamola', pin: '2222', active: true, permissions: ['waiter'] },
+  { id: uid(), name: 'Jasur Rahimov', role: UserRole.Waiter, login: 'jasur', pin: '3333', active: true, permissions: ['waiter'] },
+  { id: uid(), name: 'Nodira Salimova', role: UserRole.Waiter, login: 'nodira', pin: '4444', active: true, permissions: ['waiter'] },
+  { id: uid(), name: 'Bekzod Toshev', role: UserRole.Cook, login: 'oshpaz', pin: '5555', active: true, permissions: ['kitchen'] },
+  { id: uid(), name: 'Dilnoza Ergasheva', role: UserRole.Cashier, login: 'kassir', pin: '1234', active: true, permissions: ['cashier', 'history', 'revenue'] },
+  { id: uid(), name: 'Malika Nazarova', role: UserRole.Cashier, login: 'kassir2', pin: '4321', active: true, permissions: ['cashier'] },
+  { id: uid(), name: 'Sardor Admin', role: UserRole.Admin, login: 'admin', pin: '9999', active: true, permissions: A_CAPS },
   { id: uid(), name: 'Direktor', role: UserRole.Director, login: 'direktor', pin: '0000', active: true, permissions: [] },
+  { id: uid(), name: 'Super Admin (vendor)', role: UserRole.SuperAdmin, login: 'superadmin', pin: '7777', active: true, permissions: [] },
 ];
 const waiter = users[0];
 const cashier = users.find((u) => u.role === UserRole.Cashier)!;

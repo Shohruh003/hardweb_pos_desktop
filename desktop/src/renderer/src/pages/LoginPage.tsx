@@ -1,50 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../state/auth';
-import { useDemoNav } from '../state/demoNav';
-import { MOCK } from '../lib/api';
 import { getServerUrl, setServerUrl } from '../lib/config';
 import { useI18n } from '../state/i18n';
 import { ThemeLangControls } from '../components/ThemeLangControls';
 import logo from '../assets/logo.png';
 
-// Mock/prezentatsiya uchun tez kirish ekrani — panel tanlash
-function DemoEntry() {
-  const { login } = useAuth();
-  const { openQueue } = useDemoNav();
-  const roles = [
-    { login: 'ofitsiant', label: 'Ofitsiant', desc: 'Buyurtma qabul qilish' },
-    { login: 'oshpaz', label: 'Oshxona (KDS)', desc: 'Tayyorlash ekrani' },
-    { login: 'kassir', label: 'Kassa', desc: 'To‘lov va chek' },
-    { login: 'admin', label: 'Administrator', desc: 'Menyu, stol, xodim' },
-    { login: 'direktor', label: 'Direktor', desc: 'Hisobotlar' },
-  ];
-  return (
-    <div className="h-full flex flex-col items-center justify-center bg-bg p-6">
-      <div className="text-primary font-extrabold text-4xl mb-1 tracking-tight">DasturXon</div>
-      <div className="text-muted mb-8">Demo — qaysi panelni ko‘rmoqchisiz?</div>
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 max-w-3xl">
-        {roles.map((r) => (
-          <button
-            key={r.login}
-            onClick={() => login(r.login, '1234')}
-            className="bg-surface border border-border rounded-2xl p-5 text-left hover:border-primary lift animate-card-in w-56"
-          >
-            <div className="text-lg font-bold">{r.label}</div>
-            <div className="text-sm text-muted mt-1">{r.desc}</div>
-          </button>
-        ))}
-        <button
-          onClick={openQueue}
-          className="bg-surface border border-border rounded-2xl p-5 text-left hover:border-primary transition-colors w-56"
-        >
-          <div className="text-lg font-bold">Navbat ekrani</div>
-          <div className="text-sm text-muted mt-1">Mijozlar uchun tablo (TV)</div>
-        </button>
-      </div>
-    </div>
-  );
-}
-
+// Kirish ekrani — PIN bilan (mock va real bir xil ishlaydi)
 export function LoginPage() {
   const { loginByPin } = useAuth();
   const { t } = useI18n();
@@ -95,8 +56,6 @@ export function LoginPage() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }); // har renderda yangilanadi (press pin holatini biladi)
-
-  if (MOCK) return <DemoEntry />;
 
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 

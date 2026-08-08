@@ -1,8 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../state/auth';
 import { useConnectivity } from '../state/connectivity';
-import { MOCK } from '../lib/api';
-import { DemoSwitcher } from './DemoSwitcher';
 import { ThemeLangControls } from './ThemeLangControls';
 import { useI18n } from '../state/i18n';
 
@@ -41,9 +39,6 @@ export function AppShell({
           <span className="text-muted hidden lg:inline">/</span>
           <span className="font-semibold truncate hidden lg:inline">{title}</span>
         </div>
-
-        {/* Demo: panel almashtirgich (faqat mock rejimda) */}
-        {MOCK && <DemoSwitcher />}
 
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           {/* Ulanish holati — mobilda faqat nuqta */}
