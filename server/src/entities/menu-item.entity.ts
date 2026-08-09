@@ -19,6 +19,10 @@ export class MenuItemEntity {
   @Column({ name: 'category_id', type: 'uuid' })
   categoryId: string;
 
+  // Qaysi bo'lim (sex) tayyorlaydi — chekни shu bo'lim printeriga yo'naltirish uchun
+  @Column({ name: 'station_id', type: 'uuid', nullable: true })
+  stationId: string | null;
+
   @Column({ nullable: true, type: 'text' })
   image: string | null;
 
@@ -31,4 +35,8 @@ export class MenuItemEntity {
 
   @Column({ name: 'excise_required', default: false })
   exciseRequired: boolean;
+
+  // Sevimli (tez-tez sotiladigan) — ofitsiant menyusida "⭐ Sevimlilar"da chiqadi
+  @Column({ default: false })
+  favorite: boolean;
 }

@@ -1,14 +1,26 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, Repository } from 'typeorm';
-import { ProductEntity, RecipeItemEntity } from '../entities';
-import { Product, RecipeItem } from '@hardweb-pos/shared';
+import { ProductEntity, PurchaseEntity, RecipeItemEntity } from '../entities';
+import { Product, Purchase, RecipeItem } from '@hardweb-pos/shared';
 
 export interface CreateProductInput {
   name: string;
   unit: Product['unit'];
   stock?: number;
   minStock?: number;
+}
+
+export interface CreatePurchaseInput {
+  productId: string;
+  supplier: string;
+  quantity: number;
+  unitPrice: number;
+  note?: string;
 }
 
 @Injectable()
@@ -18,6 +30,8 @@ export class InventoryService {
     private readonly products: Repository<ProductEntity>,
     @InjectRepository(RecipeItemEntity)
     private readonly recipes: Repository<RecipeItemEntity>,
+    @InjectRepository(PurchaseEntity)
+    private readonly purchases: Repository<PurchaseEntity>,
   ) {}
 
   private toProduct(p: ProductEntity): Product {
@@ -68,6 +82,117 @@ export class InventoryService {
     if (!p) throw new NotFoundException('Mahsulot topilmadi');
     p.stock = Number(p.stock) + Number(delta);
     return this.toProduct(await this.products.save(p));
+  }
+
+  // --- Kirim (ta'minot) ---
+  private toPurchase(p: PurchaseEntity): Purchase {
+    return {
+      id: p.id,
+      productId: p.productId,
+      productName: p.productName,
+      unit: p.unit,
+      supplier: p.supplier,
+      quantity: Number(p.quantity),
+      unitPrice: Number(p.unitPrice),
+      total: Number(p.total),
+      note: p.note,
+      createdAt: p.createdAt?.toISOString?.() ?? String(p.createdAt),
+    };
+  }
+
+  async listPurchases(productId?: string): Promise<Purchase[]> {
+    const where = productId ? { productId } : {};
+    const list = await this.purchases.find({
+      where,
+      order: { createdAt: 'DESC' },
+      take: 200,
+    });
+    return list.map((p) => this.toPurchase(p));
+  }
+
+  // Kirim qo'shish — mahsulot ombori shu miqdorga oshadi + kirim tarixga yoziladi
+  async createPurchase(dto: CreatePurchaseInput): Promise<Purchase> {
+    const product = await this.products.findOne({ where: { id: dto.productId } });
+    if (!product) throw new NotFoundException('Mahsulot topilmadi');
+    const quantity = Number(dto.quantity) || 0;
+    const unitPrice = Number(dto.unitPrice) || 0;
+    if (quantity <= 0) throw new BadRequestException('Miqdor 0 dan katta bo‘lishi kerak');
+
+    const purchase = this.purchases.create({
+      productId: product.id,
+      productName: product.name,
+      unit: product.unit,
+      supplier: (dto.supplier || '').trim(),
+      quantity,
+      unitPrice,
+      total: Math.round(quantity * unitPrice * 100) / 100,
+      note: dto.note?.trim() || null,
+    });
+    const saved = await this.purchases.save(purchase);
+    // Ombor qoldig'ini oshiramiz
+    product.stock = Number(product.stock) + quantity;
+    await this.products.save(product);
+    return this.toPurchase(saved);
+  }
+
+  // Ombor yetarliligini tekshirish (ortiqcha sotishни oldini olish).
+  // newItems — yangi qo'shilayotgan taomlar; reservedItems — barcha ochiq
+  // buyurtmalarda band qilingan taomlar (hali to'lanmagan). Yetmasa xato beradi.
+  async assertStockAvailable(
+    newItems: { menuItemId: string; quantity: number }[],
+    reservedItems: { menuItemId: string; quantity: number }[],
+  ): Promise<void> {
+    const allMenuIds = [
+      ...new Set(
+        [...newItems, ...reservedItems].map((i) => i.menuItemId),
+      ),
+    ];
+    if (allMenuIds.length === 0) return;
+    const recipes = await this.recipes.find({
+      where: { menuItemId: In(allMenuIds) },
+    });
+    if (recipes.length === 0) return; // retseptsiz taomlar — cheklovsiz
+
+    const recByMenu = new Map<string, RecipeItemEntity[]>();
+    for (const r of recipes) {
+      const arr = recByMenu.get(r.menuItemId) ?? [];
+      arr.push(r);
+      recByMenu.set(r.menuItemId, arr);
+    }
+    const sumNeed = (items: { menuItemId: string; quantity: number }[]) => {
+      const m = new Map<string, number>();
+      for (const it of items) {
+        const rs = recByMenu.get(it.menuItemId);
+        if (!rs) continue;
+        for (const r of rs) {
+          m.set(
+            r.productId,
+            (m.get(r.productId) || 0) + Number(r.amount) * Number(it.quantity),
+          );
+        }
+      }
+      return m;
+    };
+
+    const need = sumNeed(newItems);
+    if (need.size === 0) return;
+    const reserved = sumNeed(reservedItems);
+
+    const products = await this.products.find({
+      where: { id: In([...need.keys()]) },
+    });
+    const byId = new Map(products.map((p) => [p.id, p]));
+    for (const [productId, needed] of need) {
+      const p = byId.get(productId);
+      if (!p) continue;
+      const available = Number(p.stock) - (reserved.get(productId) || 0);
+      if (needed > available + 1e-6) {
+        const av = Math.max(0, Math.round(available * 1000) / 1000);
+        throw new BadRequestException(
+          `Omborda yetarli emas: ${p.name} — mavjud ${av} ${p.unit}`,
+        );
+      }
+    }
   }
 
   // Bir taomning retsepti (mahsulot nomi/birligi bilan)

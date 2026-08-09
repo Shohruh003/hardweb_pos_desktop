@@ -36,6 +36,14 @@ contextBridge.exposeInMainWorld('hardweb', {
       ipcRenderer.invoke('printer:print-order-ticket', order),
     printBill: (order: Order): Promise<PrintResult> =>
       ipcRenderer.invoke('printer:print-bill', order),
+    printStation: (
+      order: Order,
+      host: string,
+      port: number,
+      width: number,
+      title: string,
+    ): Promise<PrintResult> =>
+      ipcRenderer.invoke('printer:print-station', { order, host, port, width, title }),
     test: (): Promise<PrintResult> => ipcRenderer.invoke('printer:test'),
     list: (): Promise<string[]> => ipcRenderer.invoke('printer:list'),
     getConfig: (): Promise<PrinterConfig> =>

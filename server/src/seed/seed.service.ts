@@ -11,6 +11,7 @@ import {
   PaymentEntity,
   ProductEntity,
   RecipeItemEntity,
+  StationEntity,
   TableEntity,
   UserEntity,
 } from '../entities';
@@ -48,6 +49,8 @@ export class SeedService implements OnModuleInit {
     private readonly products: Repository<ProductEntity>,
     @InjectRepository(RecipeItemEntity)
     private readonly recipeItems: Repository<RecipeItemEntity>,
+    @InjectRepository(StationEntity)
+    private readonly stations: Repository<StationEntity>,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -64,7 +67,8 @@ export class SeedService implements OnModuleInit {
 
     const staff = await this.seedUsers();
     const tables = await this.seedTables();
-    const menu = await this.seedMenu();
+    const stations = await this.seedStations();
+    const menu = await this.seedMenu(stations);
     await this.seedInventory(menu);
     await this.seedHistory(staff, tables, menu);
     await this.seedActiveOrders(staff, tables, menu);
@@ -81,7 +85,7 @@ export class SeedService implements OnModuleInit {
     const W = ['waiter'];
     const K = ['kitchen'];
     const C = ['cashier', 'history', 'revenue'];
-    const A = ['history', 'reports', 'menu', 'inventory', 'tables', 'staff', 'devices', 'terminals', 'settings', 'refund', 'cashier'];
+    const A = ['history', 'reports', 'menu', 'inventory', 'stations', 'tables', 'staff', 'devices', 'terminals', 'settings', 'refund', 'cashier'];
     // Har bir xodim UNIKAL 4 xonali PIN bilan kiradi
     const rows = await this.users.save([
       { name: 'Aziz Karimov', role: UserRole.Waiter, login: 'ofitsiant', pin: '1111', passwordHash, active: true, permissions: W },
@@ -111,8 +115,18 @@ export class SeedService implements OnModuleInit {
     return this.tables.save(rows);
   }
 
+  // ---- Bo'limlar (sexlar) ----
+  private async seedStations() {
+    return this.stations.save([
+      { name: 'Oshxona', printerHost: '', printerPort: 9100, printerWidth: 48, sortOrder: 1 },
+      { name: 'Bar', printerHost: '', printerPort: 9100, printerWidth: 48, sortOrder: 2 },
+      { name: 'Somsaxona', printerHost: '', printerPort: 9100, printerWidth: 48, sortOrder: 3 },
+      { name: 'Novvoyxona', printerHost: '', printerPort: 9100, printerWidth: 48, sortOrder: 4 },
+    ] as Partial<StationEntity>[]);
+  }
+
   // ---- Menyu (6 kategoriya, ~36 taom) ----
-  private async seedMenu() {
+  private async seedMenu(stations: StationEntity[]) {
     const [milliy, issiq, salat, fastfud, shirinlik, ichimlik] =
       await this.categories.save([
         { name: 'Milliy taomlar', sortOrder: 1 },
@@ -170,8 +184,31 @@ export class SeedService implements OnModuleInit {
       // Aksizli — kassada kodi skanerlanishi shart (TZ F-8.5)
       { name: 'Pivo 0.5', price: 22000, categoryId: ichimlik.id, exciseRequired: true },
     ];
+    // Har taomни bo'limga biriktiramiz (ichimlik->Bar, somsa->Somsaxona,
+    // pirog/tort->Novvoyxona, qolgani->Oshxona)
+    const stById = (name: string) => stations.find((s) => s.name === name)?.id ?? null;
+    const oshxona = stById('Oshxona');
+    const bar = stById('Bar');
+    const somsaxona = stById('Somsaxona');
+    const novvoyxona = stById('Novvoyxona');
+    const stationFor = (it: Partial<MenuItemEntity>): string | null => {
+      const n = (it.name || '').toLowerCase();
+      if (it.categoryId === ichimlik.id) return bar;
+      if (n.includes('somsa')) return somsaxona;
+      if (n.includes('pirog') || n.includes('tort') || n.includes('non')) return novvoyxona;
+      return oshxona;
+    };
+    const favNames = new Set([
+      'Osh (palov)', 'Lag‘mon', 'Shashlik (mol)', 'Somsa (tandir)', 'Coca-Cola 0.5', 'Choy',
+    ]);
     return this.menuItems.save(
-      items.map((i) => ({ available: true, exciseRequired: false, ...i })) as Partial<MenuItemEntity>[],
+      items.map((i) => ({
+        available: true,
+        exciseRequired: false,
+        stationId: stationFor(i),
+        favorite: favNames.has(i.name ?? ''),
+        ...i,
+      })) as Partial<MenuItemEntity>[],
     );
   }
 

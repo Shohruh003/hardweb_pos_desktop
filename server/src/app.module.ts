@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { TablesModule } from './tables/tables.module';
 import { MenuModule } from './menu/menu.module';
 import { InventoryModule } from './inventory/inventory.module';
+import { StationsModule } from './stations/stations.module';
 import { OrdersModule } from './orders/orders.module';
 import { UsersModule } from './users/users.module';
 import { QueueModule } from './queue/queue.module';
@@ -39,6 +40,7 @@ import { SeedModule } from './seed/seed.module';
     TablesModule,
     MenuModule,
     InventoryModule,
+    StationsModule,
     OrdersModule,
     UsersModule,
     QueueModule,

@@ -224,6 +224,26 @@ export async function printKitchen(order: Order): Promise<PrintResult> {
   };
 }
 
+// Bo'lim (sex) chekи — tanlangan taomlarni bo'limning LAN printeriga chiqaradi.
+// host bo'sh bo'lsa hech narsa qilinmaydi (printer yo'q — chek chiqmaydi).
+export async function printStationTicket(
+  order: Order,
+  host: string,
+  port: number,
+  width: number,
+  title: string,
+): Promise<PrintResult> {
+  if (!host) return { ok: false, message: 'Bo‘lim printeri sozlanmagan' };
+  try {
+    const cfg = getConfig();
+    const buffer = buildKitchenTicketBuffer(order, width || 48, cfg.autoCut, title);
+    await sendToNetwork(host, port || 9100, buffer);
+    return { ok: true, message: `${title} chekи chop etildi` };
+  } catch (e) {
+    return { ok: false, message: `Printer xatosi: ${(e as Error).message}` };
+  }
+}
+
 // Hisob (SCHOT) — to'lovdan oldin mijozga beriladigan hisob (fiskal emas).
 // Ofitsiant yoki kassa "Schot" tugmasini bosганda kassa printeridan chiqadi.
 export async function printBill(order: Order): Promise<PrintResult> {

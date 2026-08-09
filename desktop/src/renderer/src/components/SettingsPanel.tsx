@@ -111,18 +111,23 @@ export function SettingsPanel({
         placeholder="123456:ABC-DEF..."
         className={`${field} mb-3 font-mono text-sm`}
       />
-      <label className="block text-sm text-muted mb-1">Chat ID (direktor)</label>
+      <label className="block text-sm text-muted mb-1">Telegram ID (raqamli user id)</label>
       <div className="flex gap-2 mb-1">
         <input
           value={s.telegramChatId ?? ''}
           onChange={(e) => setS({ ...s, telegramChatId: e.target.value })}
-          placeholder="avtomatik olinadi"
+          placeholder="123456789  (bir nechta bo‘lsa vergul bilan)"
           className={`${field} font-mono text-sm`}
         />
         <Button variant="ghost" onClick={detectChat}>Avtomatik olish</Button>
       </div>
-      <div className="text-xs text-muted mb-3">
-        Direktor botga Telegram'da <b>/start</b> yozadi → "Avtomatik olish" bosiladi.
+      <div className="text-xs text-muted mb-3 leading-relaxed">
+        Odamning <b>raqamli Telegram ID</b>'sini yozing (masalan <b>123456789</b>). Bir
+        nechta bo‘lsa <b>vergul bilan</b>: <span className="font-mono">123, 456</span>.
+        ID'ni <b>@userinfobot</b>dan olasiz yoki "Avtomatik olish" bilan.<br />
+        <i>Muhim: o‘sha odam botга avval bir marta <b>/start</b> bosган bo‘lishi shart —
+        Telegram qoidasi (aks holda xabar yetmaydi). Kanal kerak bo‘lsa <b>@kanal_nomi</b>
+        ham yozish mumkin.</i>
       </div>
       <label className="block text-sm text-muted mb-1">Kunlik hisobot vaqti</label>
       <input

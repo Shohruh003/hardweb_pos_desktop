@@ -212,10 +212,15 @@ export function buildBillBuffer(order: Order, width = 48, autoCut = true): Buffe
 
 // Oshxona cheki (KDS/oshpaz uchun) — narxsiz, katta shrift: stol, vaqt, taomlar.
 // Oshxonaga qo'yilgan LAN printerlarga yuboriladi.
-export function buildKitchenTicketBuffer(order: Order, width = 48, autoCut = true): Buffer {
+export function buildKitchenTicketBuffer(
+  order: Order,
+  width = 48,
+  autoCut = true,
+  title = '* OSHXONA *',
+): Buffer {
   const b = new EscPosBuilder(width);
 
-  b.align('center').bold(true).size(true).line('* OSHXONA *').size(false);
+  b.align('center').bold(true).size(true).line(title).size(false);
   b.bold(true).size(true).line(`STOL №${order.tableNumber ?? '-'}`).size(false);
   if (order.hall) b.bold(true).line(order.hall).bold(false);
   b.bold(false).line(new Date(order.openedAt).toLocaleTimeString('uz-UZ'));

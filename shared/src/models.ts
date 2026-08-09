@@ -41,17 +41,29 @@ export interface Category {
   sortOrder: number; // tartib
 }
 
+/** stations — tayyorlash bo'limlari (sexlar): oshxona, bar, somsaxona, novvoyxona */
+export interface Station {
+  id: string;
+  name: string; // nom (Oshxona, Bar, Somsaxona, Novvoyxona)
+  printerHost: string; // bo'lim printeri IP (LAN) — bo'sh bo'lsa chek chiqmaydi
+  printerPort: number; // odatda 9100
+  printerWidth: number; // 32 (58mm) yoki 48 (80mm)
+  sortOrder: number;
+}
+
 /** menu_items — taomlar */
 export interface MenuItem {
   id: string;
   name: string; // nom
   price: number; // narx (dona uchun — bir dona narxi; kg uchun — 1 kg narxi)
-  categoryId: string; // kategoriya_id
+  categoryId: string; // kategoriya_id (birinchi/ikkinchi taom, salat, shirinlik...)
+  stationId?: string | null; // qaysi bo'limdan chiqadi (oshxona/bar/somsaxona...)
   image?: string | null; // rasm
   ingredients?: string | null; // taomga ketadigan mahsulotlar
   available: boolean; // mavjud
   exciseRequired: boolean; // aksiz_kerakmi (2-bosqich)
   unit?: MenuUnit; // dona yoki kg (kiloda sotiladigan taomlar uchun)
+  favorite?: boolean; // sevimli (tez-tez sotiladigan) — ofitsiantда tez topish uchun
 }
 
 /** products — sklad (ombor) mahsulotlari (masalan: guruch, go'sht, non) */
@@ -61,6 +73,20 @@ export interface Product {
   unit: ProductUnit; // o'lchov birligi (kg, g, l, ml, dona)
   stock: number; // ombordagi qoldiq
   minStock: number; // minimal qoldiq (kam qolganda ogohlantirish)
+}
+
+/** purchases — sklad kirimi: mahsulot kimdan/qayerdan, qancha narxда olindi */
+export interface Purchase {
+  id: string;
+  productId: string;
+  productName: string; // nom (kirim paytидаги)
+  unit: ProductUnit; // o'lchov birligi
+  supplier: string; // ta'minotchi (kim/qayerdan)
+  quantity: number; // olingan miqdor
+  unitPrice: number; // birlik narxi (so'm)
+  total: number; // umumiy summa (quantity * unitPrice)
+  note?: string | null;
+  createdAt: string; // ISO
 }
 
 /** recipe_items — taom retsepti: bir taomga qaysi mahsulotdan qancha ketadi */
@@ -81,6 +107,8 @@ export interface OrderItem {
   menuItemId: string; // taom_id
   quantity: number; // miqdor (dona: butun son; kg: kasr bo'lishi mumkin — 1.5, 1.75)
   unit?: MenuUnit; // dona yoki kg
+  stationId?: string | null; // qaysi bo'lim tayyorlaydi (chek yo'naltirish uchun)
+  stationName?: string | null; // bo'lim nomi (snapshot)
   note?: string | null; // izoh (masalan "tuzsiz")
   status: OrderItemStatus; // holat
   exciseRequired?: boolean; // aksiz kodi kerakmi (TZ F-8.5)

@@ -39,6 +39,8 @@ class MenuItemDto {
   @IsOptional() @IsBoolean() available?: boolean;
   @IsOptional() @IsBoolean() exciseRequired?: boolean;
   @IsOptional() @IsEnum(MenuUnit) unit?: MenuUnit;
+  @IsOptional() @IsString() stationId?: string;
+  @IsOptional() @IsBoolean() favorite?: boolean;
 }
 
 class MenuItemPatchDto {
@@ -49,6 +51,8 @@ class MenuItemPatchDto {
   @IsOptional() @IsBoolean() available?: boolean;
   @IsOptional() @IsBoolean() exciseRequired?: boolean;
   @IsOptional() @IsEnum(MenuUnit) unit?: MenuUnit;
+  @IsOptional() @IsString() stationId?: string;
+  @IsOptional() @IsBoolean() favorite?: boolean;
 }
 
 @UseGuards(JwtAuthGuard)

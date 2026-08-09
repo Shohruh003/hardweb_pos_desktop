@@ -40,6 +40,13 @@ export class OrderItemEntity {
   @Column({ type: 'varchar', default: MenuUnit.Piece })
   unit: MenuUnit;
 
+  // Qaysi bo'lim tayyorlaydi (chek yo'naltirish uchun) — buyurtma paytидаги snapshot
+  @Column({ name: 'station_id', type: 'uuid', nullable: true })
+  stationId: string | null;
+
+  @Column({ name: 'station_name', type: 'varchar', nullable: true })
+  stationName: string | null;
+
   @Column({ type: 'text', nullable: true })
   note: string | null;
 

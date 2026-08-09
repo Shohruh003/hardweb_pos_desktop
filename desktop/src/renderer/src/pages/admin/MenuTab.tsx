@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Category, MenuItem, MenuUnit, Product, RecipeItem } from '@hardweb-pos/shared';
+import { Category, MenuItem, MenuUnit, Product, RecipeItem, Station } from '@hardweb-pos/shared';
 import { Button, formatSum } from '../../components/ui';
 import { Select } from '../../components/Select';
 import { Modal } from '../../components/Modal';
@@ -25,6 +25,7 @@ interface ItemForm {
   image: string | null;
   ingredients: string;
   unit: MenuUnit;
+  stationId: string;
 }
 
 // Retsept qatori (taomga ketadigan mahsulot)
@@ -45,16 +46,19 @@ export function MenuTab() {
   // Sklad mahsulotlari va tahrirlanayotgan taom retsepti
   const [products, setProducts] = useState<Product[]>([]);
   const [recipe, setRecipe] = useState<RecipeRow[]>([]);
+  const [stations, setStations] = useState<Station[]>([]);
 
   async function load() {
-    const [c, i, p] = await Promise.all([
+    const [c, i, p, st] = await Promise.all([
       api.get<Category[]>('/menu/categories'),
       api.get<MenuItem[]>('/menu/all-items'),
       api.get<Product[]>('/inventory/products').catch(() => [] as Product[]),
+      api.get<Station[]>('/stations').catch(() => [] as Station[]),
     ]);
     setCategories(c);
     setItems(i);
     setProducts(p);
+    setStations(st);
   }
   useEffect(() => {
     load().catch(() => {});
@@ -62,11 +66,11 @@ export function MenuTab() {
 
   function openAdd() {
     setRecipe([]);
-    setForm({ name: '', price: '', categoryId: categories[0]?.id ?? '', exciseRequired: false, image: null, ingredients: '', unit: MenuUnit.Piece });
+    setForm({ name: '', price: '', categoryId: categories[0]?.id ?? '', exciseRequired: false, image: null, ingredients: '', unit: MenuUnit.Piece, stationId: stations[0]?.id ?? '' });
   }
   async function openEdit(it: MenuItem) {
     setRecipe([]);
-    setForm({ id: it.id, name: it.name, price: String(it.price), categoryId: it.categoryId, exciseRequired: it.exciseRequired, image: it.image ?? null, ingredients: it.ingredients ?? '', unit: it.unit ?? MenuUnit.Piece });
+    setForm({ id: it.id, name: it.name, price: String(it.price), categoryId: it.categoryId, exciseRequired: it.exciseRequired, image: it.image ?? null, ingredients: it.ingredients ?? '', unit: it.unit ?? MenuUnit.Piece, stationId: it.stationId ?? '' });
     // Mavjud retseptni yuklaymiz
     try {
       const rows = await api.get<RecipeItem[]>(`/inventory/recipe/${it.id}`);
@@ -104,6 +108,7 @@ export function MenuTab() {
       image: form.image ?? null,
       ingredients: form.ingredients.trim() || null,
       unit: form.unit,
+      stationId: form.stationId || null,
     };
     const saved = form.id
       ? await api.patch<MenuItem>(`/menu/items/${form.id}`, body)
@@ -129,6 +134,11 @@ export function MenuTab() {
 
   async function toggleAvailable(item: MenuItem) {
     await api.patch(`/menu/items/${item.id}`, { available: !item.available });
+    await load();
+  }
+
+  async function toggleFavorite(item: MenuItem) {
+    await api.patch(`/menu/items/${item.id}`, { favorite: !item.favorite });
     await load();
   }
 
@@ -186,6 +196,13 @@ export function MenuTab() {
                   className={`px-3 py-1.5 rounded-md text-sm font-semibold ${it.available ? 'bg-success/20 text-success' : 'bg-muted/20 text-muted'}`}>
                   {it.available ? 'Mavjud' : 'Yo‘q'}
                 </button>
+                <button
+                  onClick={() => toggleFavorite(it)}
+                  title={it.favorite ? 'Sevimlidan olib tashlash' : 'Sevimlilarga qo‘shish'}
+                  className={`px-3 py-1.5 rounded-md text-sm border ${it.favorite ? 'bg-warning/15 border-warning/40 text-warning' : 'bg-bg border-border hover:border-warning'}`}
+                >
+                  {it.favorite ? '⭐' : '☆'}
+                </button>
                 <button onClick={() => openEdit(it)} className="px-3 py-1.5 rounded-md text-sm bg-bg border border-border hover:border-primary">✏️</button>
                 <button onClick={() => deleteItem(it)} className="px-3 py-1.5 rounded-md text-sm bg-bg border border-border hover:border-danger hover:text-danger">🗑️</button>
               </div>
@@ -232,8 +249,19 @@ export function MenuTab() {
           </label>
           <input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })}
             className="w-full mb-3 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
-          <label className="block text-sm text-muted mb-1">Kategoriya</label>
+          <label className="block text-sm text-muted mb-1">Kategoriya (birinchi/ikkinchi taom, salat, shirinlik...)</label>
           <Select className="mb-3" value={form.categoryId} onChange={(v) => setForm({ ...form, categoryId: v })} options={catOptions} placeholder="Kategoriya tanlang" />
+          <label className="block text-sm text-muted mb-1">Bo‘lim (qaysi sexdan chiqadi)</label>
+          <Select
+            className="mb-3"
+            value={form.stationId}
+            onChange={(v) => setForm({ ...form, stationId: v })}
+            options={[
+              { value: '', label: 'Bo‘limsiz (chek chiqmaydi)' },
+              ...stations.map((s) => ({ value: s.id, label: s.name })),
+            ]}
+            placeholder="Bo‘lim tanlang"
+          />
           <label className="block text-sm text-muted mb-1">Ketadigan mahsulotlar (ingredientlar)</label>
           <textarea
             value={form.ingredients}

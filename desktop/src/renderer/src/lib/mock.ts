@@ -39,6 +39,15 @@ const categories = [
   { id: uid(), name: 'Salatlar', sortOrder: 2 },
   { id: uid(), name: 'Ichimliklar', sortOrder: 3 },
 ];
+// Bo'limlar (sexlar) — chekни printerlarga yo'naltirish uchun
+const stations: any[] = [
+  { id: uid(), name: 'Oshxona', printerHost: '', printerPort: 9100, printerWidth: 48, sortOrder: 1 },
+  { id: uid(), name: 'Bar', printerHost: '', printerPort: 9100, printerWidth: 48, sortOrder: 2 },
+  { id: uid(), name: 'Somsaxona', printerHost: '', printerPort: 9100, printerWidth: 48, sortOrder: 3 },
+  { id: uid(), name: 'Novvoyxona', printerHost: '', printerPort: 9100, printerWidth: 48, sortOrder: 4 },
+];
+const stId = (n: string) => stations.find((s) => s.name === n)?.id ?? null;
+
 const menu: any[] = [
   { id: uid(), name: 'Osh', price: 35000, categoryId: categories[0].id, available: true, exciseRequired: false, image: null, unit: MenuUnit.Piece },
   { id: uid(), name: 'Lag‘mon', price: 32000, categoryId: categories[0].id, available: true, exciseRequired: false, image: null, unit: MenuUnit.Piece },
@@ -50,6 +59,13 @@ const menu: any[] = [
   { id: uid(), name: 'Coca-Cola', price: 12000, categoryId: categories[2].id, available: true, exciseRequired: false, image: null, unit: MenuUnit.Piece },
   { id: uid(), name: 'Pivo (0.5)', price: 22000, categoryId: categories[2].id, available: true, exciseRequired: true, image: null, unit: MenuUnit.Piece },
 ];
+// Har taomni bo'limga biriktiramiz: ichimliklar -> Bar, qolgani -> Oshxona
+// va bir nechta taomni sevimli qilamiz (tez topish uchun)
+const favSet = new Set(['Osh', 'Lag‘mon', 'Shashlik', 'Coca-Cola', 'Choy']);
+menu.forEach((m) => {
+  m.stationId = m.categoryId === categories[2].id ? stId('Bar') : stId('Oshxona');
+  m.favorite = favSet.has(m.name);
+});
 const tables = [
   ...[1, 2, 3, 4, 5, 6].map((n) => ({ id: uid(), number: n, hall: 'Asosiy zal', capacity: 4, status: TableStatus.Free })),
   ...[7, 8, 9, 10].map((n) => ({ id: uid(), number: n, hall: 'VIP zal', capacity: 6, status: TableStatus.Free })),
@@ -90,7 +106,41 @@ function deductStock(items: { menuItemId: string; quantity: number }[]) {
       });
   });
 }
-const A_CAPS = ['history', 'reports', 'menu', 'inventory', 'tables', 'staff', 'devices', 'terminals', 'settings', 'refund', 'cashier', 'revenue'];
+
+// Kirimlar (ta'minot) tarixi
+const purchases: any[] = [];
+
+// Retsept bo'yicha kerakli mahsulot miqdorlari (productId -> amount)
+function sumNeed(items: { menuItemId: string; quantity: number }[]) {
+  const m = new Map<string, number>();
+  items.forEach((it) => {
+    recipeItems
+      .filter((r) => r.menuItemId === it.menuItemId)
+      .forEach((r) => m.set(r.productId, (m.get(r.productId) || 0) + Number(r.amount) * Number(it.quantity)));
+  });
+  return m;
+}
+
+// Ombor yetarli emasligini tekshirish — yetmasa xabar qaytaradi (aks holda null)
+function stockShortage(newItems: { menuItemId: string; quantity: number }[]): string | null {
+  const need = sumNeed(newItems);
+  if (need.size === 0) return null;
+  const openItems = orders
+    .filter((o) => o.status !== OrderStatus.Closed)
+    .flatMap((o) => o.items.map((it) => ({ menuItemId: it.menuItemId, quantity: it.quantity })));
+  const reserved = sumNeed(openItems);
+  for (const [pid, needed] of need) {
+    const p = products.find((x) => x.id === pid);
+    if (!p) continue;
+    const available = Number(p.stock) - (reserved.get(pid) || 0);
+    if (needed > available + 1e-6) {
+      const av = Math.max(0, Math.round(available * 1000) / 1000);
+      return `Omborda yetarli emas: ${p.name} — mavjud ${av} ${p.unit}`;
+    }
+  }
+  return null;
+}
+const A_CAPS = ['history', 'reports', 'menu', 'inventory', 'stations', 'tables', 'staff', 'devices', 'terminals', 'settings', 'refund', 'cashier', 'revenue'];
 // Real seed bilan bir xil xodimlar (ism, PIN, ruxsatlar)
 const users: any[] = [
   { id: uid(), name: 'Aziz Karimov', role: UserRole.Waiter, login: 'ofitsiant', pin: '1111', active: true, permissions: ['waiter'] },
@@ -134,6 +184,7 @@ interface MockItem {
   id: string; orderId: string; menuItemId: string; menuItemName: string;
   price: number; quantity: number; unit: MenuUnit; note: string | null; status: OrderItemStatus;
   exciseRequired: boolean; exciseCode: string | null;
+  stationId: string | null; stationName: string | null;
 }
 interface MockOrder {
   id: string; tableId: string; tableNumber: number; hall: string | null; waiterId: string; waiterName: string;
@@ -148,10 +199,12 @@ let fiscalCounter = 0;
 
 function makeItem(orderId: string, menuItemId: string, quantity: number, note?: string): MockItem {
   const mi = menu.find((m) => m.id === menuItemId)!;
+  const st = mi.stationId ? stations.find((s) => s.id === mi.stationId) : null;
   return {
     id: uid(), orderId, menuItemId, menuItemName: mi.name, price: mi.price,
     quantity, unit: mi.unit ?? MenuUnit.Piece, note: note ?? null, status: OrderItemStatus.Pending,
     exciseRequired: mi.exciseRequired, exciseCode: null,
+    stationId: mi.stationId ?? null, stationName: st?.name ?? null,
   };
 }
 function total(items: MockItem[]) {
@@ -281,7 +334,7 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
   if (path === '/menu/items' && method === 'GET') return ok(menu.filter((m) => m.available));
   if (path === '/menu/all-items' && method === 'GET') return ok([...menu]);
   if (path === '/menu/items' && method === 'POST') {
-    const m = { id: uid(), name: body.name, price: body.price, categoryId: body.categoryId, available: true, exciseRequired: !!body.exciseRequired, image: body.image ?? null, unit: body.unit ?? MenuUnit.Piece };
+    const m = { id: uid(), name: body.name, price: body.price, categoryId: body.categoryId, available: true, exciseRequired: !!body.exciseRequired, image: body.image ?? null, unit: body.unit ?? MenuUnit.Piece, stationId: body.stationId ?? null, favorite: !!body.favorite };
     menu.push(m); return ok(m);
   }
   if (seg[0] === 'menu' && seg[1] === 'items' && seg[2] && method === 'PATCH') {
@@ -295,6 +348,19 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
   }
   if (seg[0] === 'menu' && seg[1] === 'categories' && seg[2] && method === 'DELETE') {
     const i = categories.findIndex((x) => x.id === seg[2]); if (i >= 0) categories.splice(i, 1); return ok({ ok: true });
+  }
+
+  // Bo'limlar (sexlar)
+  if (path === '/stations' && method === 'GET') return ok([...stations].sort((a, b) => a.sortOrder - b.sortOrder));
+  if (path === '/stations' && method === 'POST') {
+    const st = { id: uid(), name: body.name, printerHost: body.printerHost ?? '', printerPort: body.printerPort ?? 9100, printerWidth: body.printerWidth ?? 48, sortOrder: body.sortOrder ?? stations.length + 1 };
+    stations.push(st); return ok(st);
+  }
+  if (seg[0] === 'stations' && seg[1] && method === 'PATCH') {
+    const st = stations.find((x) => x.id === seg[1]); if (st) Object.assign(st, body); return ok(st);
+  }
+  if (seg[0] === 'stations' && seg[1] && method === 'DELETE') {
+    const i = stations.findIndex((x) => x.id === seg[1]); if (i >= 0) stations.splice(i, 1); return ok({ ok: true });
   }
 
   // Sklad (ombor)
@@ -316,6 +382,27 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     // Bog'liq retseptlarni ham o'chiramiz
     for (let k = recipeItems.length - 1; k >= 0; k--) if (recipeItems[k].productId === seg[2]) recipeItems.splice(k, 1);
     return ok({ ok: true });
+  }
+  if (path === '/inventory/purchases' && method === 'GET') {
+    const pid = new URLSearchParams(query || '').get('productId');
+    const list = pid ? purchases.filter((p) => p.productId === pid) : purchases;
+    return ok([...list].reverse());
+  }
+  if (path === '/inventory/purchases' && method === 'POST') {
+    const p = products.find((x) => x.id === body.productId);
+    if (!p) return fail('Mahsulot topilmadi');
+    const quantity = Number(body.quantity) || 0;
+    const unitPrice = Number(body.unitPrice) || 0;
+    if (quantity <= 0) return fail('Miqdor 0 dan katta bo‘lishi kerak');
+    const pur = {
+      id: uid(), productId: p.id, productName: p.name, unit: p.unit,
+      supplier: (body.supplier || '').trim(), quantity, unitPrice,
+      total: Math.round(quantity * unitPrice * 100) / 100,
+      note: body.note?.trim() || null, createdAt: new Date().toISOString(),
+    };
+    purchases.push(pur);
+    p.stock = Number(p.stock) + quantity;
+    return ok(pur);
   }
   if (seg[0] === 'inventory' && seg[1] === 'recipe' && seg[2] && method === 'GET') {
     const rows = recipeItems.filter((r) => r.menuItemId === seg[2]).map((r) => {
@@ -394,6 +481,9 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     return ok(orders.find((o) => o.id === seg[1]));
   }
   if (path === '/orders' && method === 'POST') {
+    // Ombor yetarliligini tekshiramiz (ortiqcha sotishni oldini olish)
+    const shortage = stockShortage((body.items || []).map((i: any) => ({ menuItemId: i.menuItemId, quantity: i.quantity })));
+    if (shortage) return fail(shortage);
     const table = tables.find((t) => t.id === body.tableId)!;
     const w = users.find((u) => u.id === body.waiterId) || waiter;
     const id = uid();
@@ -452,6 +542,33 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     const table = tables.find((t) => t.id === o.tableId);
     if (table) table.status = TableStatus.Free;
     emit(SOCKET_EVENTS.ORDER_CLOSED, { order: o });
+    return ok(o);
+  }
+  if (seg[0] === 'orders' && seg[2] === 'move-table' && method === 'POST') {
+    const o = orders.find((x) => x.id === seg[1]);
+    if (!o) return fail('Buyurtma topilmadi');
+    const newTable = tables.find((t) => t.id === body.tableId);
+    if (!newTable) return fail('Yangi stol topilmadi');
+    if (o.tableId === newTable.id) return ok(o);
+    const busyByOther = orders.find((x) => x.tableId === newTable.id && x.status !== OrderStatus.Closed);
+    if (busyByOther) return fail('Bu stol band — avval uni bo‘shating');
+    const oldTable = tables.find((t) => t.id === o.tableId);
+    if (oldTable) oldTable.status = TableStatus.Free;
+    o.tableId = newTable.id;
+    o.tableNumber = newTable.number;
+    o.hall = newTable.hall;
+    newTable.status = TableStatus.Busy;
+    emit(SOCKET_EVENTS.ORDER_UPDATED, { orderId: o.id, status: o.status, order: o });
+    return ok(o);
+  }
+  if (seg[0] === 'orders' && seg[2] === 'change-waiter' && method === 'POST') {
+    const o = orders.find((x) => x.id === seg[1]);
+    if (!o) return fail('Buyurtma topilmadi');
+    const w = users.find((u) => u.id === body.waiterId);
+    if (!w) return fail('Ofitsiant topilmadi');
+    o.waiterId = w.id;
+    o.waiterName = w.name;
+    emit(SOCKET_EVENTS.ORDER_UPDATED, { orderId: o.id, status: o.status, order: o });
     return ok(o);
   }
   if (seg[0] === 'orders' && seg[2] === 'status' && method === 'PATCH') {

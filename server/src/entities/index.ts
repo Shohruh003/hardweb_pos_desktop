@@ -4,6 +4,8 @@ export * from './category.entity';
 export * from './menu-item.entity';
 export * from './product.entity';
 export * from './recipe-item.entity';
+export * from './purchase.entity';
+export * from './station.entity';
 export * from './order.entity';
 export * from './order-item.entity';
 export * from './payment.entity';

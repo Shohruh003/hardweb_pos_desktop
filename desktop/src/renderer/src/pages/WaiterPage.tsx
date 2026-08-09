@@ -5,8 +5,10 @@ import {
   MenuUnit,
   Order,
   SOCKET_EVENTS,
+  Station,
   Table,
   TableStatus,
+  User,
 } from '@hardweb-pos/shared';
 import { AppShell } from '../components/AppShell';
 import { Button, formatSum } from '../components/ui';
@@ -59,8 +61,12 @@ export function WaiterPage() {
   // Kirgan foydalanuvchining o'zi ofitsiant (PIN bilan kirdi)
   const selectedWaiter = user!;
   const [tables, setTables] = useState<Table[]>([]);
+  // Faol (ochiq) buyurtmalar — stol kartochkasida narx + ofitsiantни ko'rsatish uchun
+  const [activeOrders, setActiveOrders] = useState<Order[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [menu, setMenu] = useState<MenuItem[]>([]);
+  // Bo'limlar (sexlar) — chekни printerlarга yo'naltirish uchun
+  const [stations, setStations] = useState<Station[]>([]);
   const [activeCat, setActiveCat] = useState<string | null>(null);
   const [selectedHall, setSelectedHall] = useState<string | null>(null);
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
@@ -70,7 +76,10 @@ export function WaiterPage() {
   const [existingOrder, setExistingOrder] = useState<Order | null>(null);
   // Yuborilgan buyurtmadan olib tashlash uchun belgilangan taomlar (id)
   const [removeIds, setRemoveIds] = useState<string[]>([]);
-  const [moreOpen, setMoreOpen] = useState(false); // 3-nuqta menyu (annul)
+  const [moreOpen, setMoreOpen] = useState(false); // 3-nuqta menyu (annul/stol/ofitsiant)
+  const [changeTableOpen, setChangeTableOpen] = useState(false);
+  const [changeWaiterOpen, setChangeWaiterOpen] = useState(false);
+  const [waiters, setWaiters] = useState<User[]>([]);
   const [sending, setSending] = useState(false);
   const [printingBill, setPrintingBill] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -83,15 +92,46 @@ export function WaiterPage() {
   async function loadTables() {
     setTables(await api.get<Table[]>('/tables'));
   }
+  async function loadActive() {
+    try {
+      setActiveOrders(await api.get<Order[]>('/orders'));
+    } catch {
+      /* ignore */
+    }
+  }
 
   useEffect(() => {
     loadTables().catch(() => {});
+    loadActive();
     api.get<Category[]>('/menu/categories').then((c) => {
       setCategories(c);
       setActiveCat(c[0]?.id ?? null);
     });
     api.get<MenuItem[]>('/menu/items').then(setMenu);
+    api.get<Station[]>('/stations').then(setStations).catch(() => {});
   }, []);
+
+  // Buyurtma taomlarini bo'lim (sex) printerlariga yo'naltirish.
+  // Bo'lim printeri sozlanmagan bo'lsa — o'sha bo'lim chekи chiqmaydi.
+  async function printToStations(order: Order) {
+    const items = order.items || [];
+    for (const st of stations) {
+      if (!st.printerHost) continue;
+      const sub = items.filter((it) => it.stationId === st.id);
+      if (sub.length === 0) continue;
+      try {
+        await window.hardweb?.printer?.printStation?.(
+          { ...order, items: sub },
+          st.printerHost,
+          st.printerPort,
+          st.printerWidth,
+          st.name,
+        );
+      } catch {
+        /* bo'lim printeri majburiy emas */
+      }
+    }
+  }
 
   // Stol holatlarini real-time yangilash (boshqa terminalда to'lov/zakaz bo'lса)
   const selectedTableRef = useRef<Table | null>(null);
@@ -102,13 +142,14 @@ export function WaiterPage() {
     const socket = getSocket();
     const refresh = () => {
       loadTables().catch(() => {});
-      const tbl = selectedTableRef.current;
-      if (tbl) {
-        api
-          .get<Order[]>('/orders')
-          .then((a) => setExistingOrder(a.find((o) => o.tableId === tbl.id) ?? null))
-          .catch(() => {});
-      }
+      api
+        .get<Order[]>('/orders')
+        .then((a) => {
+          setActiveOrders(a);
+          const tbl = selectedTableRef.current;
+          if (tbl) setExistingOrder(a.find((o) => o.tableId === tbl.id) ?? null);
+        })
+        .catch(() => {});
     };
     socket.on(SOCKET_EVENTS.ORDER_CREATED, refresh);
     socket.on(SOCKET_EVENTS.ORDER_UPDATED, refresh);
@@ -154,8 +195,10 @@ export function WaiterPage() {
           (m.ingredients ?? '').toLowerCase().includes(q),
       );
     }
+    if (activeCat === '__fav__') return menu.filter((m) => m.favorite);
     return menu.filter((m) => m.categoryId === activeCat);
   }, [menu, activeCat, menuSearch]);
+  const hasFavorites = useMemo(() => menu.some((m) => m.favorite), [menu]);
 
   const cartTotal = cart.reduce((s, c) => s + c.price * c.quantity, 0);
   const existingTotal = existingOrder?.total ?? 0;
@@ -265,10 +308,58 @@ export function WaiterPage() {
       }
       if (cart.length > 0) {
         const items = cart.map((c) => ({ menuItemId: c.menuItemId, quantity: c.quantity, note: c.note }));
-        await api.post('/orders', { tableId: selectedTable.id, waiterId: selectedWaiter.id, items });
+        const created = await api.post<Order>('/orders', { tableId: selectedTable.id, waiterId: selectedWaiter.id, items });
+        // Yangi qo'shilgan taomlarni bo'lim printerlariga yuboramiz
+        await printToStations(created);
       }
       await loadTables();
       finishSend({ variant: 'success', title: 'O‘zgarish saqlandi', subtitle: `Stol №${selectedTable.number} — buyurtma yangilandi` });
+    } catch (e) {
+      setFeedback({ variant: 'warning', title: 'Xatolik', subtitle: (e as Error).message });
+    } finally {
+      setSending(false);
+    }
+  }
+
+  // Stolni o'zgartirish (smenit stol) — buyurtmani boshqa stolga ko'chirish
+  function openChangeTable() {
+    setMoreOpen(false);
+    setChangeTableOpen(true);
+  }
+  async function moveToTable(tableId: string) {
+    if (!existingOrder) return;
+    setChangeTableOpen(false);
+    setSending(true);
+    try {
+      await api.post(`/orders/${existingOrder.id}/move-table`, { tableId });
+      await loadTables();
+      const nt = tables.find((t) => t.id === tableId);
+      finishSend({ variant: 'success', title: 'Stol o‘zgartirildi', subtitle: `Buyurtma Stol №${nt?.number} ga ko‘chirildi` });
+    } catch (e) {
+      setFeedback({ variant: 'warning', title: 'Xatolik', subtitle: (e as Error).message });
+    } finally {
+      setSending(false);
+    }
+  }
+
+  // Ofitsiantni o'zgartirish (smenit ofitsant)
+  async function openChangeWaiter() {
+    setMoreOpen(false);
+    try {
+      setWaiters(await api.get<User[]>('/users/waiters'));
+    } catch {
+      setWaiters([]);
+    }
+    setChangeWaiterOpen(true);
+  }
+  async function changeToWaiter(waiterId: string) {
+    if (!existingOrder) return;
+    setChangeWaiterOpen(false);
+    setSending(true);
+    try {
+      const updated = await api.post<Order>(`/orders/${existingOrder.id}/change-waiter`, { waiterId });
+      setExistingOrder(updated);
+      setFeedback({ variant: 'success', title: 'Ofitsiant o‘zgartirildi', subtitle: updated.waiterName ? `Endi: ${updated.waiterName}` : '' });
     } catch (e) {
       setFeedback({ variant: 'warning', title: 'Xatolik', subtitle: (e as Error).message });
     } finally {
@@ -310,15 +401,12 @@ export function WaiterPage() {
     }
     setSending(true);
     try {
-      const created = await api.post<any>('/orders', { tableId: selectedTable.id, waiterId: selectedWaiter.id, items });
+      const created = await api.post<Order>('/orders', { tableId: selectedTable.id, waiterId: selectedWaiter.id, items });
       await loadTables();
-      // Oshxona printerlariga chek chiqaramiz (sozlangan bo'lsa; xato bo'lsa ham buyurtma yuborildi)
-      try {
-        await window.hardweb?.printer?.printKitchen?.(created);
-      } catch {
-        /* oshxona printeri majburiy emas */
-      }
-      finishSend({ variant: 'success', title: 'Buyurtma yuborildi!', subtitle: `Stol №${tableNo} — oshxonaga uzatildi` });
+      loadActive();
+      // Taomlarni bo'lim (sex) printerlariga yo'naltiramiz (oshxona/bar/somsaxona...)
+      await printToStations(created);
+      finishSend({ variant: 'success', title: 'Buyurtma yuborildi!', subtitle: `Stol №${tableNo} — bo‘limlarga uzatildi` });
     } catch (e) {
       if (isNetworkError(e)) {
         enqueue({ tableId: selectedTable.id, tableNumber: selectedTable.number, waiterId: selectedWaiter.id, items });
@@ -475,6 +563,7 @@ export function WaiterPage() {
             {hallTables.map((tbl) => {
               const awaiting = tbl.status === TableStatus.AwaitingBill;
               const busy = tbl.status !== TableStatus.Free;
+              const order = activeOrders.find((o) => o.tableId === tbl.id);
               const cls = awaiting
                 ? 'bg-info/10 border-info/50 hover:bg-info/20'
                 : busy
@@ -486,13 +575,30 @@ export function WaiterPage() {
                 <button
                   key={tbl.id}
                   onClick={() => openTable(tbl)}
-                  className={`aspect-square rounded-2xl border flex flex-col items-center justify-center lift animate-card-in ${cls}`}
+                  className={`aspect-square rounded-2xl border flex flex-col items-center justify-center lift animate-card-in p-2 ${cls}`}
                 >
-                  <span className="text-2xl font-bold">№{tbl.number}</span>
-                  <span className="text-xs text-muted mt-1">{tbl.capacity} {t('waiter.people')}</span>
-                  <span className={`text-xs mt-1 font-semibold text-center px-1 ${statusColor}`}>
-                    {statusText}
-                  </span>
+                  <span className="text-2xl font-bold leading-none">№{tbl.number}</span>
+                  {busy && order ? (
+                    <>
+                      <span className="text-base font-extrabold text-primary mt-1.5">
+                        {formatSum(order.total ?? 0)}
+                      </span>
+                      <span className="text-[11px] text-muted mt-0.5 truncate max-w-full flex items-center gap-1">
+                        🧑‍🍳 {order.waiterName ?? '—'}
+                      </span>
+                      <span className="text-[11px] text-muted">{order.items?.length ?? 0} ta taom</span>
+                      <span className={`text-[11px] mt-0.5 font-semibold ${statusColor}`}>
+                        {statusText}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-xs text-muted mt-1">{tbl.capacity} {t('waiter.people')}</span>
+                      <span className={`text-xs mt-1 font-semibold text-center px-1 ${statusColor}`}>
+                        {statusText}
+                      </span>
+                    </>
+                  )}
                 </button>
               );
             })}
@@ -507,6 +613,54 @@ export function WaiterPage() {
     <AppShell title={`${selectedWaiter.name} — Stol №${selectedTable.number}`}>
       {feedbackModal}
       {editModal}
+
+      {/* Stolni o'zgartirish — bo'sh stollardan tanlash */}
+      {changeTableOpen && (
+        <Modal title="Stolni o‘zgartirish" onClose={() => setChangeTableOpen(false)}>
+          <div className="text-sm text-muted mb-3">Buyurtma qaysi stolga ko‘chirilsin? (bo‘sh stollar)</div>
+          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-[55vh] overflow-auto">
+            {tables
+              .filter((tb) => tb.status === TableStatus.Free)
+              .map((tb) => (
+                <button
+                  key={tb.id}
+                  onClick={() => moveToTable(tb.id)}
+                  disabled={sending}
+                  className="aspect-square rounded-xl border border-border hover:border-primary hover:bg-surface-hover flex flex-col items-center justify-center disabled:opacity-50"
+                >
+                  <span className="text-xl font-bold">№{tb.number}</span>
+                  <span className="text-[11px] text-muted text-center px-1">{tb.hall}</span>
+                </button>
+              ))}
+          </div>
+          {tables.filter((tb) => tb.status === TableStatus.Free).length === 0 && (
+            <div className="text-muted text-sm mt-2">Bo‘sh stol yo‘q.</div>
+          )}
+        </Modal>
+      )}
+
+      {/* Ofitsiantni o'zgartirish — ofitsiantlar ro'yxatidan tanlash */}
+      {changeWaiterOpen && (
+        <Modal title="Ofitsiantni o‘zgartirish" onClose={() => setChangeWaiterOpen(false)}>
+          <div className="space-y-2 max-h-[55vh] overflow-auto">
+            {waiters.map((w) => (
+              <button
+                key={w.id}
+                onClick={() => changeToWaiter(w.id)}
+                disabled={sending}
+                className="w-full text-left px-4 py-3 rounded-xl border border-border hover:border-primary hover:bg-surface-hover font-semibold flex items-center gap-3 disabled:opacity-50"
+              >
+                <span className="w-9 h-9 rounded-full bg-primary/20 text-primary font-bold flex items-center justify-center shrink-0">
+                  {w.name.charAt(0)}
+                </span>
+                {w.name}
+              </button>
+            ))}
+            {waiters.length === 0 && <div className="text-muted text-sm">Ofitsiant topilmadi.</div>}
+          </div>
+        </Modal>
+      )}
+
       <div className="h-full flex flex-col md:flex-row">
         <div className="flex-1 flex flex-col overflow-hidden min-h-0">
           <div className="flex flex-col gap-2 p-3 sm:p-4 border-b border-border">
@@ -531,6 +685,16 @@ export function WaiterPage() {
             </div>
             {!menuSearch && (
               <div className="flex gap-2 overflow-x-auto">
+                {hasFavorites && (
+                  <button
+                    onClick={() => setActiveCat('__fav__')}
+                    className={`px-4 py-2 rounded-lg font-semibold whitespace-nowrap ${
+                      activeCat === '__fav__' ? 'bg-warning text-white' : 'bg-surface text-warning hover:brightness-110'
+                    }`}
+                  >
+                    ⭐ Sevimlilar
+                  </button>
+                )}
                 {categories.map((c) => (
                   <button
                     key={c.id}
@@ -590,7 +754,20 @@ export function WaiterPage() {
                       ⋮
                     </button>
                     {moreOpen && (
-                      <div className="absolute right-0 top-8 z-20 w-52 bg-surface border border-border rounded-xl shadow-lg py-1 animate-pop-in">
+                      <div className="absolute right-0 top-8 z-20 w-56 bg-surface border border-border rounded-xl shadow-lg py-1 animate-pop-in">
+                        <button
+                          onClick={openChangeTable}
+                          className="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-bg"
+                        >
+                          🔀 Stolni o‘zgartirish
+                        </button>
+                        <button
+                          onClick={openChangeWaiter}
+                          className="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-bg"
+                        >
+                          🧑‍🍳 Ofitsiantni o‘zgartirish
+                        </button>
+                        <div className="border-t border-border my-1" />
                         <button
                           onClick={annulOrder}
                           className="w-full text-left px-4 py-2.5 text-sm font-semibold text-danger hover:bg-danger/10"

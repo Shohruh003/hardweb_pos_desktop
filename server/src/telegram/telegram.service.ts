@@ -55,28 +55,29 @@ export class TelegramService implements OnModuleInit {
       this.logger.warn('Telegram sozlanmagan (token/chat id yo‘q)');
       return false;
     }
-    try {
-      const res = await fetch(
-        `https://api.telegram.org/bot${token}/sendMessage`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text,
-            parse_mode: 'HTML',
-          }),
-        },
-      );
-      if (!res.ok) {
-        this.logger.warn(`Telegram xatosi: ${res.status}`);
-        return false;
+    // Bir yoki bir nechta qabul qiluvchi (ega + direktor...) — vergul/probel/nuqta-vergul bilan
+    const chatIds = chatId
+      .split(/[\s,;]+/)
+      .map((c) => c.trim())
+      .filter(Boolean);
+    let anyOk = false;
+    for (const id of chatIds) {
+      try {
+        const res = await fetch(
+          `https://api.telegram.org/bot${token}/sendMessage`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: id, text, parse_mode: 'HTML' }),
+          },
+        );
+        if (res.ok) anyOk = true;
+        else this.logger.warn(`Telegram xatosi (${id}): ${res.status}`);
+      } catch (e) {
+        this.logger.warn(`Telegram yuborilmadi (${id}): ${(e as Error).message}`);
       }
-      return true;
-    } catch (e) {
-      this.logger.warn(`Telegram yuborilmadi: ${(e as Error).message}`);
-      return false;
     }
+    return anyOk;
   }
 
   // Chat id'ni avtomatik aniqlash — direktor botga /start yozgach getUpdates orqali.

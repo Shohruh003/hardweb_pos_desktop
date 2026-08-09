@@ -71,6 +71,18 @@ export class OrdersController {
     return this.orders.cancel(id);
   }
 
+  // Buyurtmani boshqa stolga ko'chirish (smenit stol)
+  @Post(':id/move-table')
+  moveTable(@Param('id') id: string, @Body() dto: { tableId: string }) {
+    return this.orders.moveTable(id, dto?.tableId);
+  }
+
+  // Buyurtma ofitsiantини o'zgartirish (smenit ofitsant)
+  @Post(':id/change-waiter')
+  changeWaiter(@Param('id') id: string, @Body() dto: { waiterId: string }) {
+    return this.orders.changeWaiter(id, dto?.waiterId);
+  }
+
   // Hisob chekini kassa (printerli terminal) chop etsin (relay)
   @Post(':id/print-bill')
   printBill(@Param('id') id: string) {

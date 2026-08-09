@@ -7,6 +7,7 @@ import {
   printKitchen,
   printOrderTicket,
   printReceipt,
+  printStationTicket,
   setConfig,
   testPrint,
   PrinterConfig,
@@ -49,6 +50,20 @@ ipcMain.handle('printer:print-order-ticket', (_e, order: Order) =>
   printOrderTicket(order),
 );
 ipcMain.handle('printer:print-bill', (_e, order: Order) => printBill(order));
+ipcMain.handle(
+  'printer:print-station',
+  (
+    _e,
+    payload: { order: Order; host: string; port: number; width: number; title: string },
+  ) =>
+    printStationTicket(
+      payload.order,
+      payload.host,
+      payload.port,
+      payload.width,
+      payload.title,
+    ),
+);
 ipcMain.handle('printer:list', () => listPrinters());
 ipcMain.handle('printer:test', () => testPrint());
 ipcMain.handle('printer:get-config', () => getConfig());

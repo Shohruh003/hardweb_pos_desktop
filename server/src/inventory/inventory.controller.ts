@@ -7,6 +7,7 @@ import {
   Patch,
   Post,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -43,6 +44,14 @@ class AdjustDto {
   @IsNumber() delta: number;
 }
 
+class PurchaseDto {
+  @IsUUID() productId: string;
+  @IsString() supplier: string;
+  @IsNumber() quantity: number;
+  @IsNumber() unitPrice: number;
+  @IsOptional() @IsString() note?: string;
+}
+
 class RecipeLineDto {
   @IsUUID() productId: string;
   @IsNumber() amount: number;
@@ -69,6 +78,12 @@ export class InventoryController {
   @Get('recipe/:menuItemId')
   getRecipe(@Param('menuItemId') menuItemId: string) {
     return this.inventory.getRecipe(menuItemId);
+  }
+
+  // Kirimlar tarixi (ta'minot) — barchasi yoki mahsulot bo'yicha
+  @Get('purchases')
+  listPurchases(@Query('productId') productId?: string) {
+    return this.inventory.listPurchases(productId);
   }
 
   // --- Boshqaruv (admin/direktor) ---
@@ -98,6 +113,14 @@ export class InventoryController {
   @Post('products/:id/adjust')
   adjust(@Param('id') id: string, @Body() dto: AdjustDto) {
     return this.inventory.adjustStock(id, dto.delta);
+  }
+
+  // Kirim qo'shish (ta'minotchidan) — ombor oshadi + tarixга yoziladi
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.Admin, UserRole.Director, UserRole.SuperAdmin)
+  @Post('purchases')
+  createPurchase(@Body() dto: PurchaseDto) {
+    return this.inventory.createPurchase(dto);
   }
 
   @UseGuards(RolesGuard)

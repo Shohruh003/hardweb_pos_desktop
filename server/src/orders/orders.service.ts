@@ -13,6 +13,7 @@ import {
   OrderEntity,
   OrderItemEntity,
   PaymentEntity,
+  StationEntity,
   TableEntity,
   UserEntity,
 } from '../entities';
@@ -57,6 +58,8 @@ export class OrdersService {
     private readonly orders: Repository<OrderEntity>,
     @InjectRepository(MenuItemEntity)
     private readonly menuItems: Repository<MenuItemEntity>,
+    @InjectRepository(StationEntity)
+    private readonly stations: Repository<StationEntity>,
     @InjectRepository(TableEntity)
     private readonly tables: Repository<TableEntity>,
     @InjectRepository(PaymentEntity)
@@ -81,11 +84,16 @@ export class OrdersService {
     const tableRows = await this.tables.find({
       where: { id: In([...new Set(list.map((o) => o.tableId))]) },
     });
+    const users = await this.users.find({
+      where: { id: In([...new Set(list.map((o) => o.waiterId))]) },
+    });
     const tableNo = new Map(tableRows.map((t) => [t.id, t.number]));
     const tableHall = new Map(tableRows.map((t) => [t.id, t.hall]));
+    const waiterName = new Map(users.map((u) => [u.id, u.name]));
     return list.map((o) => {
       const dto = this.toDto(o, tableNo.get(o.tableId));
       dto.hall = tableHall.get(o.tableId) ?? null;
+      dto.waiterName = waiterName.get(o.waiterId) ?? null;
       return dto;
     });
   }
@@ -193,9 +201,34 @@ export class OrdersService {
     const table = await this.tables.findOne({ where: { id: dto.tableId } });
     if (!table) throw new NotFoundException('Stol topilmadi');
 
+    // Ombor yetarliligini tekshiramiz — ochiq (to'lanmagan) buyurtmalar band
+    // hisoblanadi, shuning uchun 20 ta cola bo'lsa 20 tadan ortiq sotib bo'lmaydi.
+    const openOrders = await this.orders.find({
+      where: { status: Not(OrderStatus.Closed) },
+    });
+    const reservedItems = openOrders.flatMap((o) =>
+      (o.items || []).map((it) => ({
+        menuItemId: it.menuItemId,
+        quantity: Number(it.quantity),
+      })),
+    );
+    await this.inventory.assertStockAvailable(
+      dto.items.map((i) => ({ menuItemId: i.menuItemId, quantity: i.quantity })),
+      reservedItems,
+    );
+
     const menuIds = dto.items.map((i) => i.menuItemId);
     const menu = await this.menuItems.find({ where: { id: In(menuIds) } });
     const menuById = new Map(menu.map((m) => [m.id, m]));
+
+    // Bo'lim (sex) nomlarini olib qo'yamiz — chekни to'g'ri bo'limga yo'naltirish uchun
+    const stationIds = [
+      ...new Set(menu.map((m) => m.stationId).filter(Boolean) as string[]),
+    ];
+    const stationRows = stationIds.length
+      ? await this.stations.find({ where: { id: In(stationIds) } })
+      : [];
+    const stationNameById = new Map(stationRows.map((s) => [s.id, s.name]));
 
     const buildItems = (manager: typeof this.dataSource.manager) =>
       dto.items.map((i) => {
@@ -209,6 +242,8 @@ export class OrdersService {
           price: mi.price,
           quantity: i.quantity,
           unit: mi.unit ?? MenuUnit.Piece,
+          stationId: mi.stationId ?? null,
+          stationName: mi.stationId ? stationNameById.get(mi.stationId) ?? null : null,
           note: i.note ?? null,
           status: OrderItemStatus.Pending,
           exciseRequired: mi.exciseRequired,
@@ -346,6 +381,57 @@ export class OrdersService {
     });
     // Ro'yxatlardan (KDS/kassa/ofitsiant) olib tashlash uchun "yopildi" hodisasi
     this.gateway.emitOrderClosed(dto);
+    return dto;
+  }
+
+  // Buyurtmani boshqa stolga ko'chirish (smenit stol)
+  async moveTable(id: string, newTableId: string): Promise<Order> {
+    const order = await this.orders.findOne({ where: { id } });
+    if (!order) throw new NotFoundException('Buyurtma topilmadi');
+    if (order.status === OrderStatus.Closed) {
+      throw new BadRequestException('Yopilgan buyurtmani ko‘chirib bo‘lmaydi');
+    }
+    if (order.tableId === newTableId) {
+      const t = await this.tables.findOne({ where: { id: newTableId } });
+      return this.toDto(order, t?.number);
+    }
+    const oldTable = await this.tables.findOne({ where: { id: order.tableId } });
+    const newTable = await this.tables.findOne({ where: { id: newTableId } });
+    if (!newTable) throw new NotFoundException('Yangi stol topilmadi');
+    // Yangi stolда boshqa ochiq buyurtma bo'lmasligi kerak
+    const busyByOther = await this.orders.findOne({
+      where: { tableId: newTableId, status: Not(OrderStatus.Closed) },
+    });
+    if (busyByOther) {
+      throw new BadRequestException('Bu stol band — avval uni bo‘shating');
+    }
+    order.tableId = newTableId;
+    await this.orders.save(order);
+    if (oldTable) {
+      oldTable.status = TableStatus.Free;
+      await this.tables.save(oldTable);
+    }
+    newTable.status = TableStatus.Busy;
+    await this.tables.save(newTable);
+    const dto = this.toDto(order, newTable.number);
+    dto.hall = newTable.hall ?? null;
+    this.gateway.emitOrderUpdated(dto);
+    return dto;
+  }
+
+  // Buyurtma ofitsiantини o'zgartirish (smenit ofitsant)
+  async changeWaiter(id: string, waiterId: string): Promise<Order> {
+    const order = await this.orders.findOne({ where: { id } });
+    if (!order) throw new NotFoundException('Buyurtma topilmadi');
+    const waiter = await this.users.findOne({ where: { id: waiterId } });
+    if (!waiter) throw new NotFoundException('Ofitsiant topilmadi');
+    order.waiterId = waiterId;
+    await this.orders.save(order);
+    const table = await this.tables.findOne({ where: { id: order.tableId } });
+    const dto = this.toDto(order, table?.number);
+    dto.hall = table?.hall ?? null;
+    dto.waiterName = waiter.name;
+    this.gateway.emitOrderUpdated(dto);
     return dto;
   }
 
@@ -551,6 +637,8 @@ export class OrdersService {
         price: Number(it.price),
         quantity: Number(it.quantity),
         unit: it.unit ?? MenuUnit.Piece,
+        stationId: it.stationId ?? null,
+        stationName: it.stationName ?? null,
         note: it.note,
         status: it.status,
         exciseRequired: it.exciseRequired,

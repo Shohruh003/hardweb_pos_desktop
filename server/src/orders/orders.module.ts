@@ -7,6 +7,7 @@ import {
   OrderEntity,
   OrderItemEntity,
   PaymentEntity,
+  StationEntity,
   TableEntity,
   UserEntity,
 } from '../entities';
@@ -27,6 +28,7 @@ import { InventoryModule } from '../inventory/inventory.module';
       UserEntity,
       FiscalDocEntity,
       ExciseCodeEntity,
+      StationEntity,
     ]),
     TelegramModule,
     InventoryModule,
