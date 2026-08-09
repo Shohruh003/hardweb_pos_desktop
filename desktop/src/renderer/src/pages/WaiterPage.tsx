@@ -21,6 +21,7 @@ import { enqueue } from '../lib/offlineQueue';
 import { useConnectivity } from '../state/connectivity';
 import { useI18n } from '../state/i18n';
 import { useAuth } from '../state/auth';
+import { useConfirm } from '../state/confirm';
 
 interface Feedback {
   variant: FeedbackVariant;
@@ -54,6 +55,7 @@ export function WaiterPage() {
   const { online } = useConnectivity();
   const { t } = useI18n();
   const { user } = useAuth();
+  const confirm = useConfirm();
   // Kirgan foydalanuvchining o'zi ofitsiant (PIN bilan kirdi)
   const selectedWaiter = user!;
   const [tables, setTables] = useState<Table[]>([]);
@@ -66,6 +68,9 @@ export function WaiterPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   // Shu stolda oldin yuborilgan (ochiq) buyurtma — qayta kirilganda ko'rinadi
   const [existingOrder, setExistingOrder] = useState<Order | null>(null);
+  // Yuborilgan buyurtmadan olib tashlash uchun belgilangan taomlar (id)
+  const [removeIds, setRemoveIds] = useState<string[]>([]);
+  const [moreOpen, setMoreOpen] = useState(false); // 3-nuqta menyu (annul)
   const [sending, setSending] = useState(false);
   const [printingBill, setPrintingBill] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -129,6 +134,8 @@ export function WaiterPage() {
     setSelectedTable(tbl);
     setCart([]);
     setExistingOrder(null);
+    setRemoveIds([]);
+    setMoreOpen(false);
     try {
       const active = await api.get<Order[]>('/orders');
       setExistingOrder(active.find((o) => o.tableId === tbl.id) ?? null);
@@ -152,7 +159,17 @@ export function WaiterPage() {
 
   const cartTotal = cart.reduce((s, c) => s + c.price * c.quantity, 0);
   const existingTotal = existingOrder?.total ?? 0;
-  const grandTotal = existingTotal + cartTotal;
+  // Olib tashlash uchun belgilangan taomlar summasi
+  const removedSum = (existingOrder?.items ?? [])
+    .filter((it) => removeIds.includes(it.id))
+    .reduce((s, it) => s + Number(it.price) * it.quantity, 0);
+  const grandTotal = existingTotal - removedSum + cartTotal;
+
+  function toggleRemove(itemId: string) {
+    setRemoveIds((prev) =>
+      prev.includes(itemId) ? prev.filter((x) => x !== itemId) : [...prev, itemId],
+    );
+  }
 
   function addToCart(item: MenuItem) {
     const unit = item.unit ?? MenuUnit.Piece;
@@ -233,7 +250,52 @@ export function WaiterPage() {
     setCart([]);
     setSelectedTable(null);
     setExistingOrder(null);
+    setRemoveIds([]);
+    setMoreOpen(false);
     setFeedback(fb);
+  }
+
+  // Yuborilgan buyurtmadan belgilangan taomlarни olib tashlash (+ yangi taomlar bo'lsa yuborish)
+  async function confirmChanges() {
+    if (!selectedTable || !existingOrder) return;
+    setSending(true);
+    try {
+      if (removeIds.length > 0) {
+        await api.post(`/orders/${existingOrder.id}/remove-items`, { itemIds: removeIds });
+      }
+      if (cart.length > 0) {
+        const items = cart.map((c) => ({ menuItemId: c.menuItemId, quantity: c.quantity, note: c.note }));
+        await api.post('/orders', { tableId: selectedTable.id, waiterId: selectedWaiter.id, items });
+      }
+      await loadTables();
+      finishSend({ variant: 'success', title: 'O‘zgarish saqlandi', subtitle: `Stol №${selectedTable.number} — buyurtma yangilandi` });
+    } catch (e) {
+      setFeedback({ variant: 'warning', title: 'Xatolik', subtitle: (e as Error).message });
+    } finally {
+      setSending(false);
+    }
+  }
+
+  // Schotni butunlay bekor qilish (annul) — stol bo'shaydi
+  async function annulOrder() {
+    if (!existingOrder || !selectedTable) return;
+    setMoreOpen(false);
+    const ok = await confirm({
+      title: 'Schotni bekor qilish',
+      message: `Stol №${selectedTable.number} buyurtmasi butunlay bekor qilinsinmi? Stol bo‘shaydi.`,
+      danger: true,
+    });
+    if (!ok) return;
+    setSending(true);
+    try {
+      await api.post(`/orders/${existingOrder.id}/cancel`, {});
+      await loadTables();
+      finishSend({ variant: 'success', title: 'Schot bekor qilindi', subtitle: `Stol №${selectedTable.number} bo‘shatildi` });
+    } catch (e) {
+      setFeedback({ variant: 'warning', title: 'Xatolik', subtitle: (e as Error).message });
+    } finally {
+      setSending(false);
+    }
   }
 
   async function sendOrder() {
@@ -514,25 +576,67 @@ export function WaiterPage() {
         <aside className="w-full md:w-[360px] shrink-0 bg-surface border-t md:border-t-0 md:border-l border-border flex flex-col max-h-[45vh] md:max-h-none">
           <div className="px-5 py-3 md:py-4 border-b border-border font-bold text-lg">{t('waiter.order')}</div>
           <div className="flex-1 overflow-auto p-4 space-y-2">
-            {/* Oldin yuborilgan taomlar (F1) */}
+            {/* Oldin yuborilgan taomlar (F1) — ✕ bilan qaytarish, ⋮ bilan annul */}
             {existingOrder && existingOrder.items.length > 0 && (
               <div className="mb-2">
                 <div className="text-xs font-semibold text-success mb-1.5 flex items-center gap-1">
-                  ✓ Yuborilgan buyurtma
+                  <span>✓ Yuborilgan buyurtma</span>
+                  <div className="relative ml-auto">
+                    <button
+                      onClick={() => setMoreOpen((v) => !v)}
+                      aria-label="Ko'proq"
+                      className="w-7 h-7 rounded-lg hover:bg-bg flex items-center justify-center text-muted hover:text-text text-lg leading-none"
+                    >
+                      ⋮
+                    </button>
+                    {moreOpen && (
+                      <div className="absolute right-0 top-8 z-20 w-52 bg-surface border border-border rounded-xl shadow-lg py-1 animate-pop-in">
+                        <button
+                          onClick={annulOrder}
+                          className="w-full text-left px-4 py-2.5 text-sm font-semibold text-danger hover:bg-danger/10"
+                        >
+                          🗑️ Schotni bekor qilish
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="bg-success/5 border border-success/25 rounded-xl divide-y divide-success/10">
-                  {existingOrder.items.map((it) => (
-                    <div key={it.id} className="flex items-center justify-between px-3 py-2 text-sm">
-                      <span className="min-w-0 truncate">
-                        <span className="text-success font-bold">{qtyLabel(it.quantity, it.unit ?? MenuUnit.Piece)}×</span>{' '}
-                        {it.menuItemName}
-                      </span>
-                      <span className="text-muted shrink-0 ml-2">
-                        {formatSum(Number(it.price) * it.quantity)}
-                      </span>
-                    </div>
-                  ))}
+                  {existingOrder.items.map((it) => {
+                    const marked = removeIds.includes(it.id);
+                    return (
+                      <div key={it.id} className="flex items-center justify-between px-3 py-2 text-sm gap-2">
+                        <span className={`min-w-0 truncate ${marked ? 'line-through text-danger/70' : ''}`}>
+                          <span className={`font-bold ${marked ? 'text-danger/70' : 'text-success'}`}>
+                            {qtyLabel(it.quantity, it.unit ?? MenuUnit.Piece)}×
+                          </span>{' '}
+                          {it.menuItemName}
+                        </span>
+                        <span className="flex items-center gap-2 shrink-0">
+                          <span className={marked ? 'text-danger/60 line-through' : 'text-muted'}>
+                            {formatSum(Number(it.price) * it.quantity)}
+                          </span>
+                          <button
+                            onClick={() => toggleRemove(it.id)}
+                            aria-label={marked ? 'Qaytarish' : 'Olib tashlash'}
+                            className={`w-7 h-7 rounded-lg flex items-center justify-center border transition-colors ${
+                              marked
+                                ? 'border-success/50 text-success hover:bg-success/10'
+                                : 'border-border text-danger hover:bg-danger/10 hover:border-danger'
+                            }`}
+                          >
+                            {marked ? '↩' : '✕'}
+                          </button>
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
+                {removeIds.length > 0 && (
+                  <div className="text-xs text-danger font-semibold mt-1.5">
+                    {removeIds.length} ta taom olib tashlanadi — tasdiqlash uchun pastdagi tugmani bosing
+                  </div>
+                )}
               </div>
             )}
 
@@ -605,22 +709,35 @@ export function WaiterPage() {
           <div className="p-4 border-t border-border">
             <div className="flex justify-between mb-3">
               <span className="text-muted">{t('common.total')}</span>
-              <span className="font-bold text-lg">{formatSum(grandTotal)}</span>
+              <span className={`font-bold text-lg ${removeIds.length > 0 ? 'text-danger' : ''}`}>
+                {formatSum(grandTotal)}
+              </span>
             </div>
             <div className="flex gap-2">
               {existingOrder && (
                 <Button
                   variant="ghost"
                   className="flex-1"
-                  disabled={printingBill}
+                  disabled={printingBill || removeIds.length > 0}
                   onClick={printSchot}
                 >
                   🧾 {printingBill ? '...' : 'Schot'}
                 </Button>
               )}
-              <Button className="flex-1" disabled={cart.length === 0 || sending} onClick={sendOrder}>
-                {sending ? t('waiter.sending') : t('waiter.sendToKitchen')}
-              </Button>
+              {removeIds.length > 0 ? (
+                // O'zgarishni (olib tashlash + yangi taomlar) tasdiqlash
+                <Button
+                  className="flex-1 !bg-danger hover:!brightness-110"
+                  disabled={sending}
+                  onClick={confirmChanges}
+                >
+                  {sending ? '...' : '✔ Tasdiqlash'}
+                </Button>
+              ) : (
+                <Button className="flex-1" disabled={cart.length === 0 || sending} onClick={sendOrder}>
+                  {sending ? t('waiter.sending') : t('waiter.sendToKitchen')}
+                </Button>
+              )}
             </div>
           </div>
         </aside>

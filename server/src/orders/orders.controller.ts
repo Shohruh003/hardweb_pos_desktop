@@ -59,6 +59,18 @@ export class OrdersController {
     return this.orders.requestBill(id);
   }
 
+  // Buyurtmadan ayrim taomlarni olib tashlash (qaytarish)
+  @Post(':id/remove-items')
+  removeItems(@Param('id') id: string, @Body() dto: { itemIds: string[] }) {
+    return this.orders.removeItems(id, dto?.itemIds ?? []);
+  }
+
+  // Schotni bekor qilish (annul) — to'lanmagan buyurtmani o'chirib, stolni bo'shatadi
+  @Post(':id/cancel')
+  cancel(@Param('id') id: string) {
+    return this.orders.cancel(id);
+  }
+
   // Hisob chekini kassa (printerli terminal) chop etsin (relay)
   @Post(':id/print-bill')
   printBill(@Param('id') id: string) {

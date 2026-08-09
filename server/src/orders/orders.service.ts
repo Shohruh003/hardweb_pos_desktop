@@ -292,6 +292,63 @@ export class OrdersService {
     return { ok: true };
   }
 
+  // Buyurtmadan ayrim taomlarni olib tashlash (qaytarish). Hamma taom olib
+  // tashlansa — butun buyurtma bekor qilinadi (stol bo'shaydi).
+  async removeItems(id: string, itemIds: string[]): Promise<Order> {
+    const order = await this.orders.findOne({ where: { id } });
+    if (!order) throw new NotFoundException('Buyurtma topilmadi');
+    if (order.status === OrderStatus.Closed) {
+      throw new BadRequestException('Yopilgan buyurtmani o‘zgartirib bo‘lmaydi');
+    }
+    const ids = new Set(itemIds || []);
+    const toRemove = (order.items || []).filter((it) => ids.has(it.id));
+    const remaining = (order.items || []).filter((it) => !ids.has(it.id));
+    if (toRemove.length === 0) {
+      const table = await this.tables.findOne({ where: { id: order.tableId } });
+      return this.toDto(order, table?.number);
+    }
+    // Hamma taom olib tashlandi — buyurtmani butunlay bekor qilamiz
+    if (remaining.length === 0) {
+      return this.cancel(id);
+    }
+    await this.dataSource.manager.delete(
+      OrderItemEntity,
+      toRemove.map((it) => it.id),
+    );
+    const updated = await this.orders.findOne({ where: { id } });
+    const table = await this.tables.findOne({ where: { id: order.tableId } });
+    const dto = this.toDto(updated!, table?.number);
+    dto.hall = table?.hall ?? null;
+    this.gateway.emitOrderUpdated(dto);
+    return dto;
+  }
+
+  // Schotni bekor qilish (annul) — to'lanmagan buyurtmani butunlay o'chiradi,
+  // stolni bo'shatadi. To'langan (yopilgan) chek uchun bu ishlamaydi (vozvrat ishlatiladi).
+  async cancel(id: string): Promise<Order> {
+    const order = await this.orders.findOne({ where: { id } });
+    if (!order) throw new NotFoundException('Buyurtma topilmadi');
+    if (order.status === OrderStatus.Closed) {
+      throw new BadRequestException(
+        'To‘langan chekni bekor qilib bo‘lmaydi (vozvrat qiling)',
+      );
+    }
+    const table = await this.tables.findOne({ where: { id: order.tableId } });
+    const dto = this.toDto(order, table?.number);
+    dto.hall = table?.hall ?? null;
+    await this.dataSource.transaction(async (m) => {
+      await m.delete(OrderItemEntity, { orderId: id });
+      await m.delete(OrderEntity, id);
+      if (table) {
+        table.status = TableStatus.Free;
+        await m.save(table);
+      }
+    });
+    // Ro'yxatlardan (KDS/kassa/ofitsiant) olib tashlash uchun "yopildi" hodisasi
+    this.gateway.emitOrderClosed(dto);
+    return dto;
+  }
+
   // Buyurtma holatini o'zgartirish (TZ F-2.3): qabul -> tayyorlanmoqda -> tayyor
   async updateStatus(id: string, dto: UpdateOrderStatusDto): Promise<Order> {
     const order = await this.orders.findOne({ where: { id } });

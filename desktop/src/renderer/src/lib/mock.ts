@@ -426,6 +426,34 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     emit(SOCKET_EVENTS.PRINT_RECEIPT, { receipt: body });
     return ok({ ok: true });
   }
+  if (seg[0] === 'orders' && seg[2] === 'remove-items' && method === 'POST') {
+    const o = orders.find((x) => x.id === seg[1]);
+    if (!o) return fail('Buyurtma topilmadi');
+    const ids: string[] = body?.itemIds ?? [];
+    o.items = o.items.filter((it) => !ids.includes(it.id));
+    if (o.items.length === 0) {
+      // Hamma taom olib tashlandi — buyurtmani bekor qilamiz
+      const i = orders.findIndex((x) => x.id === o.id);
+      if (i >= 0) orders.splice(i, 1);
+      const table = tables.find((t) => t.id === o.tableId);
+      if (table) table.status = TableStatus.Free;
+      emit(SOCKET_EVENTS.ORDER_CLOSED, { order: o });
+      return ok(o);
+    }
+    o.total = total(o.items);
+    emit(SOCKET_EVENTS.ORDER_UPDATED, { orderId: o.id, status: o.status, order: o });
+    return ok(o);
+  }
+  if (seg[0] === 'orders' && seg[2] === 'cancel' && method === 'POST') {
+    const i = orders.findIndex((x) => x.id === seg[1]);
+    if (i < 0) return fail('Buyurtma topilmadi');
+    const o = orders[i];
+    orders.splice(i, 1);
+    const table = tables.find((t) => t.id === o.tableId);
+    if (table) table.status = TableStatus.Free;
+    emit(SOCKET_EVENTS.ORDER_CLOSED, { order: o });
+    return ok(o);
+  }
   if (seg[0] === 'orders' && seg[2] === 'status' && method === 'PATCH') {
     const o = orders.find((x) => x.id === seg[1]);
     if (o) {
