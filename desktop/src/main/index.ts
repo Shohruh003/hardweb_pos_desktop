@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
+import { spawn } from 'child_process';
 import { join } from 'path';
 import {
   getConfig,
@@ -49,6 +50,19 @@ ipcMain.handle('printer:print-kitchen', (_e, order: Order) =>
 ipcMain.handle('printer:print-order-ticket', (_e, order: Order) =>
   printOrderTicket(order),
 );
+// Windows ekran (sensorli) klaviaturasini ochish — planshet/monoblok uchun.
+// Input bosilganda renderer shuni chaqiradi (faqat sensorli qurilmalarda).
+ipcMain.handle('keyboard:show', () => {
+  try {
+    const common = process.env['CommonProgramFiles'] || 'C:\\Program Files\\Common Files';
+    const tabTip = join(common, 'microsoft shared', 'ink', 'TabTip.exe');
+    spawn(tabTip, [], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  } catch {
+    /* klaviatura ochilmasa ham ish davom etadi */
+  }
+  return { ok: true };
+});
+
 ipcMain.handle('printer:print-bill', (_e, order: Order) => printBill(order));
 ipcMain.handle(
   'printer:print-station',

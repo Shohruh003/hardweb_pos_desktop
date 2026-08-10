@@ -34,7 +34,16 @@ export function Select({
     const r = el.getBoundingClientRect();
     const spaceBelow = window.innerHeight - r.bottom;
     const up = spaceBelow < 280 && r.top > spaceBelow;
-    setPos({ top: up ? r.top : r.bottom, left: r.left, width: r.width, up });
+    // Ro'yxat kamida 220px kenglikда bo'lsin (tor tugmада ham chiroyli, nom kesilmasin),
+    // lekin ekrandan chiqib ketmasin.
+    const width = Math.min(
+      Math.max(r.width, 220),
+      window.innerWidth - 16,
+    );
+    let left = r.left;
+    if (left + width > window.innerWidth - 8) left = window.innerWidth - width - 8;
+    if (left < 8) left = 8;
+    setPos({ top: up ? r.top : r.bottom, left, width, up });
   };
 
   useLayoutEffect(() => {

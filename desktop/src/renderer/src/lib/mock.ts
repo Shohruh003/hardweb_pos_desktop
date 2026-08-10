@@ -10,6 +10,7 @@ import {
   SOCKET_EVENTS,
   TableStatus,
   UserRole,
+  isFullAccessRole,
 } from '@hardweb-pos/shared';
 
 const uid = () => crypto.randomUUID();
@@ -276,6 +277,8 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
   if (path === '/auth/login-pin' && method === 'POST') {
     const u = users.find((x) => x.pin === body.pin);
     if (!u) return fail('PIN noto‘g‘ri');
+    // Direktor/SuperAdmin PIN bilan kira olmaydi — login+parol bilan
+    if (isFullAccessRole(u.role)) return fail('Direktor login va parol bilan kiradi (PIN emas)');
     return ok({ token: 'mock-token', user: u });
   }
 

@@ -262,14 +262,6 @@ export function MenuTab() {
             ]}
             placeholder="Bo‘lim tanlang"
           />
-          <label className="block text-sm text-muted mb-1">Ketadigan mahsulotlar (ingredientlar)</label>
-          <textarea
-            value={form.ingredients}
-            onChange={(e) => setForm({ ...form, ingredients: e.target.value })}
-            rows={3}
-            placeholder="Masalan:&#10;Guruch 200g&#10;Go‘sht 150g&#10;Sabzi 100g"
-            className="w-full mb-3 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary text-sm"
-          />
           {/* Retsept — skladdan ayiriladigan mahsulotlar (universal) */}
           <div className="mb-4 rounded-xl border border-border bg-bg/40 p-3">
             <div className="flex items-center justify-between mb-2">

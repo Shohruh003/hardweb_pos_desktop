@@ -7,7 +7,7 @@ import logo from '../assets/logo.png';
 
 // Kirish ekrani — PIN bilan (mock va real bir xil ishlaydi)
 export function LoginPage() {
-  const { loginByPin } = useAuth();
+  const { loginByPin, login } = useAuth();
   const { t } = useI18n();
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
@@ -15,6 +15,25 @@ export function LoginPage() {
   const [server, setServer] = useState(getServerUrl());
   const [showServer, setShowServer] = useState(false);
   const [logoClicks, setLogoClicks] = useState(0);
+  // Direktor/rahbar — login + parol rejimi (PIN emas, xavfsizroq)
+  const [pwMode, setPwMode] = useState(false);
+  const [loginName, setLoginName] = useState('');
+  const [password, setPassword] = useState('');
+
+  async function submitPassword() {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      setServerUrl(server);
+      await login(loginName.trim(), password);
+    } catch (err) {
+      setError((err as Error).message || 'Login yoki parol noto‘g‘ri');
+      setPassword('');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const submit = useCallback(
     async (code: string) => {
@@ -50,6 +69,7 @@ export function LoginPage() {
   // Klaviaturadan ham kiritish (raqamlar, Backspace)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (pwMode) return; // login/parol rejimida PIN tugmalari ishlamaydi
       if (e.key >= '0' && e.key <= '9') press(e.key);
       else if (e.key === 'Backspace') backspace();
     };
@@ -83,7 +103,9 @@ export function LoginPage() {
         </div>
 
         <div className="text-primary font-extrabold text-2xl tracking-tight">DasturXon</div>
-        <div className="text-muted text-sm mb-6">{t('common.password')} — PIN</div>
+        <div className="text-muted text-sm mb-6">
+          {pwMode ? 'Direktor — login va parol' : `${t('common.password')} — PIN`}
+        </div>
 
         {error && (
           <div className="mb-4 px-4 py-2 rounded-lg bg-danger/15 text-danger text-sm font-medium animate-pop-in">
@@ -91,56 +113,95 @@ export function LoginPage() {
           </div>
         )}
 
-        {/* PIN nuqtalari */}
-        <div className="flex gap-4 mb-8">
-          {[0, 1, 2, 3].map((i) => (
-            <span
-              key={i}
-              className={`w-4 h-4 rounded-full transition-all duration-150 ${
-                busy
-                  ? 'bg-warning animate-pulse'
-                  : pin.length > i
-                    ? 'bg-primary scale-110'
-                    : 'bg-border'
-              }`}
-            />
-          ))}
-        </div>
+        {!pwMode && (
+          <>
+            {/* PIN nuqtalari */}
+            <div className="flex gap-4 mb-8">
+              {[0, 1, 2, 3].map((i) => (
+                <span
+                  key={i}
+                  className={`w-4 h-4 rounded-full transition-all duration-150 ${
+                    busy
+                      ? 'bg-warning animate-pulse'
+                      : pin.length > i
+                        ? 'bg-primary scale-110'
+                        : 'bg-border'
+                  }`}
+                />
+              ))}
+            </div>
 
-        {/* Raqamli klaviatura */}
-        <div className="grid grid-cols-3 gap-3 w-full max-w-[280px]">
-          {keys.map((k) => (
+            {/* Raqamli klaviatura */}
+            <div className="grid grid-cols-3 gap-3 w-full max-w-[280px]">
+              {keys.map((k) => (
+                <button
+                  key={k}
+                  onClick={() => press(k)}
+                  disabled={busy}
+                  className="aspect-square rounded-2xl bg-surface border border-border text-2xl font-bold hover:border-primary hover:bg-surface-hover active:scale-95 transition-all disabled:opacity-50"
+                >
+                  {k}
+                </button>
+              ))}
+              <button
+                onClick={clear}
+                disabled={busy}
+                className="aspect-square rounded-2xl bg-surface border border-border text-lg font-semibold text-muted hover:text-danger hover:border-danger active:scale-95 transition-all"
+              >
+                C
+              </button>
+              <button
+                onClick={() => press('0')}
+                disabled={busy}
+                className="aspect-square rounded-2xl bg-surface border border-border text-2xl font-bold hover:border-primary hover:bg-surface-hover active:scale-95 transition-all disabled:opacity-50"
+              >
+                0
+              </button>
+              <button
+                onClick={backspace}
+                disabled={busy}
+                className="aspect-square rounded-2xl bg-surface border border-border text-xl hover:border-primary active:scale-95 transition-all"
+              >
+                ⌫
+              </button>
+            </div>
+          </>
+        )}
+
+        {pwMode && (
+          <div className="w-full max-w-[300px] flex flex-col gap-3">
+            <input
+              value={loginName}
+              onChange={(e) => setLoginName(e.target.value)}
+              placeholder="Login (masalan: direktor)"
+              autoFocus
+              className="px-4 py-3 rounded-xl bg-surface border border-border outline-none focus:border-primary"
+            />
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && submitPassword()}
+              placeholder="Parol"
+              className="px-4 py-3 rounded-xl bg-surface border border-border outline-none focus:border-primary"
+            />
             <button
-              key={k}
-              onClick={() => press(k)}
-              disabled={busy}
-              className="aspect-square rounded-2xl bg-surface border border-border text-2xl font-bold hover:border-primary hover:bg-surface-hover active:scale-95 transition-all disabled:opacity-50"
+              onClick={submitPassword}
+              disabled={busy || !loginName || !password}
+              className="py-3 rounded-xl bg-primary text-white font-bold hover:brightness-110 active:scale-95 transition-all disabled:opacity-50"
             >
-              {k}
+              {busy ? '...' : 'Kirish'}
             </button>
-          ))}
-          <button
-            onClick={clear}
-            disabled={busy}
-            className="aspect-square rounded-2xl bg-surface border border-border text-lg font-semibold text-muted hover:text-danger hover:border-danger active:scale-95 transition-all"
-          >
-            C
-          </button>
-          <button
-            onClick={() => press('0')}
-            disabled={busy}
-            className="aspect-square rounded-2xl bg-surface border border-border text-2xl font-bold hover:border-primary hover:bg-surface-hover active:scale-95 transition-all disabled:opacity-50"
-          >
-            0
-          </button>
-          <button
-            onClick={backspace}
-            disabled={busy}
-            className="aspect-square rounded-2xl bg-surface border border-border text-xl hover:border-primary active:scale-95 transition-all"
-          >
-            ⌫
-          </button>
-        </div>
+          </div>
+        )}
+
+        {/* PIN <-> login/parol rejimini almashtirish */}
+        <button
+          onClick={() => { setPwMode((v) => !v); setError(''); setPin(''); setPassword(''); }}
+          className="mt-6 text-sm text-primary hover:underline font-semibold"
+        >
+          {pwMode ? '← Xodim (PIN) bilan kirish' : '🔑 Direktor (login/parol) bilan kirish'}
+        </button>
 
         {/* Server manzili — boshqa kompyuterda (terminalda) server IP'sini kiritish uchun */}
         <button

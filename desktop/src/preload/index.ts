@@ -27,6 +27,8 @@ export interface PrintResult {
 contextBridge.exposeInMainWorld('hardweb', {
   platform: process.platform,
   version: process.versions.electron,
+  // Windows ekran klaviaturasini ochish (planshet/monoblok uchun)
+  showKeyboard: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('keyboard:show'),
   printer: {
     printReceipt: (receipt: Receipt): Promise<PrintResult> =>
       ipcRenderer.invoke('printer:print-receipt', receipt),

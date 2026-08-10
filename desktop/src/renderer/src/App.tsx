@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { hasCapability } from '@hardweb-pos/shared';
 import { useAuth } from './state/auth';
 import { useDemoNav } from './state/demoNav';
@@ -20,6 +20,25 @@ export function App() {
   const { queue } = useDemoNav();
   const { module } = useAppNav();
   const [splashDone, setSplashDone] = useState(false);
+
+  // Sensorli qurilma (planshet/monoblok): matn maydoni bosilganda Windows
+  // ekran klaviaturasini ochamiz. Oddiy kompyuterda (sichqoncha) ochilmaydi.
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || navigator.maxTouchPoints <= 0) return;
+    const NON_TEXT = ['button', 'checkbox', 'radio', 'submit', 'range', 'color', 'file', 'image', 'reset'];
+    const onFocusIn = (e: FocusEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (!el) return;
+      const tag = el.tagName;
+      const isText =
+        tag === 'TEXTAREA' ||
+        (tag === 'INPUT' && !NON_TEXT.includes((el as HTMLInputElement).type)) ||
+        (el as HTMLElement).isContentEditable;
+      if (isText) window.hardweb?.showKeyboard?.();
+    };
+    document.addEventListener('focusin', onFocusIn);
+    return () => document.removeEventListener('focusin', onFocusIn);
+  }, []);
 
   // Ochilish animatsiyasi — faqat birinchi yuklanishda
   if (!splashDone) return <SplashScreen onDone={() => setSplashDone(true)} />;

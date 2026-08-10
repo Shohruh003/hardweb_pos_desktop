@@ -27,6 +27,7 @@ declare global {
     hardweb: {
       platform: string;
       version: string;
+      showKeyboard: () => Promise<{ ok: boolean }>;
       printer: {
         printReceipt: (receipt: Receipt) => Promise<PrintResult>;
         printKitchen: (order: Order) => Promise<PrintResult>;

@@ -37,6 +37,13 @@ export class AuthService {
     if (!user) {
       throw new UnauthorizedException('PIN noto‘g‘ri');
     }
+    // Direktor/SuperAdmin PIN bilan kira olmaydi — login+parol bilan kiradi
+    // (tasodifiy 4 xonali raqam bilan rahbar kabinetiga kirib qolmasligi uchun)
+    if (isFullAccessRole(user.role)) {
+      throw new UnauthorizedException(
+        'Direktor login va parol bilan kiradi (PIN emas)',
+      );
+    }
     return this.issue(user);
   }
 
