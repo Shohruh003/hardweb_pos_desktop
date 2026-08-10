@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuth } from '../state/auth';
 import { useConnectivity } from '../state/connectivity';
 import { ThemeLangControls } from './ThemeLangControls';
@@ -9,29 +10,54 @@ export function AppShell({
   title,
   children,
   hideHome,
+  hideMobileControls,
+  mobileDrawer,
+  mobileDrawerTitle,
 }: {
   title: string;
   children: React.ReactNode;
   hideHome?: boolean; // admin panelida bosh sahifa yon menu tagida bo'ladi
+  hideMobileControls?: boolean; // mobil: til/tema/akkaunt pastki "Profil" bo'limiga ko'chirilgan
+  // mobil: o'ng yuqoridagi hamburger bosilganda o'ngdan chiqadigan yon menu (zallar/kategoriyalar)
+  mobileDrawer?: (close: () => void) => React.ReactNode;
+  mobileDrawerTitle?: string;
 }) {
   const { user, logout } = useAuth();
   const { online, pending } = useConnectivity();
   const { t } = useI18n();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ top: 0, right: 0 });
+
+  useLayoutEffect(() => {
+    if (!menuOpen || !btnRef.current) return;
+    const r = btnRef.current.getBoundingClientRect();
+    setPos({ top: r.bottom + 8, right: Math.max(8, window.innerWidth - r.right) });
+  }, [menuOpen]);
 
   useEffect(() => {
     if (!menuOpen) return;
     const onDoc = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setMenuOpen(false);
     };
+    const onScroll = () => setMenuOpen(false);
     document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
+    window.addEventListener('resize', onScroll);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      window.removeEventListener('resize', onScroll);
+      window.removeEventListener('scroll', onScroll, true);
+    };
   }, [menuOpen]);
 
   return (
     <div className="h-full flex flex-col app-bg text-text">
-      <header className="flex items-center justify-between gap-2 px-3 sm:px-6 py-2.5 glass border-b border-border">
+      <header className="relative z-50 flex items-center justify-between gap-2 px-3 sm:px-6 py-2.5 glass border-b border-border">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <span className="text-primary font-extrabold text-lg tracking-tight shrink-0">
             DasturXon
@@ -56,11 +82,13 @@ export function AppShell({
               </span>
             )}
           </div>
+          <div className={`items-center gap-2 sm:gap-3 ${hideMobileControls ? 'hidden md:flex' : 'flex'}`}>
           <ThemeLangControls />
 
           {/* Foydalanuvchi menyusi — ism/avatar bosilganda Chiqish chiqadi */}
-          <div className="relative" ref={menuRef}>
+          <div className="relative">
             <button
+              ref={btnRef}
               onClick={() => setMenuOpen((o) => !o)}
               className="flex items-center gap-2 rounded-lg border border-border hover:border-primary hover:bg-surface-hover pl-1.5 pr-1 sm:pr-2 py-1 transition-colors"
             >
@@ -76,28 +104,68 @@ export function AppShell({
               <span className={`text-muted text-xs transition-transform ${menuOpen ? 'rotate-180' : ''}`}>▾</span>
             </button>
 
-            {menuOpen && (
-              <div className="absolute right-0 mt-2 w-52 bg-surface border border-border rounded-xl shadow-2xl overflow-hidden z-50 animate-card-in">
-                <div className="px-4 py-3 border-b border-border lg:hidden">
-                  <div className="font-semibold truncate">{user?.name}</div>
-                  <div className="text-xs text-muted">{t(`role.${user?.role ?? ''}`, user?.role)}</div>
-                </div>
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    logout();
-                  }}
-                  className="w-full flex items-center gap-2 px-4 py-3 text-danger font-semibold hover:bg-danger/10 transition-colors"
+            {menuOpen &&
+              createPortal(
+                <div
+                  ref={menuRef}
+                  style={{ position: 'fixed', top: pos.top, right: pos.right, zIndex: 1000 }}
+                  className="w-52 bg-surface border border-border rounded-xl shadow-2xl overflow-hidden animate-card-in"
                 >
-                  <span className="text-lg leading-none">⎋</span>
-                  {t('common.logout')}
-                </button>
-              </div>
-            )}
+                  <div className="px-4 py-3 border-b border-border lg:hidden">
+                    <div className="font-semibold truncate">{user?.name}</div>
+                    <div className="text-xs text-muted">{t(`role.${user?.role ?? ''}`, user?.role)}</div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      logout();
+                    }}
+                    className="w-full flex items-center gap-2 px-4 py-3 text-danger font-semibold hover:bg-danger/10 transition-colors"
+                  >
+                    <span className="text-lg leading-none">⎋</span>
+                    {t('common.logout')}
+                  </button>
+                </div>,
+                document.body,
+              )}
           </div>
+          </div>
+
+          {/* Mobil: o'ng yuqoridagi hamburger — yon menuni ochadi */}
+          {mobileDrawer && (
+            <button
+              onClick={() => setDrawerOpen(true)}
+              aria-label="Menyu"
+              className="md:hidden w-10 h-10 rounded-lg border border-border hover:border-primary flex items-center justify-center gap-[3px] flex-col"
+            >
+              <span className="block w-5 h-0.5 bg-text rounded-full" />
+              <span className="block w-5 h-0.5 bg-text rounded-full" />
+              <span className="block w-5 h-0.5 bg-text rounded-full" />
+            </button>
+          )}
         </div>
       </header>
       <main className="flex-1 overflow-hidden">{children}</main>
+
+      {/* Mobil: o'ngdan chiqadigan yon menu (drawer) */}
+      {mobileDrawer && drawerOpen && (
+        <div className="md:hidden fixed inset-0 z-[70]">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setDrawerOpen(false)} />
+          <div className="absolute inset-y-0 right-0 w-72 max-w-[85vw] bg-surface border-l border-border shadow-2xl flex flex-col animate-slide-in-right">
+            <div className="flex items-center justify-between px-4 py-3.5 border-b border-border shrink-0">
+              <span className="font-bold text-lg">{mobileDrawerTitle ?? 'Menyu'}</span>
+              <button
+                onClick={() => setDrawerOpen(false)}
+                aria-label="Yopish"
+                className="w-9 h-9 rounded-lg hover:bg-bg flex items-center justify-center text-xl text-muted hover:text-text"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-3">{mobileDrawer(() => setDrawerOpen(false))}</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

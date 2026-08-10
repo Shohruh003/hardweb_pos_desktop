@@ -67,11 +67,11 @@ export function MyOrdersView({
 
   return (
     <div className="h-full overflow-auto p-6">
-      <div className="flex items-center gap-3 mb-4">
-        <Button variant="ghost" onClick={onBack}>
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <div className="text-xl font-bold">🧾 {t('waiter.myOrders')}</div>
+        <Button variant="ghost" className="shrink-0" onClick={onBack}>
           ← {t('common.back')}
         </Button>
-        <div className="text-xl font-bold">🧾 {t('waiter.myOrders')}</div>
       </div>
 
       {/* Statistika kartalari */}

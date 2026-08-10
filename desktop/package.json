@@ -11,8 +11,8 @@
     "build": "electron-vite build",
     "build:mock": "electron-vite build --mode mock",
     "preview": "electron-vite preview",
-    "dist": "electron-vite build && electron-builder --win",
-    "dist:mock": "electron-vite build --mode mock && electron-builder --win"
+    "dist": "electron-vite build && electron-builder --win -c.nsis.artifactName=DasturXon-Server-${version}.${ext}",
+    "dist:mock": "electron-vite build --mode mock && electron-builder --win -c.nsis.artifactName=DasturXon-DEMO-${version}.${ext}"
   },
   "build": {
     "appId": "com.dasturxon.pos",

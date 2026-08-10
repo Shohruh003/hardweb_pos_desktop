@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useTheme } from '../state/theme';
 import { useI18n, LANGS, Lang } from '../state/i18n';
 
@@ -7,23 +8,42 @@ export function ThemeLangControls() {
   const { theme, toggle } = useTheme();
   const { lang, setLang } = useI18n();
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ top: 0, right: 0 });
+
+  useLayoutEffect(() => {
+    if (!open || !btnRef.current) return;
+    const r = btnRef.current.getBoundingClientRect();
+    setPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+  }, [open]);
 
   useEffect(() => {
+    if (!open) return;
     const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
     };
+    const onScroll = () => setOpen(false);
     document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, []);
+    window.addEventListener('resize', onScroll);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      window.removeEventListener('resize', onScroll);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  }, [open]);
 
   const current = LANGS.find((l) => l.code === lang)!;
 
   return (
     <div className="flex items-center gap-2">
       {/* Til almashtirgich */}
-      <div className="relative" ref={ref}>
+      <div className="relative">
         <button
+          ref={btnRef}
           onClick={() => setOpen((o) => !o)}
           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border hover:border-primary hover:bg-surface-hover transition-colors text-sm"
           title="Til / Язык / Language"
@@ -31,25 +51,31 @@ export function ThemeLangControls() {
           <span className="text-base leading-none">{current.flag}</span>
           <span className="font-medium uppercase">{current.code}</span>
         </button>
-        {open && (
-          <div className="absolute right-0 mt-1 w-40 bg-surface border border-border rounded-xl shadow-xl overflow-hidden z-50 animate-card-in">
-            {LANGS.map((l) => (
-              <button
-                key={l.code}
-                onClick={() => {
-                  setLang(l.code as Lang);
-                  setOpen(false);
-                }}
-                className={`w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-surface-hover transition-colors ${
-                  l.code === lang ? 'text-primary font-semibold' : 'text-text'
-                }`}
-              >
-                <span className="text-base">{l.flag}</span>
-                <span>{l.label}</span>
-              </button>
-            ))}
-          </div>
-        )}
+        {open &&
+          createPortal(
+            <div
+              ref={menuRef}
+              style={{ position: 'fixed', top: pos.top, right: pos.right, zIndex: 1000 }}
+              className="w-40 bg-surface border border-border rounded-xl shadow-2xl overflow-hidden animate-card-in"
+            >
+              {LANGS.map((l) => (
+                <button
+                  key={l.code}
+                  onClick={() => {
+                    setLang(l.code as Lang);
+                    setOpen(false);
+                  }}
+                  className={`w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-surface-hover transition-colors ${
+                    l.code === lang ? 'text-primary font-semibold' : 'text-text'
+                  }`}
+                >
+                  <span className="text-base">{l.flag}</span>
+                  <span>{l.label}</span>
+                </button>
+              ))}
+            </div>,
+            document.body,
+          )}
       </div>
 
       {/* Tema tugmasi */}

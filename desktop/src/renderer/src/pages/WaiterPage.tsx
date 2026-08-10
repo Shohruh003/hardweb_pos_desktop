@@ -16,6 +16,7 @@ import { MenuTile } from '../components/MenuTile';
 import { Modal } from '../components/Modal';
 import { FeedbackModal, FeedbackVariant } from '../components/FeedbackModal';
 import { MyOrdersView } from '../components/MyOrdersView';
+import { WaiterMobileNav, WaiterProfileView } from '../components/WaiterMobileNav';
 import { BackButton } from '../components/BackButton';
 import { api } from '../lib/api';
 import { getSocket } from '../lib/socket';
@@ -53,16 +54,17 @@ function qtyLabel(quantity: number, unit: MenuUnit): string {
 }
 
 // Kategoriya ranglari (ko'k emas) — chap yon menu uchun. Statik sinflar (Tailwind JIT).
+// on = faol (yorqin), off = nofaol (o'sha rangning xiraroq foni). Matn har doim oq va tiniq.
 const CAT_STYLES = [
-  { solid: 'bg-emerald-500 text-white shadow-md', tint: 'bg-emerald-500/12 text-emerald-500 hover:bg-emerald-500/20' },
-  { solid: 'bg-amber-500 text-white shadow-md', tint: 'bg-amber-500/12 text-amber-500 hover:bg-amber-500/20' },
-  { solid: 'bg-pink-500 text-white shadow-md', tint: 'bg-pink-500/12 text-pink-500 hover:bg-pink-500/20' },
-  { solid: 'bg-violet-500 text-white shadow-md', tint: 'bg-violet-500/12 text-violet-500 hover:bg-violet-500/20' },
-  { solid: 'bg-teal-500 text-white shadow-md', tint: 'bg-teal-500/12 text-teal-500 hover:bg-teal-500/20' },
-  { solid: 'bg-rose-500 text-white shadow-md', tint: 'bg-rose-500/12 text-rose-500 hover:bg-rose-500/20' },
-  { solid: 'bg-orange-500 text-white shadow-md', tint: 'bg-orange-500/12 text-orange-500 hover:bg-orange-500/20' },
-  { solid: 'bg-fuchsia-500 text-white shadow-md', tint: 'bg-fuchsia-500/12 text-fuchsia-500 hover:bg-fuchsia-500/20' },
-  { solid: 'bg-lime-500 text-white shadow-md', tint: 'bg-lime-500/12 text-lime-600 hover:bg-lime-500/20' },
+  { on: 'bg-emerald-500', off: 'bg-emerald-500/55' },
+  { on: 'bg-amber-500', off: 'bg-amber-500/55' },
+  { on: 'bg-pink-500', off: 'bg-pink-500/55' },
+  { on: 'bg-violet-500', off: 'bg-violet-500/55' },
+  { on: 'bg-teal-500', off: 'bg-teal-500/55' },
+  { on: 'bg-rose-500', off: 'bg-rose-500/55' },
+  { on: 'bg-orange-500', off: 'bg-orange-500/55' },
+  { on: 'bg-fuchsia-500', off: 'bg-fuchsia-500/55' },
+  { on: 'bg-lime-500', off: 'bg-lime-500/55' },
 ];
 
 // Ofitsiant ekrani (TZ 5.1): ofitsiant tanlash -> zal -> stol -> menyudan buyurtma
@@ -98,6 +100,9 @@ export function WaiterPage() {
   const [printingBill, setPrintingBill] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  const [showMyOrders, setShowMyOrders] = useState(false);
+  const [historyFromProfile, setHistoryFromProfile] = useState(false);
   // Kiloda sotiladigan taomni tahrirlash (kg yoki so'm)
   const [editItem, setEditItem] = useState<CartItem | null>(null);
   const [editKg, setEditKg] = useState('');
@@ -186,6 +191,9 @@ export function WaiterPage() {
 
   // Stol tanlanganda: shu stoldagi ochiq buyurtmani yuklaymiz (F1)
   async function openTable(tbl: Table) {
+    setShowHistory(false);
+    setShowProfile(false);
+    setShowMyOrders(false);
     setSelectedTable(tbl);
     setCart([]);
     setExistingOrder(null);
@@ -537,15 +545,141 @@ export function WaiterPage() {
   );
 
   // "Mening buyurtmalarim" — alohida sahifa (filtrlar + infinite scroll)
+  // Pastki navigatsiya uchun umumiy o'tish funksiyalari
+  const resetFlow = () => {
+    setSelectedTable(null);
+    setExistingOrder(null);
+    setCart([]);
+    setCartOpen(false);
+  };
+  const goTables = () => {
+    setShowHistory(false);
+    setShowProfile(false);
+    setShowMyOrders(false);
+    resetFlow();
+  };
+  const goMyOrders = () => {
+    setShowHistory(false);
+    setShowProfile(false);
+    setShowMyOrders(true);
+    resetFlow();
+  };
+  const goProfile = () => {
+    setShowHistory(false);
+    setShowMyOrders(false);
+    setShowProfile(true);
+    resetFlow();
+  };
+  // Tarix — Profil ichidan ochiladi (orqaga — Profilga qaytadi)
+  const goHistory = () => {
+    setShowProfile(false);
+    setShowMyOrders(false);
+    setHistoryFromProfile(true);
+    setShowHistory(true);
+  };
+
+  // Buyurtmalar tarixi (Profil ichida)
   if (showHistory) {
     return (
-      <AppShell title={`Ofitsiant — ${selectedWaiter.name}`}>
+      <AppShell title={`Ofitsiant — ${selectedWaiter.name}`} hideMobileControls>
         {feedbackModal}
-        <MyOrdersView
-          waiterId={selectedWaiter.id}
-          waiterName={selectedWaiter.name}
-          onBack={() => setShowHistory(false)}
-        />
+        <div className="h-full pb-16 md:pb-0">
+          <MyOrdersView
+            waiterId={selectedWaiter.id}
+            waiterName={selectedWaiter.name}
+            onBack={() => {
+              setShowHistory(false);
+              if (historyFromProfile) {
+                setHistoryFromProfile(false);
+                setShowProfile(true);
+              }
+            }}
+          />
+        </div>
+        <WaiterMobileNav active="profile" onTables={goTables} onMyOrders={goMyOrders} onProfile={goProfile} />
+      </AppShell>
+    );
+  }
+
+  // Profil — alohida to'liq sahifa (mobil)
+  if (showProfile) {
+    return (
+      <AppShell title="Profil" hideMobileControls>
+        {feedbackModal}
+        <WaiterProfileView onHistory={goHistory} />
+        <WaiterMobileNav active="profile" onTables={goTables} onMyOrders={goMyOrders} onProfile={goProfile} />
+      </AppShell>
+    );
+  }
+
+  // Mening buyurtmalarim — faqat shu ofitsiantning faol stollari (kartochka)
+  if (showMyOrders) {
+    const myList = activeOrders
+      .filter((o) => o.waiterId === selectedWaiter.id)
+      .map((o) => ({ order: o, table: tables.find((tb) => tb.id === o.tableId) }))
+      .filter((x): x is { order: Order; table: Table } => !!x.table)
+      .filter((x) => x.table.hall === selectedHall);
+    return (
+      <AppShell
+        title="Mening buyurtmalarim"
+        hideMobileControls
+        mobileDrawerTitle="Zallar"
+        mobileDrawer={(close) => (
+          <div className="flex flex-col gap-2">
+            {halls.map((h) => (
+              <button
+                key={h}
+                onClick={() => {
+                  setSelectedHall(h);
+                  close();
+                }}
+                className={`text-left px-4 py-3.5 rounded-xl font-semibold transition-colors ${
+                  selectedHall === h ? 'bg-primary text-white shadow-md' : 'bg-bg hover:bg-surface-hover'
+                }`}
+              >
+                {h}
+              </button>
+            ))}
+          </div>
+        )}
+      >
+        {feedbackModal}
+        <div className="h-full overflow-auto p-3 sm:p-6 pb-24 md:pb-6">
+          <div className="mb-3">
+            <div className="text-xs text-muted font-semibold">Mening buyurtmalarim</div>
+            <span className="font-bold text-xl">{selectedHall}</span>
+          </div>
+          {myList.length === 0 ? (
+            <div className="text-center text-muted mt-16">
+              <div className="text-5xl mb-3">🍽️</div>
+              <div className="font-semibold">Bu zalda faol buyurtmangiz yo‘q.</div>
+              <div className="text-sm mt-1">Boshqa zalni tanlang (☰) yoki «Stollar»dan yangi buyurtma oching.</div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-2.5 sm:gap-3">
+              {myList.map(({ order, table }) => {
+                const awaiting = table.status === TableStatus.AwaitingBill;
+                return (
+                  <button
+                    key={order.id}
+                    onClick={() => openTable(table)}
+                    className={`aspect-square rounded-2xl border flex flex-col items-center justify-center lift animate-card-in p-2 ${
+                      awaiting ? 'bg-info/10 border-info/50 hover:bg-info/20' : 'bg-warning/10 border-warning/40 hover:bg-warning/20'
+                    }`}
+                  >
+                    <span className="text-2xl font-bold leading-none">№{table.number}</span>
+                    <span className="text-base font-extrabold text-primary mt-1.5">{formatSum(order.total ?? 0)}</span>
+                    <span className="text-[11px] text-muted mt-0.5">{order.items?.length ?? 0} ta taom</span>
+                    <span className={`text-[11px] mt-1 font-semibold ${awaiting ? 'text-info' : 'text-warning'}`}>
+                      {awaiting ? 'Hisob kutilmoqda' : 'Band'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <WaiterMobileNav active="myorders" onTables={goTables} onMyOrders={goMyOrders} onProfile={goProfile} />
       </AppShell>
     );
   }
@@ -554,27 +688,57 @@ export function WaiterPage() {
   if (!selectedTable) {
     const hallTables = tables.filter((t) => t.hall === selectedHall);
     return (
-      <AppShell title={`Ofitsiant — ${selectedWaiter.name}`}>
+      <AppShell
+        title={`Ofitsiant — ${selectedWaiter.name}`}
+        hideMobileControls
+        mobileDrawerTitle="Zallar"
+        mobileDrawer={(close) => (
+          <div className="flex flex-col gap-2">
+            {halls.map((h) => (
+              <button
+                key={h}
+                onClick={() => {
+                  setSelectedHall(h);
+                  close();
+                }}
+                className={`text-left px-4 py-3.5 rounded-xl font-semibold transition-colors ${
+                  selectedHall === h ? 'bg-primary text-white shadow-md' : 'bg-bg hover:bg-surface-hover'
+                }`}
+              >
+                {h}
+              </button>
+            ))}
+          </div>
+        )}
+      >
         {feedbackModal}
-        <div className="h-full overflow-auto p-3 sm:p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <div className="flex gap-2 overflow-x-auto flex-1 min-w-0">
+        <div className="h-full overflow-auto p-3 sm:p-6 pb-24 md:pb-6">
+          {/* Mobil: joriy zal nomi (almashtirish — o'ng yuqoridagi ☰) */}
+          <div className="md:hidden mb-3">
+            <span className="font-bold text-xl">{selectedHall}</span>
+          </div>
+          <div className="hidden md:flex mb-4 gap-2 md:flex-row md:items-center">
+            {/* Zal tanlash — to'liq kenglikda gorizontal scroll (zallar ko'p bo'lsa ham silliq) */}
+            <div className="flex gap-2 overflow-x-auto md:flex-1 md:min-w-0 pb-1 -mb-1">
               {halls.map((h) => (
                 <button
                   key={h}
                   onClick={() => setSelectedHall(h)}
-                  className={`px-3.5 sm:px-4 py-2 rounded-lg font-semibold whitespace-nowrap shrink-0 ${
-                    selectedHall === h ? 'bg-primary text-white' : 'bg-surface text-muted hover:text-text'
+                  className={`px-4 py-2.5 rounded-xl font-semibold whitespace-nowrap shrink-0 transition-colors ${
+                    selectedHall === h ? 'bg-primary text-white shadow-md' : 'bg-surface text-muted hover:text-text'
                   }`}
                 >
                   {h}
                 </button>
               ))}
             </div>
-            <Button variant="ghost" className="shrink-0" onClick={() => setShowHistory(true)}>
-              🧾 <span className="hidden sm:inline">{t('waiter.myOrders')}</span>
-            </Button>
-            <BackButton />
+            {/* Amallar — kompyuterda o'ngda (mobilda pastki navigatsiyada) */}
+            <div className="hidden md:flex gap-2 shrink-0">
+              <Button variant="ghost" onClick={() => { setHistoryFromProfile(false); setShowHistory(true); }}>
+                🧾 {t('waiter.myOrders')}
+              </Button>
+              <BackButton />
+            </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-2.5 sm:gap-3">
             {hallTables.map((tbl) => {
@@ -621,13 +785,51 @@ export function WaiterPage() {
             })}
           </div>
         </div>
+        <WaiterMobileNav active="tables" onTables={goTables} onMyOrders={goMyOrders} onProfile={goProfile} />
       </AppShell>
     );
   }
 
   // 3-qadam: menyudan buyurtma yig'ish
   return (
-    <AppShell title={`${selectedWaiter.name} — Stol №${selectedTable.number}`}>
+    <AppShell
+      title={`${selectedWaiter.name} — Stol №${selectedTable.number}`}
+      hideMobileControls
+      mobileDrawerTitle="Kategoriyalar"
+      mobileDrawer={(close) => (
+        <div className="flex flex-col gap-2">
+          {hasFavorites && (
+            <button
+              onClick={() => {
+                setActiveCat('__fav__');
+                close();
+              }}
+              className={`text-left px-4 py-3.5 rounded-xl font-bold text-white transition-colors ${
+                activeCat === '__fav__' ? 'bg-amber-500 shadow-md' : 'bg-amber-500/55'
+              }`}
+            >
+              ⭐ Sevimlilar
+            </button>
+          )}
+          {categories.map((c, i) => {
+            const st = CAT_STYLES[i % CAT_STYLES.length];
+            const active = activeCat === c.id;
+            return (
+              <button
+                key={c.id}
+                onClick={() => {
+                  setActiveCat(c.id);
+                  close();
+                }}
+                className={`text-left px-4 py-3.5 rounded-xl font-bold text-white transition-colors ${active ? `${st.on} shadow-md` : st.off}`}
+              >
+                {c.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    >
       {feedbackModal}
       {editModal}
 
@@ -681,7 +883,7 @@ export function WaiterPage() {
       <div className="h-full flex flex-col">
         {/* Yuqori header — qidiruv (butun kenglik bo'ylab) */}
         <div className="flex items-center gap-2 p-3 border-b border-border">
-          <Button variant="ghost" className="shrink-0" onClick={() => { setSelectedTable(null); setExistingOrder(null); setCart([]); }}>← Stollar</Button>
+          <Button variant="ghost" className="shrink-0 hidden md:inline-flex" onClick={() => { setSelectedTable(null); setExistingOrder(null); setCart([]); }}>← Stollar</Button>
           <div className="relative flex-1">
             <input
               value={menuSearch}
@@ -706,8 +908,8 @@ export function WaiterPage() {
             {hasFavorites && (
               <button
                 onClick={() => setActiveCat('__fav__')}
-                className={`w-full text-left px-4 py-4 rounded-2xl font-bold text-base transition-all ${
-                  activeCat === '__fav__' ? 'bg-amber-500 text-white shadow-md' : 'bg-amber-500/12 text-amber-500 hover:bg-amber-500/20'
+                className={`w-full text-left px-4 py-4 rounded-2xl font-bold text-base text-white transition-all ${
+                  activeCat === '__fav__' ? 'bg-amber-500 shadow-md' : 'bg-amber-500/55 hover:brightness-110'
                 }`}
               >
                 ⭐ Sevimlilar
@@ -720,7 +922,7 @@ export function WaiterPage() {
                 <button
                   key={c.id}
                   onClick={() => setActiveCat(c.id)}
-                  className={`w-full text-left px-4 py-4 rounded-2xl font-bold text-base transition-all ${active ? st.solid : st.tint}`}
+                  className={`w-full text-left px-4 py-4 rounded-2xl font-bold text-base text-white transition-all ${active ? `${st.on} shadow-md` : `${st.off} hover:brightness-110`}`}
                 >
                   {c.name}
                 </button>
@@ -730,35 +932,15 @@ export function WaiterPage() {
 
           {/* O'rta — taomlar */}
           <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-            {/* Mobil: kategoriya chiplari (gorizontal, rangli) */}
+            {/* Mobil: joriy kategoriya nomi (almashtirish — o'ng yuqoridagi ☰) */}
             {!menuSearch && (
-              <div className="md:hidden flex gap-2 overflow-x-auto p-3 border-b border-border">
-                {hasFavorites && (
-                  <button
-                    onClick={() => setActiveCat('__fav__')}
-                    className={`px-4 py-2 rounded-lg font-semibold whitespace-nowrap shrink-0 ${
-                      activeCat === '__fav__' ? 'bg-amber-500 text-white shadow-md' : 'bg-amber-500/12 text-amber-500'
-                    }`}
-                  >
-                    ⭐ Sevimlilar
-                  </button>
-                )}
-                {categories.map((c, i) => {
-                  const st = CAT_STYLES[i % CAT_STYLES.length];
-                  const active = activeCat === c.id;
-                  return (
-                    <button
-                      key={c.id}
-                      onClick={() => setActiveCat(c.id)}
-                      className={`px-4 py-2 rounded-lg font-semibold whitespace-nowrap shrink-0 ${active ? st.solid : st.tint}`}
-                    >
-                      {c.name}
-                    </button>
-                  );
-                })}
+              <div className="md:hidden px-3 py-2.5 border-b border-border">
+                <span className="font-bold text-lg">
+                  {activeCat === '__fav__' ? '⭐ Sevimlilar' : categories.find((c) => c.id === activeCat)?.name ?? 'Taomlar'}
+                </span>
               </div>
             )}
-            <div className="flex-1 overflow-auto p-3 sm:p-4 pb-24 md:pb-4">
+            <div className="flex-1 overflow-auto p-3 sm:p-4 pb-40 md:pb-4">
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2.5 sm:gap-3">
               {shownItems.map((item) => {
                 const unit = item.unit ?? MenuUnit.Piece;
@@ -786,21 +968,25 @@ export function WaiterPage() {
           </div>
         </div>
 
-        {/* Mobil: buyurtma panelini ochuvchi pastki bar */}
-        {!cartOpen && (
+        {/* Mobil: buyurtma panelini ochuvchi suzuvchi tugma (pastki nav ustida) */}
+        {!cartOpen && (existingOrder || cart.length > 0) && (
           <button
             onClick={() => setCartOpen(true)}
-            className="md:hidden fixed inset-x-0 bottom-0 z-30 bg-primary text-white px-4 py-3.5 flex items-center justify-between shadow-2xl active:brightness-95"
+            className="md:hidden fixed right-3 z-40 bg-primary text-white rounded-full pl-4 pr-5 py-3 flex items-center gap-2.5 shadow-2xl active:scale-95 transition-transform"
+            style={{ bottom: 'calc(64px + env(safe-area-inset-bottom))' }}
           >
-            <span className="font-semibold flex items-center gap-2">
-              🛒 Buyurtma
+            <span className="font-semibold flex items-center gap-1.5">
+              🛒
               <span className="bg-white/25 rounded-full px-2 py-0.5 text-sm">
-                {(existingOrder?.items.length ?? 0) + cart.length} ta
+                {(existingOrder?.items.length ?? 0) + cart.length}
               </span>
             </span>
-            <span className="font-extrabold">{formatSum(grandTotal)} ›</span>
+            <span className="font-extrabold">{formatSum(grandTotal)}</span>
           </button>
         )}
+
+        {/* Mobil: pastki navigatsiya (Stollar / Buyurtmalar / Profil) */}
+        <WaiterMobileNav active="tables" onTables={goTables} onMyOrders={goMyOrders} onProfile={goProfile} />
         {/* Mobil: sheet ochilganda orqa fon */}
         {cartOpen && (
           <div className="md:hidden fixed inset-0 bg-black/50 z-30" onClick={() => setCartOpen(false)} />
