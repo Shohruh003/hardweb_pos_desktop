@@ -15,6 +15,15 @@ import {
 } from './printer';
 import type { Order, Receipt } from '@hardweb-pos/shared';
 
+// Kutilmagan xatolar butun ilovani qulatmasin (demo turli kompyuterlarda ishlashi kerak).
+// Aks holda Electron "A JavaScript error occurred in the main process" dialogini chiqaradi.
+process.on('uncaughtException', (err) => {
+  console.error('[main] uncaughtException:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[main] unhandledRejection:', reason);
+});
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1280,
@@ -53,12 +62,30 @@ ipcMain.handle('printer:print-order-ticket', (_e, order: Order) =>
 // Windows ekran (sensorli) klaviaturasini ochish — planshet/monoblok uchun.
 // Input bosilganda renderer shuni chaqiradi (faqat sensorli qurilmalarda).
 ipcMain.handle('keyboard:show', () => {
+  // Klassik ekran klaviaturasi (osk.exe) — TabTip ishlamaganda zaxira
+  const openOsk = () => {
+    try {
+      const osk = spawn('osk.exe', [], { detached: true, stdio: 'ignore', windowsHide: true });
+      osk.on('error', () => {
+        /* osk ham ochilmadi — ilova baribir ishlayveradi */
+      });
+      osk.unref();
+    } catch {
+      /* ignore */
+    }
+  };
   try {
     const common = process.env['CommonProgramFiles'] || 'C:\\Program Files\\Common Files';
     const tabTip = join(common, 'microsoft shared', 'ink', 'TabTip.exe');
-    spawn(tabTip, [], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    const child = spawn(tabTip, [], { detached: true, stdio: 'ignore', windowsHide: true });
+    // spawn xatosi ASINXRON keladi (EACCES/ENOENT) — 'error' ushlanmasa main qulaydi.
+    child.on('error', () => {
+      // TabTip ishlamadi (ruxsat yo'q/yo'q) — klassik klaviatura bilan urinamiz
+      openOsk();
+    });
+    child.unref();
   } catch {
-    /* klaviatura ochilmasa ham ish davom etadi */
+    openOsk();
   }
   return { ok: true };
 });
