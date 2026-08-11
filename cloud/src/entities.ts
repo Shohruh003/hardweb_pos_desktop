@@ -23,32 +23,7 @@ export class TenantEntity {
   apiKey: string; // lokal server shu kalit bilan sinxronlaydi
 
   @Column({ default: true })
-  active: boolean; // false = suspended (bloklangan)
-
-  // --- Litsenziya / qurilma nazorati ---
-  @Column({ name: 'license_key', type: 'varchar', nullable: true, unique: true })
-  licenseKey: string | null; // 8 xonalik aktivatsiya kaliti
-
-  @Column({ type: 'varchar', nullable: true })
-  fingerprint: string | null; // aktivlashtirilgan mashina (nusxa-oldini olish)
-
-  @Column({ name: 'activated_at', type: 'timestamptz', nullable: true })
-  activatedAt: Date | null;
-
-  @Column({ name: 'last_seen_at', type: 'timestamptz', nullable: true })
-  lastSeenAt: Date | null; // oxirgi heartbeat (online/offline)
-
-  @Column({ name: 'last_ip', type: 'varchar', nullable: true })
-  lastIp: string | null;
-
-  @Column({ name: 'app_version', type: 'varchar', nullable: true })
-  appVersion: string | null;
-
-  @Column({ type: 'varchar', nullable: true })
-  phone: string | null; // restoran aloqa (ixtiyoriy)
-
-  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })
-  createdAt: Date;
+  active: boolean;
 }
 
 // Bulutdagi foydalanuvchi (direktor) — tenantga bog'langan
