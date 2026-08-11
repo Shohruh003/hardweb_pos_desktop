@@ -56,6 +56,11 @@ export function SkladTab() {
   const [inventoryMode, setInventoryMode] = useState(false);
   const [counts, setCounts] = useState<Record<string, string>>({});
   const [savingInv, setSavingInv] = useState(false);
+  // Vozvrat (ta'minotchiga qaytarish)
+  const [returnFor, setReturnFor] = useState<Product | null>(null);
+  const [retSupplier, setRetSupplier] = useState('');
+  const [retQty, setRetQty] = useState('');
+  const [retPrice, setRetPrice] = useState('');
   // Ishlab chiqarish (yarim tayyor mahsulot tayyorlash)
   const [prodOpen, setProdOpen] = useState(false);
   const [prodOutId, setProdOutId] = useState('');
@@ -203,6 +208,27 @@ export function SkladTab() {
     } finally {
       setSavingInv(false);
     }
+  }
+
+  function openReturn() {
+    setReturnFor(products[0] ?? null);
+    setRetSupplier('');
+    setRetQty('');
+    setRetPrice('');
+  }
+  async function saveReturn() {
+    if (!returnFor) return;
+    const quantity = Number(retQty);
+    const unitPrice = Number(retPrice);
+    if (!quantity || quantity <= 0) return;
+    await api.post('/inventory/returns', {
+      productId: returnFor.id,
+      supplier: retSupplier.trim(),
+      quantity,
+      unitPrice: unitPrice || 0,
+    });
+    setReturnFor(null);
+    load();
   }
 
   function openProduction() {
@@ -434,6 +460,7 @@ export function SkladTab() {
           className="flex-1 min-w-[160px] px-4 py-2.5 rounded-lg bg-bg border border-border outline-none focus:border-primary"
         />
         <Button variant="ghost" onClick={openProduction} className="shrink-0">🏭 Ishlab chiqarish</Button>
+        <Button variant="ghost" onClick={openReturn} className="shrink-0">↩️ Qaytarish</Button>
         <Button variant="ghost" onClick={() => { setCounts({}); setInventoryMode(true); }} className="shrink-0">📋 Inventar</Button>
         <Button variant="ghost" onClick={exportCsv} className="shrink-0">📊 Excel</Button>
         <Button variant="ghost" onClick={openSuppliers} className="shrink-0">🧑‍🌾 Ta'minotchilar</Button>
@@ -701,6 +728,43 @@ export function SkladTab() {
             <Button className="flex-1" onClick={saveProduction} disabled={savingProd || !prodOutId || !(Number(prodOutQty) > 0)}>
               {savingProd ? 'Tayyorlanmoqda...' : '✔ Tayyorlash'}
             </Button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Vozvrat — ta'minotchiga qaytarish */}
+      {returnFor && (
+        <Modal title="↩️ Ta'minotchiga qaytarish" onClose={() => setReturnFor(null)}>
+          <div className="text-sm text-muted mb-3">Ombor kamayadi va ta'minotchi qarzi kamayadi.</div>
+          <label className="block text-sm text-muted mb-1">Mahsulot</label>
+          <Select
+            className="mb-3"
+            value={returnFor.id}
+            onChange={(v) => setReturnFor(products.find((p) => p.id === v) ?? null)}
+            options={products.map((p) => ({ value: p.id, label: `${p.name} (${num(p.stock)} ${p.unit})` }))}
+          />
+          <label className="block text-sm text-muted mb-1">Ta'minotchi</label>
+          <input
+            value={retSupplier}
+            onChange={(e) => setRetSupplier(e.target.value)}
+            placeholder="Masalan: Bazar"
+            className="w-full mb-3 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary"
+          />
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div>
+              <label className="block text-sm text-muted mb-1">Miqdor ({returnFor.unit})</label>
+              <input type="number" value={retQty} onChange={(e) => setRetQty(e.target.value)} placeholder="0"
+                className="w-full px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
+            </div>
+            <div>
+              <label className="block text-sm text-muted mb-1">Birlik narxi</label>
+              <input type="number" value={retPrice} onChange={(e) => setRetPrice(e.target.value)} placeholder="0"
+                className="w-full px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="ghost" className="flex-1" onClick={() => setReturnFor(null)}>Bekor</Button>
+            <Button className="flex-1" onClick={saveReturn} disabled={!(Number(retQty) > 0)}>Qaytarish</Button>
           </div>
         </Modal>
       )}

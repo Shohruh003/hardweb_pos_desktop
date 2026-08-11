@@ -432,6 +432,22 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     p.stock = Number(p.stock) + quantity;
     return ok(pur);
   }
+  if (path === '/inventory/returns' && method === 'POST') {
+    const p = products.find((x) => x.id === body.productId);
+    if (!p) return fail('Mahsulot topilmadi');
+    const quantity = Number(body.quantity) || 0;
+    const unitPrice = Number(body.unitPrice) || 0;
+    if (quantity <= 0) return fail('Miqdor 0 dan katta bo‘lishi kerak');
+    const ret = {
+      id: uid(), productId: p.id, productName: p.name, unit: p.unit,
+      supplier: (body.supplier || '').trim(), quantity: -quantity, unitPrice,
+      total: -(Math.round(quantity * unitPrice * 100) / 100),
+      note: '↩️ Vozvrat', createdAt: new Date().toISOString(),
+    };
+    purchases.push(ret);
+    p.stock = Number(p.stock) - quantity;
+    return ok(ret);
+  }
   if (seg[0] === 'inventory' && seg[1] === 'recipe' && seg[2] && method === 'GET') {
     const rows = recipeItems.filter((r) => r.menuItemId === seg[2]).map((r) => {
       const p = products.find((x) => x.id === r.productId);

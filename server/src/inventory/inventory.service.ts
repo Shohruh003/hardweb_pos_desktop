@@ -181,6 +181,31 @@ export class InventoryService {
     return this.toPurchase(saved);
   }
 
+  // Vozvrat — ta'minotchiga qaytarish: ombor kamayadi + qarz kamayadi
+  // (manfiy kirim sifatida yoziladi, shuning uchun balansda "olingan" kamayadi).
+  async createReturn(dto: CreatePurchaseInput): Promise<Purchase> {
+    const product = await this.products.findOne({ where: { id: dto.productId } });
+    if (!product) throw new NotFoundException('Mahsulot topilmadi');
+    const quantity = Number(dto.quantity) || 0;
+    const unitPrice = Number(dto.unitPrice) || 0;
+    if (quantity <= 0) throw new BadRequestException('Miqdor 0 dan katta bo‘lishi kerak');
+
+    const ret = this.purchases.create({
+      productId: product.id,
+      productName: product.name,
+      unit: product.unit,
+      supplier: (dto.supplier || '').trim(),
+      quantity: -quantity,
+      unitPrice,
+      total: -Math.round(quantity * unitPrice * 100) / 100,
+      note: `↩️ Vozvrat${dto.note ? ' · ' + dto.note.trim() : ''}`,
+    });
+    const saved = await this.purchases.save(ret);
+    product.stock = Number(product.stock) - quantity;
+    await this.products.save(product);
+    return this.toPurchase(saved);
+  }
+
   // Ombor yetarliligini tekshirish (ortiqcha sotishни oldini olish).
   // newItems — yangi qo'shilayotgan taomlar; reservedItems — barcha ochiq
   // buyurtmalarda band qilingan taomlar (hali to'lanmagan). Yetmasa xato beradi.

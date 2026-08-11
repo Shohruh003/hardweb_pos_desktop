@@ -143,6 +143,14 @@ export class InventoryController {
     return this.inventory.createPurchase(dto);
   }
 
+  // Vozvrat — ta'minotchiga qaytarish (ombor kamayadi + qarz kamayadi)
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.Admin, UserRole.Director, UserRole.SuperAdmin)
+  @Post('returns')
+  createReturn(@Body() dto: PurchaseDto) {
+    return this.inventory.createReturn(dto);
+  }
+
   @UseGuards(RolesGuard)
   @Roles(UserRole.Admin, UserRole.Director, UserRole.SuperAdmin)
   @Put('recipe/:menuItemId')
