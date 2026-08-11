@@ -47,6 +47,10 @@ export function SkladTab() {
   const [showPurchases, setShowPurchases] = useState(false);
   const [showSuppliers, setShowSuppliers] = useState(false);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
+  // Inventarizatsiya (haqiqiy qoldiqni sanash)
+  const [inventoryMode, setInventoryMode] = useState(false);
+  const [counts, setCounts] = useState<Record<string, string>>({});
+  const [savingInv, setSavingInv] = useState(false);
 
   async function load() {
     setProducts(await api.get<Product[]>('/inventory/products'));
@@ -156,6 +160,27 @@ export function SkladTab() {
     URL.revokeObjectURL(url);
   }
 
+  // Inventarizatsiya — kiritilgan haqiqiy qoldiqqa moslab qoldiqni to'g'rilaydi
+  async function saveInventory() {
+    setSavingInv(true);
+    try {
+      for (const p of products) {
+        const raw = counts[p.id];
+        if (raw === undefined || raw === '') continue;
+        const actual = Number(raw);
+        if (isNaN(actual)) continue;
+        const delta = actual - Number(p.stock);
+        if (Math.abs(delta) < 0.0001) continue;
+        await api.post(`/inventory/products/${p.id}/adjust`, { delta });
+      }
+      await load();
+      setInventoryMode(false);
+      setCounts({});
+    } finally {
+      setSavingInv(false);
+    }
+  }
+
   const s = search.trim().toLowerCase();
   const filtered = products.filter((p) => !s || p.name.toLowerCase().includes(s));
   const lowCount = products.filter((p) => p.stock <= p.minStock).length;
@@ -174,6 +199,65 @@ export function SkladTab() {
   }
   const stockValue = (p: Product) => p.stock * (avgCost.get(p.id) || 0);
   const totalStockValue = filtered.reduce((acc, p) => acc + stockValue(p), 0);
+
+  // --- Inventarizatsiya (haqiqiy qoldiqni sanash) ---
+  if (inventoryMode) {
+    return (
+      <div className="w-full">
+        <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+          <div className="text-lg font-bold">📋 Inventarizatsiya</div>
+          <div className="flex gap-2 shrink-0">
+            <button
+              onClick={() => { setInventoryMode(false); setCounts({}); }}
+              className="flex items-center gap-1.5 px-3 h-9 rounded-lg border border-border hover:border-primary hover:bg-surface-hover font-semibold"
+            >
+              <span className="text-lg leading-none">←</span> Bekor
+            </button>
+            <Button onClick={saveInventory} disabled={savingInv}>{savingInv ? 'Saqlanmoqda...' : '✔ To‘g‘rilash'}</Button>
+          </div>
+        </div>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="🔎 Mahsulot qidirish..."
+          className="w-full mb-2 px-4 py-2.5 rounded-lg bg-bg border border-border outline-none focus:border-primary"
+        />
+        <div className="text-muted text-sm mb-3">
+          Har mahsulotning <b>haqiqiy</b> (sanab chiqilgan) qoldig‘ini kiriting. Bo‘sh qoldirilgani o‘zgarmaydi. Farq qizil/yashil ko‘rinadi.
+        </div>
+        <div className="bg-surface border border-border rounded-2xl divide-y divide-border">
+          {filtered.map((p) => {
+            const raw = counts[p.id];
+            const actual = raw === undefined || raw === '' ? null : Number(raw);
+            const diff = actual === null || isNaN(actual) ? null : actual - Number(p.stock);
+            return (
+              <div key={p.id} className="flex items-center justify-between px-4 py-3 gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold truncate">{p.name}</div>
+                  <div className="text-sm text-muted">Hozirgi: {num(p.stock)} {p.unit}</div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {diff !== null && diff !== 0 && (
+                    <span className={`text-sm font-bold ${diff > 0 ? 'text-success' : 'text-danger'}`}>
+                      {diff > 0 ? '+' : ''}{num(diff)}
+                    </span>
+                  )}
+                  <input
+                    type="number"
+                    value={raw ?? ''}
+                    onChange={(e) => setCounts({ ...counts, [p.id]: e.target.value })}
+                    placeholder={num(p.stock)}
+                    className="w-24 px-2.5 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary text-center"
+                  />
+                  <span className="w-6 text-xs text-muted">{p.unit}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
 
   // --- Ta'minotchilar balansi (kirimlardan yig'iladi) ---
   if (showSuppliers) {
@@ -271,6 +355,7 @@ export function SkladTab() {
           placeholder="🔎 Mahsulot qidirish..."
           className="flex-1 min-w-[160px] px-4 py-2.5 rounded-lg bg-bg border border-border outline-none focus:border-primary"
         />
+        <Button variant="ghost" onClick={() => { setCounts({}); setInventoryMode(true); }} className="shrink-0">📋 Inventar</Button>
         <Button variant="ghost" onClick={exportCsv} className="shrink-0">📊 Excel</Button>
         <Button variant="ghost" onClick={openSuppliers} className="shrink-0">🧑‍🌾 Ta'minotchilar</Button>
         <Button variant="ghost" onClick={openPurchaseHistory} className="shrink-0">🧾 Kirimlar</Button>
