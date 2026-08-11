@@ -1,67 +1,49 @@
-# DasturXon — o'rnatish (ko'p terminal / ko'p etaj)
+# DasturXon — O'rnatish qo'llanmasi (restoranga)
 
-Ko'p qavatli restoran misoli: har etajda ofitsiant terminali (monoblok), kassa bitta,
-baza va server bitta kompyuterda (kassada).
+> Yangi holat: **bitta `.exe`** — server + baza (SQLite) + ilova birga. **Docker, Node,
+> alohida qadam kerak emas.** Baza = bitta fayl (backup oson).
 
-```
-        [KASSA kompyuteri]                 [1-etaj]   [2-etaj]   [3-etaj]  ...
-        - PostgreSQL (baza, bitta)         terminal   terminal   terminal
-        - NestJS server (bitta)   <--Wi-Fi/LAN-------------------------->
-        - DasturXon (kassa)                (har biri server IP'ga ulanadi)
-        - Check printer (LAN)
-```
+## 1. Installerni tayyorlash (biz tomonda)
+- **Kassa (asosiy) uchun:** `npm run dist` → `desktop/release/DasturXon-Server-<versiya>.exe`
+  (server + baza ichida). Bu kassa/server kompyuteriga o'rnatiladi.
+- **Demo/ko'rgazma uchun:** `npm run dist:mock` → `DasturXon-DEMO-<versiya>.exe`
+  (serversiz, internetsiz ishlaydi — Telegram/tanishtirish uchun).
 
-## 1. Baza va server — faqat kassa kompyuterida (bitta)
+> (Litsenziya yoqilganda) super-admin panelda restoran yaratib, **8 xonalik kalitni** oling.
 
-- Baza (PostgreSQL) Docker'da, `restart: unless-stopped` — kompyuter yonsa o'zi ko'tariladi.
-- Server (NestJS, port **3100**) — barcha terminallar shu bitta serverga ulanadi.
-- **Baza bitta** — hamma etaj bir xil ma'lumot ko'radi (stollar, buyurtmalar, sklad, hisobot).
+## 2. Kassa (asosiy) kompyuteriga o'rnatish
+1. `DasturXon-Server-<versiya>.exe` ni ishga tushiring → o'rnatiladi va ochiladi.
+2. Birinchi ochilishda ~15 soniya **"Server ishga tushmoqda"** (baza tayyorlanadi) — kuting.
+3. (litsenziya yoqilgan bo'lsa) **8 xonalik kalit** → Faollashtirish.
+4. Router sozlamalarida shu kompyuterga **statik IP** bering (masalan `192.168.1.10`),
+   DHCP o'zgartirmasligi uchun.
+5. Direktor bo'lib kiring (login/parol) → **menyu, stollar/zallar, sexlar (printerlar),
+   xodimlar/PIN** ni sozlang.
+6. Windows yoqilganda ilova **o'zi ochiladi** (avto-start yoqilgan) — kassa doim ishlaydi.
 
-### Serverni avtomatik ishga tushirish (kompyuter yonganda)
-1. Docker Desktop: Settings → General → **"Start Docker Desktop when you log in"** yoqing.
-2. `scripts\install-autostart.bat` ni **administrator** sifatida bir marta ishga tushiring.
-   - Bu "DasturXon Server" nomli vazifa qo'shadi (har logon'da server yoqiladi).
-3. Sinash: `schtasks /Run /TN "DasturXon Server"` yoki kompyuterni qayta yoqing.
+## 3. Terminallar (ofitsiant / oshxona / boshqa kassa)
+1. Har terminalga `DasturXon-Server-<versiya>.exe` ni o'rnating.
+2. Kirish oynasida (logoni 5 marta bosib) **"⚙ Server manzili"** → `http://192.168.1.10:3100`.
+3. Xodim PIN bilan kiradi.
 
-Windows Firewall — 3100 portga ruxsat (terminallar ulanishi uchun), administrator cmd:
-```
-netsh advfirewall firewall add rule name="DasturXon 3100" dir=in action=allow protocol=TCP localport=3100
-```
+## 4. Printerlar
+- **USB printer** — kassa kompyuteriga ulanadi, "Qurilmalar" bo'limida sozlanadi.
+- **LAN printer** — har sex uchun printer IP'si "Bo'limlar (sexlar)" da kiritiladi.
+- Har taom o'z sexining printeriga chiqadi; printer yo'q bo'lsa — chek chiqmaydi.
 
-## 2. Etajlar (zallar) — universal
+## 5. Zaxira (backup)
+Baza — bitta fayl:
+`%AppData%\@hardweb-pos\desktop\data\dasturxon.db`
+Uni USB/bulutga nusxalash = to'liq zaxira. Yangi kompyuterga ko'chirish uchun shu faylni
+o'rniga qo'ying.
 
-- Admin → **Stollar** bo'limida har etaj uchun zal yarating: `1-etaj`, `2-etaj`, `3-etaj` ...
-  va stollarni o'sha zalga biriktiring.
-- Etaj soni cheklanmagan — nechta bo'lsa shuncha zal qo'shiladi.
-- Chek, schot va oshxona chekida **qaysi zal/etaj** ekani yoziladi (universal).
+## Sozlamalar (ilg'or)
+Ichki server env (`desktop/src/main/index.ts` beradi):
+- `DB_FILE` — baza fayli (default: userData/data/dasturxon.db)
+- `SEED_DEMO=false` — real restoran uchun toza start (demo buyurtmalarsiz)
+- `LICENSE_ENFORCE=true` + `CLOUD_URL=https://.../api` — litsenziya nazorati (bulut deploy qilingach)
 
-## 3. Har etaj terminali (ofitsiant monobloki)
-
-1. DasturXon'ni o'rnating (`DasturXon-Setup-x.x.x.exe`).
-2. Admin → Qurilmalar → **Server manzili** = kassa IP:
-   ```
-   http://192.168.1.10:3100
-   ```
-   (kassa IP'sini `ipconfig` orqali biling; hamma bitta Wi-Fi/router'da bo'lsin)
-3. Ofitsiant o'z PIN'i bilan kiradi, o'z zalini/stolini tanlaydi.
-
-## 4. Check printer — LAN (tarmoq) orqali
-
-Printerni USB emas, **tarmoqqa** ulang (kabel/Wi-Fi), doimiy IP bering. Har bir
-terminalда (kassa + etajlar):
-
-- Admin → Qurilmalar → Ulanish turi: **Tarmoq (LAN)** → Printer IP: `192.168.1.50`, Port: `9100` → Saqlash.
-
-Shunda:
-- Ofitsiant istalgan etajdan **Schot** bossa → to'g'ridan-to'g'ri kassadagi printerдан chiqadi.
-- Chekда qaysi **stol** va **zal/etaj** ekani ko'rinadi.
-- Oshxona cheki ham stol + zal bilan chiqadi (qayerga yetkazish aniq).
-
-> Har etajga alohida printer kerak bo'lsa: Admin → Qurilmalar → **Oshxona printerlari**
-> bo'limiga har zal uchun alohida LAN printer IP qo'shiladi.
-
-## Xulosa
-- Baza + server: kassada, bitta, avtomatik ishga tushadi.
-- Terminallar: har etajda, server IP'ga ulanadi, cheksiz.
-- Chek/oshxona cheki: stol + zal/etaj bilan.
-- Printer: LAN — har joydan bitta printerga chiqariladi.
+## Litsenziya / nazorat tizimi
+Alohida (maxfiy) repozitoriyalarda: `hardweb_pos_super_admin_backend` (NestJS+Docker) va
+`hardweb_pos_super_admin_frontend` (React panel). Mahsulot (bu repo) faqat "kalit yuborib
+tekshiradi".
