@@ -12,6 +12,8 @@ import { AuthModule } from './auth/auth.module';
 import { SyncModule } from './sync/sync.module';
 import { ReportsModule } from './reports/reports.module';
 import { TenantsModule } from './tenants/tenants.module';
+import { LicenseModule } from './license/license.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -38,6 +40,8 @@ import { TenantsModule } from './tenants/tenants.module';
     SyncModule,
     ReportsModule,
     TenantsModule,
+    LicenseModule,
+    AdminModule,
   ],
 })
 export class AppModule {}
