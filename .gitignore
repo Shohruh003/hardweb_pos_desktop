@@ -23,3 +23,6 @@ sync-state.json
 
 # Claude Code local files
 .claude/
+
+# Litsenziya holati (mashinaga xos, commit qilinmaydi)
+server/license.json
