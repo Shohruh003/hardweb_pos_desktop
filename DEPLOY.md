@@ -37,7 +37,15 @@
 | Kassa (asosiy, 1 ta) | **DasturXon-Server** | Server + baza ichida (miya) |
 | Monoblocklar / terminallar | **DasturXon-Terminal** | Serversiz, kassaga ulanadi |
 
-## 4. Printerlar
+## 4. Ofitsiantlar telefonda (ilova o'rnatishsiz)
+- Telefon **kassa bilan bir xil WiFi'da** bo'lsin.
+- Brauzerda: **`http://<kassa-IP>:8080`** (masalan `http://192.168.1.10:8080`).
+- Yoki kassa ilovasi bosh sahifasida **📱 Ofitsiant QR** tugmasi — QR'ni telefonda
+  skanerlab ochadi (manzil yozmasdan).
+- Web ilova avtomatik kassa API'siga (`host:3100`) ulanadi.
+- Windows Firewall birinchi safar so'rasa — **Ruxsat** bering (8080/3100).
+
+## 5. Printerlar
 - **USB printer** — kassa kompyuteriga ulanadi, "Qurilmalar" bo'limida sozlanadi.
 - **LAN printer** — har sex uchun printer IP'si "Bo'limlar (sexlar)" da kiritiladi.
 - Har taom o'z sexining printeriga chiqadi; printer yo'q bo'lsa — chek chiqmaydi.

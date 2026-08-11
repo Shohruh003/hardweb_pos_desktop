@@ -1,9 +1,11 @@
+import { useEffect, useState } from 'react';
 import { hasCapability } from '@hardweb-pos/shared';
 import { useAuth } from '../state/auth';
 import { useAppNav } from '../state/appNav';
 import { useI18n } from '../state/i18n';
 import { Button } from '../components/ui';
 import { ThemeLangControls } from '../components/ThemeLangControls';
+import { WaiterQrModal } from '../components/WaiterQrModal';
 
 const MANAGE_CAPS = ['history', 'menu', 'tables', 'staff', 'devices', 'settings'];
 
@@ -12,6 +14,13 @@ export function LauncherPage() {
   const { user, logout } = useAuth();
   const { open } = useAppNav();
   const { t } = useI18n();
+  const [qrOpen, setQrOpen] = useState(false);
+  const [webAvailable, setWebAvailable] = useState(false);
+
+  useEffect(() => {
+    // Faqat kassa (server) kompyuteri web tarqatadi — o'shanда QR tugmasi ko'rinadi
+    window.hardweb?.getLanInfo?.().then((i) => setWebAvailable(i.webAvailable)).catch(() => setWebAvailable(false));
+  }, []);
 
   const tiles = [
     { key: 'waiter' as const, cap: 'waiter', label: 'Ofitsiant', desc: 'Zakaz qabul qilish', icon: '🧑‍🍳' },
@@ -69,7 +78,18 @@ export function LauncherPage() {
             ))}
           </div>
         )}
+
+        {webAvailable && (
+          <button
+            onClick={() => setQrOpen(true)}
+            className="mt-8 flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border hover:border-primary hover:bg-surface-hover font-semibold"
+          >
+            📱 Ofitsiant telefoni uchun QR
+          </button>
+        )}
       </div>
+
+      {qrOpen && <WaiterQrModal onClose={() => setQrOpen(false)} />}
     </div>
   );
 }

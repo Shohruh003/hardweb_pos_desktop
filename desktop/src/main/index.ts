@@ -3,6 +3,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { join, extname } from 'path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'fs';
 import { createServer, Server as HttpServer } from 'http';
+import { networkInterfaces } from 'os';
 import { randomBytes } from 'crypto';
 
 // electron-vite define (real build'da false, mock/demo build'da true)
@@ -163,6 +164,22 @@ function startWebServer(): void {
     /* ignore */
   }
 }
+
+// Ofitsiant telefoni uchun — kassaning LAN IP'si va web manzili (QR ko'rsatish uchun)
+ipcMain.handle('app:lan-info', () => {
+  const all: string[] = [];
+  for (const arr of Object.values(networkInterfaces())) {
+    for (const n of arr || []) {
+      if (n && n.family === 'IPv4' && !n.internal) all.push(n.address);
+    }
+  }
+  const ip =
+    all.find((a) => a.startsWith('192.168.')) ||
+    all.find((a) => a.startsWith('10.')) ||
+    all[0] ||
+    null;
+  return { ip, webUrl: ip ? `http://${ip}:8080` : null, webAvailable: webServer !== null };
+});
 
 // Ichga joylangan server (NestJS + SQLite) — real buildda ilova o'zi ko'taradi.
 // Demo (mock) buildda kerak emas. Dev'da server alohida ishga tushiriladi.
