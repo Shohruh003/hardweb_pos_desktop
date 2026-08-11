@@ -29,3 +29,9 @@ server/license.json
 
 # SQLite baza (runtime, mashinaga xos)
 server/data/
+
+# Server bundle (build artifakt)
+desktop/.server-bundle/
+desktop/.runtime/
+desktop/.testdata/
+desktop/.testdata2/

@@ -2,8 +2,12 @@ import { resolve } from 'path';
 import { defineConfig } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   main: {
+    define: {
+      // Demo (mock) buildда server ichga joylanmaydi; real buildда — ha
+      __MOCK__: JSON.stringify(mode === 'mock'),
+    },
     build: {
       rollupOptions: {
         input: { index: resolve(__dirname, 'src/main/index.ts') },
@@ -33,4 +37,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

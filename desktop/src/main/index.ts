@@ -1,6 +1,11 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
-import { spawn } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import { join } from 'path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { randomBytes } from 'crypto';
+
+// electron-vite define (real build'da false, mock/demo build'da true)
+declare const __MOCK__: boolean;
 import {
   getConfig,
   listPrinters,
@@ -112,13 +117,100 @@ ipcMain.handle('printer:set-config', (_e, cfg: Partial<PrinterConfig>) =>
   setConfig(cfg),
 );
 
+// Ichga joylangan server (NestJS + SQLite) — real buildda ilova o'zi ko'taradi.
+// Demo (mock) buildda kerak emas. Dev'da server alohida ishga tushiriladi.
+let serverProc: ChildProcess | null = null;
+function startEmbeddedServer(): void {
+  const dbg = (m: string) => {
+    try {
+      writeFileSync(join(app.getPath('userData'), 'launch-debug.log'), new Date().toISOString() + ' ' + m + '\n', { flag: 'a' });
+    } catch {
+      /* ignore */
+    }
+  };
+  if (__MOCK__) {
+    dbg('mock build — server kerak emas');
+    return;
+  }
+  try {
+    const resources = process.resourcesPath;
+    const serverMain = join(resources, 'server', 'dist', 'main.js');
+    dbg(`packaged=${app.isPackaged} resources=${resources} serverExists=${existsSync(serverMain)}`);
+    if (!existsSync(serverMain)) {
+      dbg('server bundle topilmadi — dev rejim yoki demo, o‘tkazib yuborildi');
+      return;
+    }
+    const dataDir = join(app.getPath('userData'), 'data');
+    mkdirSync(dataDir, { recursive: true });
+
+    // JWT siri — har o'rnatma uchun alohida (userData'da saqlanadi)
+    const cfgFile = join(app.getPath('userData'), 'server-config.json');
+    let jwtSecret = '';
+    try {
+      if (existsSync(cfgFile)) jwtSecret = JSON.parse(readFileSync(cfgFile, 'utf8')).jwtSecret || '';
+    } catch {
+      /* buzilgan fayl */
+    }
+    if (!jwtSecret) {
+      jwtSecret = randomBytes(24).toString('hex');
+      try {
+        writeFileSync(cfgFile, JSON.stringify({ jwtSecret }));
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const env = {
+      ...process.env,
+      PORT: '3100',
+      DB_FILE: join(dataDir, 'dasturxon.db'),
+      DB_SYNCHRONIZE: 'true',
+      SEED_ON_START: 'true',
+      JWT_SECRET: jwtSecret,
+      APP_VERSION: app.getVersion(),
+      // TODO: bulut deploy qilingach — LICENSE_ENFORCE=true va CLOUD_URL=https://.../api
+      LICENSE_ENFORCE: 'false',
+      CLOUD_URL: 'http://localhost:4000/api',
+    } as NodeJS.ProcessEnv;
+
+    const nodeExe = join(resources, 'runtime', 'node.exe');
+    const useBundledNode = existsSync(nodeExe);
+    const runner = useBundledNode ? nodeExe : process.execPath;
+    dbg(`spawn: ${runner} ${serverMain} (bundledNode=${useBundledNode})`);
+    serverProc = spawn(runner, [serverMain], {
+      cwd: join(resources, 'server'),
+      env: useBundledNode ? env : { ...env, ELECTRON_RUN_AS_NODE: '1' },
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    serverProc.on('error', (e) => dbg('spawn xato: ' + (e as Error).message));
+    serverProc.on('exit', (code) => dbg('server chiqdi, code=' + code));
+    dbg('spawn chaqirildi, pid=' + (serverProc.pid ?? 'yo‘q'));
+  } catch (e) {
+    dbg('start xato: ' + (e as Error).message);
+  }
+}
+function stopEmbeddedServer(): void {
+  if (serverProc) {
+    try {
+      serverProc.kill();
+    } catch {
+      /* ignore */
+    }
+    serverProc = null;
+  }
+}
+
 app.whenReady().then(() => {
+  startEmbeddedServer();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
+app.on('will-quit', stopEmbeddedServer);
 app.on('window-all-closed', () => {
+  stopEmbeddedServer();
   if (process.platform !== 'darwin') app.quit();
 });

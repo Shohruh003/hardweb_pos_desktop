@@ -11,7 +11,7 @@
     "build": "electron-vite build",
     "build:mock": "electron-vite build --mode mock",
     "preview": "electron-vite preview",
-    "dist": "electron-vite build && electron-builder --win -c.nsis.artifactName=DasturXon-Server-${version}.${ext}",
+    "dist": "node scripts/bundle-server.mjs && electron-vite build && electron-builder --win --config electron-builder.real.json",
     "dist:mock": "electron-vite build --mode mock && electron-builder --win -c.nsis.artifactName=DasturXon-DEMO-${version}.${ext}"
   },
   "build": {

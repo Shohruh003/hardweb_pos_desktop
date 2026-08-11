@@ -30,14 +30,19 @@ export function App() {
       setLicense('active');
       return;
     }
-    try {
-      const r = await fetch(getServerUrl() + '/license/status');
-      const data = await r.json();
-      setLicense(data.locked ? data.status : 'active');
-    } catch {
-      // Serverga ulanib bo'lmasa — ochiq qoldiramiz (server guard'i baribir bloklaydi)
-      setLicense('active');
+    // Ichki server ~15s ko'tariladi — ulanmasa bir necha marta kutib qayta urinamiz.
+    for (let attempt = 0; attempt < 25; attempt++) {
+      try {
+        const r = await fetch(getServerUrl() + '/license/status');
+        const data = await r.json();
+        setLicense(data.locked ? data.status : 'active');
+        return;
+      } catch {
+        await new Promise((res) => setTimeout(res, 2000));
+      }
     }
+    // Baribir ulanmadi — ochiq qoldiramiz (server guard'i himoya qiladi)
+    setLicense('active');
   }, []);
   useEffect(() => {
     checkLicense();
@@ -65,9 +70,14 @@ export function App() {
   // Ochilish animatsiyasi — faqat birinchi yuklanishda
   if (!splashDone) return <SplashScreen onDone={() => setSplashDone(true)} />;
 
-  // Litsenziya tekshirilmoqda (real rejim)
+  // Server ishga tushmoqda / litsenziya tekshirilmoqda (real rejim)
   if (!MOCK && license === 'checking') {
-    return <div className="h-full flex items-center justify-center app-bg text-muted">Tekshirilmoqda...</div>;
+    return (
+      <div className="h-full flex flex-col items-center justify-center app-bg text-muted gap-3">
+        <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+        <div>Server ishga tushmoqda, kuting...</div>
+      </div>
+    );
   }
   // Litsenziya faol emas — aktivatsiya/qulf ekrani (kalitsiz ishlamaydi)
   if (!MOCK && license !== 'active') {
