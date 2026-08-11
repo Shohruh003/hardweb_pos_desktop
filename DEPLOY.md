@@ -21,10 +21,21 @@
    xodimlar/PIN** ni sozlang.
 6. Windows yoqilganda ilova **o'zi ochiladi** (avto-start yoqilgan) — kassa doim ishlaydi.
 
-## 3. Terminallar (ofitsiant / oshxona / boshqa kassa)
-1. Har terminalga `DasturXon-Server-<versiya>.exe` ni o'rnating.
-2. Kirish oynasida (logoni 5 marta bosib) **"⚙ Server manzili"** → `http://192.168.1.10:3100`.
-3. Xodim PIN bilan kiradi.
+## 3. Terminallar / monoblocklar (ofitsiant / oshxona / boshqa kassa)
+> ⚠️ Terminallarga **Server exe emas**, **`DasturXon-Terminal-<versiya>.exe`** o'rnatiladi
+> (serversiz — kassaga ulanadi). Server exe har biriga o'rnatilса, har biri **alohida baza**
+> ochib qoladi (stollar/buyurtmalar umumiy bo'lmaydi) — bu noto'g'ri.
+
+1. Har monoblokka `DasturXon-Terminal-<versiya>.exe` ni o'rnating.
+2. Birinchi ochilishda "Serverga ulanmoqda" ekranida **⚙ Server manzili** → kassa IP'sini
+   kiriting: `http://192.168.1.10:3100` → Ulanish.
+3. Xodim PIN bilan kiradi. Barcha terminallar **bitta bazaga** (kassadagi) ulanadi.
+
+## Xulosa: qaysi kompyuterga qaysi installer
+| Kompyuter | Installer | Nima |
+|---|---|---|
+| Kassa (asosiy, 1 ta) | **DasturXon-Server** | Server + baza ichida (miya) |
+| Monoblocklar / terminallar | **DasturXon-Terminal** | Serversiz, kassaga ulanadi |
 
 ## 4. Printerlar
 - **USB printer** — kassa kompyuteriga ulanadi, "Qurilmalar" bo'limida sozlanadi.
