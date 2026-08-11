@@ -110,6 +110,7 @@ function deductStock(items: { menuItemId: string; quantity: number }[]) {
 
 // Kirimlar (ta'minot) tarixi
 const purchases: any[] = [];
+const supplierPayments: { id: string; supplier: string; amount: number; note: string | null; createdAt: string }[] = [];
 
 // Retsept bo'yicha kerakli mahsulot miqdorlari (productId -> amount)
 function sumNeed(items: { menuItemId: string; quantity: number }[]) {
@@ -397,6 +398,23 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     const pid = new URLSearchParams(query || '').get('productId');
     const list = pid ? purchases.filter((p) => p.productId === pid) : purchases;
     return ok([...list].reverse());
+  }
+  if (path === '/inventory/supplier-balances' && method === 'GET') {
+    const m = new Map<string, { supplier: string; purchased: number; paid: number; count: number }>();
+    const g = (name: string) => {
+      const key = (name || '').trim() || '—';
+      let c = m.get(key);
+      if (!c) { c = { supplier: key, purchased: 0, paid: 0, count: 0 }; m.set(key, c); }
+      return c;
+    };
+    for (const p of purchases) { const c = g(p.supplier); c.purchased += Number(p.total); c.count += 1; }
+    for (const pay of supplierPayments) { g(pay.supplier).paid += Number(pay.amount); }
+    return ok([...m.values()].map((c) => ({ ...c, debt: c.purchased - c.paid })).sort((a, b) => b.debt - a.debt));
+  }
+  if (path === '/inventory/supplier-payments' && method === 'POST') {
+    const pay = { id: uid(), supplier: (body.supplier || '').trim(), amount: Number(body.amount) || 0, note: body.note?.trim() || null, createdAt: new Date().toISOString() };
+    supplierPayments.push(pay);
+    return ok(pay);
   }
   if (path === '/inventory/purchases' && method === 'POST') {
     const p = products.find((x) => x.id === body.productId);

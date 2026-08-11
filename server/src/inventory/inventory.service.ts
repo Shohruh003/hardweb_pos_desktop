@@ -5,7 +5,12 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, Repository } from 'typeorm';
-import { ProductEntity, PurchaseEntity, RecipeItemEntity } from '../entities';
+import {
+  ProductEntity,
+  PurchaseEntity,
+  RecipeItemEntity,
+  SupplierPaymentEntity,
+} from '../entities';
 import { Product, Purchase, RecipeItem } from '@hardweb-pos/shared';
 
 export interface CreateProductInput {
@@ -32,7 +37,48 @@ export class InventoryService {
     private readonly recipes: Repository<RecipeItemEntity>,
     @InjectRepository(PurchaseEntity)
     private readonly purchases: Repository<PurchaseEntity>,
+    @InjectRepository(SupplierPaymentEntity)
+    private readonly supplierPayments: Repository<SupplierPaymentEntity>,
   ) {}
+
+  // Ta'minotchiga to'lov qo'shish (qarzни kamaytiradi)
+  async addSupplierPayment(supplier: string, amount: number, note?: string) {
+    const row = this.supplierPayments.create({
+      supplier: supplier?.trim() || '',
+      amount,
+      note: note?.trim() || null,
+    });
+    return this.supplierPayments.save(row);
+  }
+
+  // Ta'minotchilar balansi: olingan (kirim) - to'langan = qarz
+  async getSupplierBalances() {
+    const [purchases, payments] = await Promise.all([
+      this.purchases.find(),
+      this.supplierPayments.find(),
+    ]);
+    const map = new Map<string, { supplier: string; purchased: number; paid: number; count: number }>();
+    const get = (name: string) => {
+      const key = name?.trim() || '—';
+      let cur = map.get(key);
+      if (!cur) {
+        cur = { supplier: key, purchased: 0, paid: 0, count: 0 };
+        map.set(key, cur);
+      }
+      return cur;
+    };
+    for (const p of purchases) {
+      const c = get(p.supplier);
+      c.purchased += Number(p.total);
+      c.count += 1;
+    }
+    for (const pay of payments) {
+      get(pay.supplier).paid += Number(pay.amount);
+    }
+    return [...map.values()]
+      .map((c) => ({ ...c, debt: c.purchased - c.paid }))
+      .sort((a, b) => b.debt - a.debt);
+  }
 
   private toProduct(p: ProductEntity): Product {
     return {

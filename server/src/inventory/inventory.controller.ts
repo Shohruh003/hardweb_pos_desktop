@@ -52,6 +52,12 @@ class PurchaseDto {
   @IsOptional() @IsString() note?: string;
 }
 
+class SupplierPaymentDto {
+  @IsString() supplier: string;
+  @IsNumber() amount: number;
+  @IsOptional() @IsString() note?: string;
+}
+
 class RecipeLineDto {
   @IsUUID() productId: string;
   @IsNumber() amount: number;
@@ -84,6 +90,20 @@ export class InventoryController {
   @Get('purchases')
   listPurchases(@Query('productId') productId?: string) {
     return this.inventory.listPurchases(productId);
+  }
+
+  // Ta'minotchilar balansi (olingan - to'langan = qarz)
+  @Get('supplier-balances')
+  supplierBalances() {
+    return this.inventory.getSupplierBalances();
+  }
+
+  // Ta'minotchiga to'lov (qarzni kamaytiradi)
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.Admin, UserRole.Director, UserRole.SuperAdmin)
+  @Post('supplier-payments')
+  addSupplierPayment(@Body() dto: SupplierPaymentDto) {
+    return this.inventory.addSupplierPayment(dto.supplier, dto.amount, dto.note);
   }
 
   // --- Boshqaruv (admin/direktor) ---

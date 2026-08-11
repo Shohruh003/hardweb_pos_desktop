@@ -47,6 +47,11 @@ export function SkladTab() {
   const [showPurchases, setShowPurchases] = useState(false);
   const [showSuppliers, setShowSuppliers] = useState(false);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
+  type SupBal = { supplier: string; purchased: number; paid: number; debt: number; count: number };
+  const [supBalances, setSupBalances] = useState<SupBal[]>([]);
+  const [payFor, setPayFor] = useState<string | null>(null); // ta'minotchiga to'lov modali
+  const [supPayAmount, setSupPayAmount] = useState('');
+  const [supPayNote, setSupPayNote] = useState('');
   // Inventarizatsiya (haqiqiy qoldiqni sanash)
   const [inventoryMode, setInventoryMode] = useState(false);
   const [counts, setCounts] = useState<Record<string, string>>({});
@@ -141,13 +146,26 @@ export function SkladTab() {
     }
   }
 
+  async function loadSupBalances() {
+    try {
+      setSupBalances(await api.get<SupBal[]>('/inventory/supplier-balances'));
+    } catch {
+      setSupBalances([]);
+    }
+  }
   async function openSuppliers() {
     setShowSuppliers(true);
-    try {
-      setPurchases(await api.get<Purchase[]>('/inventory/purchases'));
-    } catch {
-      setPurchases([]);
-    }
+    loadSupBalances();
+  }
+  async function saveSupplierPayment() {
+    if (!payFor) return;
+    const amount = Number(supPayAmount);
+    if (!amount || amount <= 0) return;
+    await api.post('/inventory/supplier-payments', { supplier: payFor, amount, note: supPayNote.trim() || undefined });
+    setPayFor(null);
+    setSupPayAmount('');
+    setSupPayNote('');
+    loadSupBalances();
   }
 
   // Sklad qoldig'ini Excel (CSV) sifatida saqlash — Excel bemalol ochadi (BOM + ; ajratgich)
@@ -289,18 +307,9 @@ export function SkladTab() {
     );
   }
 
-  // --- Ta'minotchilar balansi (kirimlardan yig'iladi) ---
+  // --- Ta'minotchilar balansi (olingan - to'langan = qarz) ---
   if (showSuppliers) {
-    const map = new Map<string, { supplier: string; total: number; count: number }>();
-    for (const p of purchases) {
-      const key = p.supplier?.trim() || '—';
-      const cur = map.get(key) || { supplier: key, total: 0, count: 0 };
-      cur.total += Number(p.total);
-      cur.count += 1;
-      map.set(key, cur);
-    }
-    const balances = [...map.values()].sort((a, b) => b.total - a.total);
-    const grand = balances.reduce((s, b) => s + b.total, 0);
+    const totalDebt = supBalances.reduce((s, b) => s + b.debt, 0);
     return (
       <div className="w-full">
         <div className="flex items-center justify-between mb-4 gap-2">
@@ -312,24 +321,63 @@ export function SkladTab() {
             <span className="text-lg leading-none">←</span> Orqaga
           </button>
         </div>
-        <div className="text-muted text-sm mb-3">
-          Jami olingan: <span className="font-bold text-text">{formatSum(grand)}</span>
+        <div className="text-muted text-sm mb-3 flex flex-wrap gap-x-2">
+          <span>Jami qarz: <span className={`font-bold ${totalDebt > 0 ? 'text-danger' : 'text-success'}`}>{formatSum(Math.round(totalDebt))}</span></span>
         </div>
         <div className="bg-surface border border-border rounded-2xl divide-y divide-border">
-          {balances.length === 0 ? (
+          {supBalances.length === 0 ? (
             <div className="p-6 text-muted text-center">Hali ta'minot qilinmagan.</div>
           ) : (
-            balances.map((b) => (
-              <div key={b.supplier} className="flex items-center justify-between px-4 py-3 gap-3">
-                <div className="min-w-0">
+            supBalances.map((b) => (
+              <div key={b.supplier} className="flex items-center justify-between px-4 py-3 gap-3 flex-wrap">
+                <div className="min-w-0 flex-1">
                   <div className="font-semibold truncate">🧑‍🌾 {b.supplier}</div>
-                  <div className="text-sm text-muted">{b.count} ta kirim</div>
+                  <div className="text-sm text-muted">
+                    Olingan: {formatSum(Math.round(b.purchased))} · To‘langan: {formatSum(Math.round(b.paid))} · {b.count} ta kirim
+                  </div>
                 </div>
-                <div className="font-bold shrink-0">{formatSum(b.total)}</div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="text-right">
+                    <div className="text-xs text-muted">Qarz</div>
+                    <div className={`font-extrabold ${b.debt > 0 ? 'text-danger' : 'text-success'}`}>{formatSum(Math.round(b.debt))}</div>
+                  </div>
+                  {b.debt > 0 && (
+                    <button
+                      onClick={() => { setPayFor(b.supplier); setSupPayAmount(String(Math.round(b.debt))); setSupPayNote(''); }}
+                      className="px-3 h-9 rounded-lg bg-success/15 text-success font-semibold hover:bg-success/25 text-sm"
+                    >
+                      💵 To‘lov
+                    </button>
+                  )}
+                </div>
               </div>
             ))
           )}
         </div>
+
+        {payFor && (
+          <Modal title={`To‘lov — ${payFor}`} onClose={() => setPayFor(null)}>
+            <label className="block text-sm text-muted mb-1">Summa (so‘m)</label>
+            <input
+              type="number"
+              value={supPayAmount}
+              onChange={(e) => setSupPayAmount(e.target.value)}
+              autoFocus
+              className="w-full mb-3 px-3 py-2.5 rounded-lg bg-bg border border-border outline-none focus:border-primary"
+            />
+            <label className="block text-sm text-muted mb-1">Izoh (ixtiyoriy)</label>
+            <input
+              value={supPayNote}
+              onChange={(e) => setSupPayNote(e.target.value)}
+              placeholder="Masalan: naqd berildi"
+              className="w-full mb-4 px-3 py-2.5 rounded-lg bg-bg border border-border outline-none focus:border-primary"
+            />
+            <div className="flex gap-2">
+              <Button variant="ghost" className="flex-1" onClick={() => setPayFor(null)}>Bekor</Button>
+              <Button className="flex-1" onClick={saveSupplierPayment}>To‘lash</Button>
+            </div>
+          </Modal>
+        )}
       </div>
     );
   }
