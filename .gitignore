@@ -26,3 +26,6 @@ sync-state.json
 
 # Litsenziya holati (mashinaga xos, commit qilinmaydi)
 server/license.json
+
+# SQLite baza (runtime, mashinaga xos)
+server/data/
