@@ -4,7 +4,7 @@ import { useAuth } from './state/auth';
 import { useDemoNav } from './state/demoNav';
 import { useAppNav } from './state/appNav';
 import { MOCK } from './lib/api';
-import { getServerUrl } from './lib/config';
+import { getServerUrl, setServerUrl } from './lib/config';
 import { SplashScreen } from './components/SplashScreen';
 import { ActivationScreen } from './pages/ActivationScreen';
 import { LoginPage } from './pages/LoginPage';
@@ -24,6 +24,8 @@ export function App() {
   const [splashDone, setSplashDone] = useState(false);
   // Litsenziya holati (real rejim): 'checking' | 'active' | qulf holati (not_activated/suspended/...)
   const [license, setLicense] = useState<string>(MOCK ? 'active' : 'checking');
+  const [editServer, setEditServer] = useState(false);
+  const [serverInput, setServerInput] = useState(getServerUrl());
 
   const checkLicense = useCallback(async () => {
     if (MOCK) {
@@ -70,12 +72,38 @@ export function App() {
   // Ochilish animatsiyasi — faqat birinchi yuklanishda
   if (!splashDone) return <SplashScreen onDone={() => setSplashDone(true)} />;
 
-  // Server ishga tushmoqda / litsenziya tekshirilmoqda (real rejim)
+  // Server ishga tushmoqda / kassaga ulanmoqda (real rejim)
   if (!MOCK && license === 'checking') {
     return (
-      <div className="h-full flex flex-col items-center justify-center app-bg text-muted gap-3">
+      <div className="h-full flex flex-col items-center justify-center app-bg text-muted gap-3 p-6">
         <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-        <div>Server ishga tushmoqda, kuting...</div>
+        <div>Serverga ulanmoqda, kuting...</div>
+        {!editServer ? (
+          <button onClick={() => setEditServer(true)} className="text-xs text-primary hover:underline mt-2">
+            ⚙ Server manzili (kassa terminali bo'lsa)
+          </button>
+        ) : (
+          <div className="w-full max-w-[320px] mt-2 text-center">
+            <div className="text-xs mb-1">Kassa (server) kompyuteri manzili:</div>
+            <input
+              value={serverInput}
+              onChange={(e) => setServerInput(e.target.value)}
+              placeholder="http://192.168.1.10:3100"
+              className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-text text-sm outline-none focus:border-primary text-center"
+            />
+            <button
+              onClick={() => {
+                setServerUrl(serverInput.trim());
+                setEditServer(false);
+                setLicense('checking');
+                checkLicense();
+              }}
+              className="mt-2 w-full py-2 rounded-lg bg-primary text-white text-sm font-bold"
+            >
+              Ulanish
+            </button>
+          </div>
+        )}
       </div>
     );
   }
