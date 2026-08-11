@@ -51,6 +51,12 @@ export function SkladTab() {
   const [inventoryMode, setInventoryMode] = useState(false);
   const [counts, setCounts] = useState<Record<string, string>>({});
   const [savingInv, setSavingInv] = useState(false);
+  // Ishlab chiqarish (yarim tayyor mahsulot tayyorlash)
+  const [prodOpen, setProdOpen] = useState(false);
+  const [prodOutId, setProdOutId] = useState('');
+  const [prodOutQty, setProdOutQty] = useState('');
+  const [prodIn, setProdIn] = useState<{ productId: string; qty: string }[]>([]);
+  const [savingProd, setSavingProd] = useState(false);
 
   async function load() {
     setProducts(await api.get<Product[]>('/inventory/products'));
@@ -178,6 +184,30 @@ export function SkladTab() {
       setCounts({});
     } finally {
       setSavingInv(false);
+    }
+  }
+
+  function openProduction() {
+    setProdOutId(products[0]?.id ?? '');
+    setProdOutQty('');
+    setProdIn([{ productId: products[0]?.id ?? '', qty: '' }]);
+    setProdOpen(true);
+  }
+  // Ishlab chiqarish — ketgan mahsulotlar chiqim (-), tayyor mahsulot kirim (+)
+  async function saveProduction() {
+    const outQty = Number(prodOutQty);
+    if (!prodOutId || !outQty || outQty <= 0) return;
+    const ins = prodIn.filter((r) => r.productId && Number(r.qty) > 0);
+    setSavingProd(true);
+    try {
+      for (const r of ins) {
+        await api.post(`/inventory/products/${r.productId}/adjust`, { delta: -Number(r.qty) });
+      }
+      await api.post(`/inventory/products/${prodOutId}/adjust`, { delta: outQty });
+      await load();
+      setProdOpen(false);
+    } finally {
+      setSavingProd(false);
     }
   }
 
@@ -355,6 +385,7 @@ export function SkladTab() {
           placeholder="🔎 Mahsulot qidirish..."
           className="flex-1 min-w-[160px] px-4 py-2.5 rounded-lg bg-bg border border-border outline-none focus:border-primary"
         />
+        <Button variant="ghost" onClick={openProduction} className="shrink-0">🏭 Ishlab chiqarish</Button>
         <Button variant="ghost" onClick={() => { setCounts({}); setInventoryMode(true); }} className="shrink-0">📋 Inventar</Button>
         <Button variant="ghost" onClick={exportCsv} className="shrink-0">📊 Excel</Button>
         <Button variant="ghost" onClick={openSuppliers} className="shrink-0">🧑‍🌾 Ta'minotchilar</Button>
@@ -548,6 +579,80 @@ export function SkladTab() {
           <div className="flex gap-2 mt-4">
             <Button variant="ghost" className="flex-1" onClick={() => setWriteOff(null)}>Bekor</Button>
             <Button className="flex-1" onClick={saveWriteOff}>Chiqim qilish</Button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Ishlab chiqarish — yarim tayyor mahsulot tayyorlash */}
+      {prodOpen && (
+        <Modal title="🏭 Ishlab chiqarish" onClose={() => setProdOpen(false)}>
+          <div className="text-sm text-muted mb-3">
+            Ketgan mahsulotlar skladdan ayiriladi, tayyor mahsulot qo‘shiladi (masalan: un+suv → xamir).
+          </div>
+
+          <div className="mb-3 rounded-xl border border-danger/30 bg-danger/5 p-3">
+            <div className="text-xs font-bold text-danger mb-2 uppercase">Ketgan mahsulotlar (chiqim)</div>
+            <div className="space-y-2">
+              {prodIn.map((row, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0">
+                    <Select
+                      value={row.productId}
+                      onChange={(v) => setProdIn(prodIn.map((r, j) => (j === i ? { ...r, productId: v } : r)))}
+                      options={products.map((p) => ({ value: p.id, label: `${p.name} (${num(p.stock)} ${p.unit})` }))}
+                    />
+                  </div>
+                  <input
+                    type="number"
+                    value={row.qty}
+                    onChange={(e) => setProdIn(prodIn.map((r, j) => (j === i ? { ...r, qty: e.target.value } : r)))}
+                    placeholder="miqdor"
+                    className="w-24 px-2.5 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setProdIn(prodIn.filter((_, j) => j !== i))}
+                    className="shrink-0 w-8 h-8 rounded-lg border border-border text-danger hover:bg-danger/10"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setProdIn([...prodIn, { productId: products[0]?.id ?? '', qty: '' }])}
+              className="mt-2 text-xs font-semibold text-primary hover:underline"
+            >
+              + Mahsulot qo‘shish
+            </button>
+          </div>
+
+          <div className="mb-4 rounded-xl border border-success/30 bg-success/5 p-3">
+            <div className="text-xs font-bold text-success mb-2 uppercase">Tayyor mahsulot (kirim)</div>
+            <div className="flex items-center gap-2">
+              <div className="flex-1 min-w-0">
+                <Select
+                  value={prodOutId}
+                  onChange={setProdOutId}
+                  options={products.map((p) => ({ value: p.id, label: `${p.name} (${p.unit})` }))}
+                />
+              </div>
+              <input
+                type="number"
+                value={prodOutQty}
+                onChange={(e) => setProdOutQty(e.target.value)}
+                placeholder="miqdor"
+                className="w-24 px-2.5 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary text-sm"
+              />
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <Button variant="ghost" className="flex-1" onClick={() => setProdOpen(false)}>Bekor</Button>
+            <Button className="flex-1" onClick={saveProduction} disabled={savingProd || !prodOutId || !(Number(prodOutQty) > 0)}>
+              {savingProd ? 'Tayyorlanmoqda...' : '✔ Tayyorlash'}
+            </Button>
           </div>
         </Modal>
       )}
