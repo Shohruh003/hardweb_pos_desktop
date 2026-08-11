@@ -9,6 +9,7 @@ import { MenuModule } from './menu/menu.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { StationsModule } from './stations/stations.module';
 import { CustomersModule } from './customers/customers.module';
+import { LicenseModule } from './license/license.module';
 import { OrdersModule } from './orders/orders.module';
 import { UsersModule } from './users/users.module';
 import { QueueModule } from './queue/queue.module';
@@ -37,6 +38,7 @@ import { SeedModule } from './seed/seed.module';
         synchronize: config.get('DB_SYNCHRONIZE', 'true') === 'true',
       }),
     }),
+    LicenseModule,
     AuthModule,
     TablesModule,
     MenuModule,
