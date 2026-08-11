@@ -47,18 +47,34 @@ export function MenuTab() {
   const [products, setProducts] = useState<Product[]>([]);
   const [recipe, setRecipe] = useState<RecipeRow[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
+  const [purchases, setPurchases] = useState<{ productId: string; total: number; quantity: number }[]>([]);
 
   async function load() {
-    const [c, i, p, st] = await Promise.all([
+    const [c, i, p, st, pur] = await Promise.all([
       api.get<Category[]>('/menu/categories'),
       api.get<MenuItem[]>('/menu/all-items'),
       api.get<Product[]>('/inventory/products').catch(() => [] as Product[]),
       api.get<Station[]>('/stations').catch(() => [] as Station[]),
+      api.get<{ productId: string; total: number; quantity: number }[]>('/inventory/purchases').catch(() => []),
     ]);
     setCategories(c);
     setItems(i);
     setProducts(p);
     setStations(st);
+    setPurchases(pur);
+  }
+
+  // O'rtacha tannarx (себестоимость ср.) — kirimlardan og'irlashgan o'rtacha narx
+  const avgCost = new Map<string, number>();
+  {
+    const agg = new Map<string, { sum: number; qty: number }>();
+    for (const pr of purchases) {
+      const a = agg.get(pr.productId) || { sum: 0, qty: 0 };
+      a.sum += Number(pr.total);
+      a.qty += Number(pr.quantity);
+      agg.set(pr.productId, a);
+    }
+    for (const [pid, a] of agg) avgCost.set(pid, a.qty > 0 ? a.sum / a.qty : 0);
   }
   useEffect(() => {
     load().catch(() => {});
@@ -316,6 +332,25 @@ export function MenuTab() {
                 <div className="text-[11px] text-muted">
                   Miqdor — {form.unit === MenuUnit.Weight ? '1 kg' : '1 dona/porsiya'} taomga. Taom sotilganda avtomatik ayiriladi.
                 </div>
+                {(() => {
+                  const cost = recipe.reduce(
+                    (sm, r) => sm + Number(r.amount || 0) * (avgCost.get(r.productId) || 0),
+                    0,
+                  );
+                  if (cost <= 0) return null;
+                  const price = Number(form.price) || 0;
+                  const markup = price - cost;
+                  return (
+                    <div className="mt-1 pt-2 border-t border-border text-xs flex flex-wrap gap-x-3 gap-y-1">
+                      <span>Taom tannarxi: <span className="font-bold">{formatSum(Math.round(cost))}</span></span>
+                      {price > 0 && (
+                        <span className={markup >= 0 ? 'text-success' : 'text-danger'}>
+                          Ustama: <span className="font-bold">{formatSum(Math.round(markup))}</span>
+                        </span>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>
