@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { spawn, ChildProcess } from 'child_process';
-import { join } from 'path';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { join, extname } from 'path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'fs';
+import { createServer, Server as HttpServer } from 'http';
 import { randomBytes } from 'crypto';
 
 // electron-vite define (real build'da false, mock/demo build'da true)
@@ -117,6 +118,52 @@ ipcMain.handle('printer:set-config', (_e, cfg: Partial<PrinterConfig>) =>
   setConfig(cfg),
 );
 
+// Ofitsiantlar telefon brauzeridan kirishi uchun — kassa web ilovani ham tarqatadi (8080).
+// http://<kassa-IP>:8080 → renderer, u host:3100 API'ga ulanadi (config.ts avtomatik).
+const WEB_MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+};
+let webServer: HttpServer | null = null;
+function startWebServer(): void {
+  const rendererDir = join(__dirname, '..', 'renderer');
+  if (!existsSync(join(rendererDir, 'index.html'))) return;
+  try {
+    webServer = createServer((req, res) => {
+      try {
+        let p = decodeURIComponent((req.url || '/').split('?')[0]);
+        if (p === '/' || p === '') p = '/index.html';
+        let file = join(rendererDir, p);
+        if (!file.startsWith(rendererDir) || !existsSync(file) || statSync(file).isDirectory()) {
+          file = join(rendererDir, 'index.html'); // SPA fallback
+        }
+        res.writeHead(200, {
+          'Content-Type': WEB_MIME[extname(file).toLowerCase()] || 'application/octet-stream',
+          'Cache-Control': 'no-store',
+          'Access-Control-Allow-Origin': '*',
+        });
+        res.end(readFileSync(file));
+      } catch {
+        res.writeHead(500);
+        res.end('error');
+      }
+    });
+    webServer.on('error', () => undefined);
+    webServer.listen(8080, '0.0.0.0');
+  } catch {
+    /* ignore */
+  }
+}
+
 // Ichga joylangan server (NestJS + SQLite) — real buildda ilova o'zi ko'taradi.
 // Demo (mock) buildda kerak emas. Dev'da server alohida ishga tushiriladi.
 let serverProc: ChildProcess | null = null;
@@ -186,6 +233,9 @@ function startEmbeddedServer(): void {
     serverProc.on('error', (e) => dbg('spawn xato: ' + (e as Error).message));
     serverProc.on('exit', (code) => dbg('server chiqdi, code=' + code));
     dbg('spawn chaqirildi, pid=' + (serverProc.pid ?? 'yo‘q'));
+    // Faqat kassa (server) — ofitsiantlar telefoni uchun web ilovani tarqatamiz
+    startWebServer();
+    dbg('web server (8080) ishga tushirildi');
   } catch (e) {
     dbg('start xato: ' + (e as Error).message);
   }
@@ -198,6 +248,14 @@ function stopEmbeddedServer(): void {
       /* ignore */
     }
     serverProc = null;
+  }
+  if (webServer) {
+    try {
+      webServer.close();
+    } catch {
+      /* ignore */
+    }
+    webServer = null;
   }
 }
 
