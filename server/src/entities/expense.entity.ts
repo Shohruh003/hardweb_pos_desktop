@@ -11,7 +11,7 @@ export class ExpenseEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'numeric', precision: 12, scale: 2 })
+  @Column({ type: 'decimal', precision: 12, scale: 2 })
   amount: number;
 
   @Column({ type: 'text', nullable: true })

@@ -14,10 +14,10 @@ export class PaymentEntity {
   @Column({ name: 'order_id', type: 'uuid' })
   orderId: string;
 
-  @Column({ type: 'numeric', precision: 12, scale: 2 })
+  @Column({ type: 'decimal', precision: 12, scale: 2 })
   amount: number;
 
-  @Column({ type: 'enum', enum: PaymentType })
+  @Column({ type: 'varchar' })
   type: PaymentType;
 
   @Column({ name: 'cashier_id', type: 'uuid' })

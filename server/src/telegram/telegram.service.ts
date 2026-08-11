@@ -147,7 +147,7 @@ export class TelegramService implements OnModuleInit {
         s: start.toISOString(),
         e: end.toISOString(),
       })
-      .andWhere('o.refunded = false')
+      .andWhere('o.refunded = 0')
       .getRawOne<{ sum: string }>();
     const revenue = Number(revRow?.sum ?? 0);
 

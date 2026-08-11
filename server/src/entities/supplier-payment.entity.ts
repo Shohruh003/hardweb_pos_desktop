@@ -16,7 +16,7 @@ export class SupplierPaymentEntity {
   @Column({ default: '' })
   supplier: string;
 
-  @Column({ type: 'numeric', precision: 16, scale: 2, default: 0 })
+  @Column({ type: 'decimal', precision: 16, scale: 2, default: 0 })
   amount: number;
 
   @Column({ type: 'text', nullable: true })

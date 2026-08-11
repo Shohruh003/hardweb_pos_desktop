@@ -29,11 +29,11 @@ export class OrderItemEntity {
   @Column({ name: 'menu_item_name' })
   menuItemName: string;
 
-  @Column({ type: 'numeric', precision: 12, scale: 2 })
+  @Column({ type: 'decimal', precision: 12, scale: 2 })
   price: number;
 
   // Miqdor — dona uchun butun, kg uchun kasr (1.5, 1.75) bo'lishi mumkin
-  @Column({ type: 'numeric', precision: 10, scale: 3, default: 1 })
+  @Column({ type: 'decimal', precision: 10, scale: 3, default: 1 })
   quantity: number;
 
   // O'lchov birligi (buyurtma paytida menyudan ko'chiriladi)
@@ -51,8 +51,7 @@ export class OrderItemEntity {
   note: string | null;
 
   @Column({
-    type: 'enum',
-    enum: OrderItemStatus,
+    type: 'varchar',
     default: OrderItemStatus.Pending,
   })
   status: OrderItemStatus;

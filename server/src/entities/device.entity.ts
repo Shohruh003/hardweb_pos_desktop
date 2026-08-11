@@ -6,7 +6,7 @@ export class DeviceEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'enum', enum: DeviceType })
+  @Column({ type: 'varchar' })
   type: DeviceType;
 
   @Column()
@@ -15,6 +15,6 @@ export class DeviceEntity {
   @Column()
   connection: string;
 
-  @Column({ type: 'jsonb', default: {} })
-  settings: Record<string, unknown>;
+  @Column({ type: 'simple-json', nullable: true })
+  settings: Record<string, unknown> | null;
 }

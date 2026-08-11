@@ -314,7 +314,7 @@ export class SeedService implements OnModuleInit {
     // tarix chiroyli taqsimlanishi uchun orqaga suramiz.
     for (const u of timeUpdates) {
       await this.orders.query(
-        'UPDATE orders SET opened_at = $1, closed_at = $2 WHERE id = $3',
+        'UPDATE orders SET opened_at = ?, closed_at = ? WHERE id = ?',
         [u.opened.toISOString(), u.closed.toISOString(), u.id],
       );
     }

@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { join, dirname } from 'path';
+import { mkdirSync } from 'fs';
 
 import * as entities from './entities';
 import { AuthModule } from './auth/auth.module';
@@ -27,16 +29,18 @@ import { SeedModule } from './seed/seed.module';
     ConfigModule.forRoot({ isGlobal: true }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres',
-        host: config.get('DB_HOST', 'localhost'),
-        port: Number(config.get('DB_PORT', 5432)),
-        username: config.get('DB_USERNAME', 'postgres'),
-        password: config.get('DB_PASSWORD', 'postgres'),
-        database: config.get('DB_NAME', 'hardweb_pos'),
-        entities: Object.values(entities),
-        synchronize: config.get('DB_SYNCHRONIZE', 'true') === 'true',
-      }),
+      useFactory: (config: ConfigService) => {
+        // Faylli baza (SQLite) — Docker/Postgres kerak emas, backup = faylni nusxalash.
+        // DB_FILE berilmasa, joriy papkada data/dasturxon.db yaratiladi.
+        const dbFile = config.get('DB_FILE') || join(process.cwd(), 'data', 'dasturxon.db');
+        mkdirSync(dirname(dbFile), { recursive: true }); // papka bo'lmasa yaratamiz
+        return {
+          type: 'better-sqlite3' as const,
+          database: dbFile,
+          entities: Object.values(entities),
+          synchronize: config.get('DB_SYNCHRONIZE', 'true') === 'true',
+        };
+      },
     }),
     LicenseModule,
     AuthModule,

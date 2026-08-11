@@ -15,6 +15,6 @@ export class TableEntity {
   @Column({ default: 4 })
   capacity: number;
 
-  @Column({ type: 'enum', enum: TableStatus, default: TableStatus.Free })
+  @Column({ type: 'varchar', default: TableStatus.Free })
   status: TableStatus;
 }

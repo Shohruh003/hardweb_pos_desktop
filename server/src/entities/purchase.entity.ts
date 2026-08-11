@@ -27,13 +27,13 @@ export class PurchaseEntity {
   @Column({ default: '' })
   supplier: string; // ta'minotchi
 
-  @Column({ type: 'numeric', precision: 14, scale: 3, default: 0 })
+  @Column({ type: 'decimal', precision: 14, scale: 3, default: 0 })
   quantity: number;
 
-  @Column({ name: 'unit_price', type: 'numeric', precision: 14, scale: 2, default: 0 })
+  @Column({ name: 'unit_price', type: 'decimal', precision: 14, scale: 2, default: 0 })
   unitPrice: number;
 
-  @Column({ type: 'numeric', precision: 16, scale: 2, default: 0 })
+  @Column({ type: 'decimal', precision: 16, scale: 2, default: 0 })
   total: number;
 
   @Column({ type: 'text', nullable: true })

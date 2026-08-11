@@ -19,13 +19,13 @@ export class OrderEntity {
   @Column({ name: 'waiter_id', type: 'uuid' })
   waiterId: string;
 
-  @Column({ type: 'enum', enum: OrderStatus, default: OrderStatus.Accepted })
+  @Column({ type: 'varchar', default: OrderStatus.Accepted })
   status: OrderStatus;
 
   @CreateDateColumn({ name: 'opened_at' })
   openedAt: Date;
 
-  @Column({ name: 'closed_at', type: 'timestamptz', nullable: true })
+  @Column({ name: 'closed_at', type: 'datetime', nullable: true })
   closedAt: Date | null;
 
   @Column({ name: 'queue_number', type: 'int', nullable: true })
@@ -36,10 +36,10 @@ export class OrderEntity {
   note: string | null;
 
   // Chegirma/xizmat haqi foizi — to'lovda saqlanadi (bo'lib to'lashda total barqaror qoladi)
-  @Column({ name: 'discount_percent', type: 'numeric', precision: 5, scale: 2, default: 0 })
+  @Column({ name: 'discount_percent', type: 'decimal', precision: 5, scale: 2, default: 0 })
   discountPercent: number;
 
-  @Column({ name: 'service_percent', type: 'numeric', precision: 5, scale: 2, default: 0 })
+  @Column({ name: 'service_percent', type: 'decimal', precision: 5, scale: 2, default: 0 })
   servicePercent: number;
 
   // Mijoz (CRM) — ixtiyoriy
@@ -56,7 +56,7 @@ export class OrderEntity {
   @Column({ name: 'refund_reason', type: 'text', nullable: true })
   refundReason: string | null;
 
-  @Column({ name: 'refunded_at', type: 'timestamptz', nullable: true })
+  @Column({ name: 'refunded_at', type: 'datetime', nullable: true })
   refundedAt: Date | null;
 
   @Column({ name: 'refunded_by', type: 'uuid', nullable: true })

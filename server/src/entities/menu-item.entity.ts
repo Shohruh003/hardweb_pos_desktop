@@ -9,7 +9,7 @@ export class MenuItemEntity {
   @Column()
   name: string;
 
-  @Column({ type: 'numeric', precision: 12, scale: 2 })
+  @Column({ type: 'decimal', precision: 12, scale: 2 })
   price: number;
 
   // O'lchov birligi: dona (bo'lakda) yoki kg (kiloda sotiladigan taomlar)

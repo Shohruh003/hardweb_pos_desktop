@@ -25,29 +25,29 @@ export class MaintenanceService implements OnModuleInit {
       await this.dataSource.query(
         `DELETE FROM excise_codes WHERE order_item_id IN (
            SELECT oi.id FROM order_items oi
-           JOIN orders o ON oi.order_id = o.id WHERE o.opened_at < $1)`,
+           JOIN orders o ON oi.order_id = o.id WHERE o.opened_at < ?)`,
         [iso],
       );
       await this.dataSource.query(
-        `DELETE FROM fiscal_docs WHERE order_id IN (SELECT id FROM orders WHERE opened_at < $1)`,
+        `DELETE FROM fiscal_docs WHERE order_id IN (SELECT id FROM orders WHERE opened_at < ?)`,
         [iso],
       );
       await this.dataSource.query(
-        `DELETE FROM payments WHERE order_id IN (SELECT id FROM orders WHERE opened_at < $1)`,
+        `DELETE FROM payments WHERE order_id IN (SELECT id FROM orders WHERE opened_at < ?)`,
         [iso],
       );
       await this.dataSource.query(
-        `DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE opened_at < $1)`,
+        `DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE opened_at < ?)`,
         [iso],
       );
       const res = await this.dataSource.query(
-        `DELETE FROM orders WHERE opened_at < $1`,
+        `DELETE FROM orders WHERE opened_at < ?`,
         [iso],
       );
       const count = Array.isArray(res) ? res.length : res?.affected ?? 0;
       // Eski rasxodlarni ham tozalaymiz
       await this.dataSource.query(
-        `DELETE FROM expenses WHERE created_at < $1`,
+        `DELETE FROM expenses WHERE created_at < ?`,
         [iso],
       );
       this.logger.log(

@@ -48,7 +48,7 @@ export class ReportsService {
       .addSelect('SUM(p.amount)', 'amount')
       .addSelect('COUNT(DISTINCT p.order_id)', 'orders')
       .where('p.created_at >= :start', { start })
-      .andWhere('o.refunded = false') // vozvrat qilinganlar hisobga olinmaydi
+      .andWhere('o.refunded = 0') // vozvrat qilinganlar hisobga olinmaydi
       .groupBy('p.type')
       .getRawMany<{ type: PaymentType; amount: string; orders: string }>();
 
@@ -80,7 +80,7 @@ export class ReportsService {
       .addSelect('SUM(oi.price * oi.quantity)', 'sum')
       .where('o.status = :closed', { closed: OrderStatus.Closed })
       .andWhere('o.closed_at >= :start', { start })
-      .andWhere('o.refunded = false')
+      .andWhere('o.refunded = 0')
       .groupBy('oi.menu_item_name')
       .orderBy('quantity', 'DESC')
       .limit(limit)
@@ -103,11 +103,11 @@ export class ReportsService {
     const rows = await this.orders
       .createQueryBuilder('o')
       .innerJoin(PaymentEntity, 'p', 'p.order_id = o.id')
-      .select("to_char(o.closed_at, 'YYYY-MM-DD')", 'date')
+      .select("strftime('%Y-%m-%d', o.closed_at)", 'date')
       .addSelect('SUM(p.amount)', 'revenue')
       .where('o.status = :closed', { closed: OrderStatus.Closed })
       .andWhere('o.closed_at >= :start', { start })
-      .andWhere('o.refunded = false')
+      .andWhere('o.refunded = 0')
       .groupBy('date')
       .getRawMany<{ date: string; revenue: string }>();
 
@@ -134,7 +134,7 @@ export class ReportsService {
       .addSelect('SUM(p.amount)', 'revenue')
       .where('o.status = :closed', { closed: OrderStatus.Closed })
       .andWhere('o.closed_at >= :start', { start })
-      .andWhere('o.refunded = false')
+      .andWhere('o.refunded = 0')
       .groupBy('u.name')
       .orderBy('revenue', 'DESC')
       .getRawMany<{

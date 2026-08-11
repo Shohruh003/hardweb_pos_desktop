@@ -9,7 +9,7 @@ export class UserEntity {
   @Column()
   name: string;
 
-  @Column({ type: 'enum', enum: UserRole })
+  @Column({ type: 'varchar' })
   role: UserRole;
 
   // 4 xonali PIN — xodim faqat shu bilan kiradi (login shart emas)

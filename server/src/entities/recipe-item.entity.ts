@@ -20,6 +20,6 @@ export class RecipeItemEntity {
   productId: string;
 
   // Taomning 1 birligiga ketadigan miqdor (mahsulot birligida)
-  @Column({ type: 'numeric', precision: 14, scale: 3, default: 0 })
+  @Column({ type: 'decimal', precision: 14, scale: 3, default: 0 })
   amount: number;
 }
