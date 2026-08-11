@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Not, Repository } from 'typeorm';
 
 import {
+  CustomerEntity,
   ExciseCodeEntity,
   FiscalDocEntity,
   MenuItemEntity,
@@ -69,6 +70,8 @@ export class OrdersService {
     private readonly users: Repository<UserEntity>,
     @InjectRepository(FiscalDocEntity)
     private readonly fiscalDocs: Repository<FiscalDocEntity>,
+    @InjectRepository(CustomerEntity)
+    private readonly customers: Repository<CustomerEntity>,
     private readonly dataSource: DataSource,
     private readonly gateway: OrdersGateway,
     private readonly telegram: TelegramService,
@@ -202,6 +205,11 @@ export class OrdersService {
     const table = await this.tables.findOne({ where: { id: dto.tableId } });
     if (!table) throw new NotFoundException('Stol topilmadi');
 
+    // Mijoz (CRM) — ixtiyoriy
+    const customer = dto.customerId
+      ? await this.customers.findOne({ where: { id: dto.customerId } })
+      : null;
+
     // Ombor yetarliligini tekshiramiz — ochiq (to'lanmagan) buyurtmalar band
     // hisoblanadi, shuning uchun 20 ta cola bo'lsa 20 tadan ortiq sotib bo'lmaydi.
     const openOrders = await this.orders.find({
@@ -262,6 +270,10 @@ export class OrdersService {
       const newItems = buildItems(this.dataSource.manager);
       existing.items = [...(existing.items || []), ...newItems];
       if (dto.note !== undefined) existing.note = dto.note?.trim() || null;
+      if (customer) {
+        existing.customerId = customer.id;
+        existing.customerName = customer.name;
+      }
       // Yangi taomlar tayyorlanishi kerak — buyurtma yana faollashadi
       if (existing.status === OrderStatus.Ready) {
         existing.status = OrderStatus.Cooking;
@@ -278,6 +290,8 @@ export class OrdersService {
         waiterId,
         status: OrderStatus.Accepted,
         note: dto.note?.trim() || null,
+        customerId: customer?.id ?? null,
+        customerName: customer?.name ?? null,
         items: buildItems(manager),
       });
       const result = await manager.save(order);
@@ -314,6 +328,22 @@ export class OrdersService {
     const order = await this.orders.findOne({ where: { id } });
     if (!order) throw new NotFoundException('Buyurtma topilmadi');
     order.note = note?.trim() || null;
+    const saved = await this.orders.save(order);
+    const table = await this.tables.findOne({ where: { id: saved.tableId } });
+    const dto = this.toDto(saved, table?.number);
+    this.gateway.emitOrderUpdated(dto);
+    return dto;
+  }
+
+  // Buyurtmaga mijoz (CRM) biriktirish/o'zgartirish (bo'sh — olib tashlaydi)
+  async setCustomer(id: string, customerId?: string): Promise<Order> {
+    const order = await this.orders.findOne({ where: { id } });
+    if (!order) throw new NotFoundException('Buyurtma topilmadi');
+    const customer = customerId
+      ? await this.customers.findOne({ where: { id: customerId } })
+      : null;
+    order.customerId = customer?.id ?? null;
+    order.customerName = customer?.name ?? null;
     const saved = await this.orders.save(order);
     const table = await this.tables.findOne({ where: { id: saved.tableId } });
     const dto = this.toDto(saved, table?.number);
@@ -635,6 +665,7 @@ export class OrdersService {
       paymentType: dto.type,
       payments: allPayments.map((p) => ({ type: p.type, amount: p.amount })),
       note: order.note ?? null,
+      customerName: order.customerName ?? null,
       createdAt: new Date().toISOString(),
       fiscalQrPlaceholder: !fiscalEnabled,
       fiscalNumber,
@@ -727,6 +758,8 @@ export class OrdersService {
       closedAt: o.closedAt ? o.closedAt.toISOString() : null,
       queueNumber: o.queueNumber ?? null,
       note: o.note ?? null,
+      customerId: o.customerId ?? null,
+      customerName: o.customerName ?? null,
       discountPercent: Number(o.discountPercent) || 0,
       servicePercent: Number(o.servicePercent) || 0,
       tableNumber,

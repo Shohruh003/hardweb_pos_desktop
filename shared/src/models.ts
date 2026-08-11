@@ -75,6 +75,15 @@ export interface Product {
   minStock: number; // minimal qoldiq (kam qolganda ogohlantirish)
 }
 
+/** customers — mijozlar (CRM) */
+export interface Customer {
+  id: string;
+  name: string;
+  phone: string;
+  note?: string | null;
+  createdAt: string;
+}
+
 /** purchases — sklad kirimi: mahsulot kimdan/qayerdan, qancha narxда olindi */
 export interface Purchase {
   id: string;
@@ -132,6 +141,8 @@ export interface Order {
   servicePercent?: number; // xizmat haqi foizi (Обслуга %)
   discountPercent?: number; // chegirma foizi (Скидка %)
   note?: string | null; // chekka izoh (Примечание)
+  customerId?: string | null; // mijoz (CRM)
+  customerName?: string | null; // mijoz ismi
   // Qulaylik uchun (server to'ldiradi):
   tableNumber?: number;
   hall?: string | null; // zal nomi (tarix/filtr uchun)
@@ -210,6 +221,7 @@ export interface Receipt {
   paymentType: PaymentType;
   payments?: { type: PaymentType; amount: number }[]; // bo'lib to'langan bo'lsa (naqd+karta+...)
   note?: string | null; // chekka izoh (Примечание)
+  customerName?: string | null; // mijoz (CRM)
   createdAt: string;
   // Fiskal QR uchun joy (TZ F-6.7)
   fiscalQrPlaceholder: boolean;

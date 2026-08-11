@@ -18,6 +18,7 @@ import {
   AddExciseDto,
   CreateOrderDto,
   PayOrderDto,
+  SetCustomerDto,
   SetNoteDto,
   UpdateOrderStatusDto,
 } from './dto';
@@ -65,6 +66,12 @@ export class OrdersController {
   @Post(':id/note')
   setNote(@Param('id') id: string, @Body() dto: SetNoteDto) {
     return this.orders.setNote(id, dto?.note);
+  }
+
+  // Buyurtmaga mijoz (CRM) biriktirish/o'zgartirish
+  @Post(':id/customer')
+  setCustomer(@Param('id') id: string, @Body() dto: SetCustomerDto) {
+    return this.orders.setCustomer(id, dto?.customerId);
   }
 
   // Buyurtmadan ayrim taomlarni olib tashlash (qaytarish)

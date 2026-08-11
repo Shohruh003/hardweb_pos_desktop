@@ -192,10 +192,16 @@ interface MockOrder {
   status: OrderStatus; openedAt: string; closedAt: string | null;
   queueNumber: number | null; items: MockItem[]; total: number; note?: string | null;
   discountPercent?: number; servicePercent?: number;
+  customerId?: string | null; customerName?: string | null;
   refunded?: boolean; refundReason?: string | null; refundedAt?: string | null;
 }
+interface MockCustomer { id: string; name: string; phone: string; note: string | null; createdAt: string; }
 const hallOf = (tableId: string): string | null => tables.find((t) => t.id === tableId)?.hall ?? null;
 const orders: MockOrder[] = [];
+const customers: MockCustomer[] = [
+  { id: uid(), name: 'Aziz Karimov', phone: '+998 90 123 45 67', note: 'Doimiy mijoz', createdAt: new Date().toISOString() },
+  { id: uid(), name: 'Dilnoza Yusupova', phone: '+998 91 234 56 78', note: null, createdAt: new Date().toISOString() },
+];
 const payments: { id: string; orderId: string; amount: number; type: PaymentType; cashierId: string; createdAt: string }[] = [];
 let fiscalCounter = 0;
 
@@ -451,6 +457,28 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     const i = users.findIndex((x) => x.id === seg[1]); if (i >= 0) users.splice(i, 1); return ok({ ok: true });
   }
 
+  // Customers (CRM)
+  if (path === '/customers' && method === 'GET') return ok([...customers]);
+  if (path === '/customers' && method === 'POST') {
+    const c: MockCustomer = { id: uid(), name: body.name, phone: body.phone ?? '', note: body.note?.trim() || null, createdAt: new Date().toISOString() };
+    customers.unshift(c);
+    return ok(c);
+  }
+  if (seg[0] === 'customers' && seg[1] && method === 'PATCH') {
+    const c = customers.find((x) => x.id === seg[1]);
+    if (c) {
+      if (body.name !== undefined) c.name = body.name;
+      if (body.phone !== undefined) c.phone = body.phone;
+      if (body.note !== undefined) c.note = body.note?.trim() || null;
+    }
+    return ok(c);
+  }
+  if (seg[0] === 'customers' && seg[1] && method === 'DELETE') {
+    const i = customers.findIndex((x) => x.id === seg[1]);
+    if (i >= 0) customers.splice(i, 1);
+    return ok({ ok: true });
+  }
+
   // Orders
   if (path === '/orders' && method === 'GET') return ok(orders.filter((o) => o.status !== OrderStatus.Closed));
   if (path === '/orders/history' && method === 'GET') {
@@ -490,12 +518,14 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     if (shortage) return fail(shortage);
     const table = tables.find((t) => t.id === body.tableId)!;
     const w = users.find((u) => u.id === body.waiterId) || waiter;
+    const cust = body.customerId ? customers.find((c) => c.id === body.customerId) : null;
     // Stolda ochiq buyurtma bo'lsa — yangi taomlarni o'shanga qo'shamiz (server kabi)
     const existing = orders.find((x) => x.tableId === body.tableId && x.status !== OrderStatus.Closed);
     if (existing) {
       const newItems = body.items.map((i: any) => makeItem(existing.id, i.menuItemId, i.quantity, i.note));
       existing.items.push(...newItems);
       if (body.note !== undefined) existing.note = body.note?.trim() || null;
+      if (cust) { existing.customerId = cust.id; existing.customerName = cust.name; }
       existing.total = total(existing.items);
       emit(SOCKET_EVENTS.ORDER_UPDATED, { order: existing });
       return ok(existing);
@@ -505,6 +535,7 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
       id, tableId: body.tableId, tableNumber: table.number, hall: table.hall, waiterId: w.id, waiterName: w.name,
       status: OrderStatus.Accepted, openedAt: new Date().toISOString(), closedAt: null, queueNumber: null,
       note: body.note?.trim() || null,
+      customerId: cust?.id ?? null, customerName: cust?.name ?? null,
       items: body.items.map((i: any) => makeItem(id, i.menuItemId, i.quantity, i.note)), total: 0,
     };
     order.total = total(order.items);
@@ -526,6 +557,16 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     const o = orders.find((x) => x.id === seg[1]);
     if (o) {
       o.note = body.note?.trim() || null;
+      emit(SOCKET_EVENTS.ORDER_UPDATED, { orderId: o.id, status: o.status, order: o });
+    }
+    return ok(o);
+  }
+  if (seg[0] === 'orders' && seg[2] === 'customer' && method === 'POST') {
+    const o = orders.find((x) => x.id === seg[1]);
+    if (o) {
+      const c = body.customerId ? customers.find((x) => x.id === body.customerId) : null;
+      o.customerId = c?.id ?? null;
+      o.customerName = c?.name ?? null;
       emit(SOCKET_EVENTS.ORDER_UPDATED, { orderId: o.id, status: o.status, order: o });
     }
     return ok(o);
@@ -672,7 +713,7 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
       subtotal, discountPercent, discountAmount,
       serviceFeePercent, serviceFeeAmount, total: grand,
       paymentType: body.type, payments: allPayments.map((p) => ({ type: p.type, amount: p.amount })),
-      note: o.note ?? null, createdAt: new Date().toISOString(),
+      note: o.note ?? null, customerName: o.customerName ?? null, createdAt: new Date().toISOString(),
       fiscalQrPlaceholder: false, fiscalNumber, fiscalQr,
     };
     return ok({ order: o, receipt, fullyPaid: true, paidAmount: newPaid, total: grand, payments: allPayments });

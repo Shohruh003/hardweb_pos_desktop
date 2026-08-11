@@ -8,6 +8,7 @@ import { TablesModule } from './tables/tables.module';
 import { MenuModule } from './menu/menu.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { StationsModule } from './stations/stations.module';
+import { CustomersModule } from './customers/customers.module';
 import { OrdersModule } from './orders/orders.module';
 import { UsersModule } from './users/users.module';
 import { QueueModule } from './queue/queue.module';
@@ -41,6 +42,7 @@ import { SeedModule } from './seed/seed.module';
     MenuModule,
     InventoryModule,
     StationsModule,
+    CustomersModule,
     OrdersModule,
     UsersModule,
     QueueModule,

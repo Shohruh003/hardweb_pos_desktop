@@ -42,6 +42,13 @@ export class OrderEntity {
   @Column({ name: 'service_percent', type: 'numeric', precision: 5, scale: 2, default: 0 })
   servicePercent: number;
 
+  // Mijoz (CRM) — ixtiyoriy
+  @Column({ name: 'customer_id', type: 'uuid', nullable: true })
+  customerId: string | null;
+
+  @Column({ name: 'customer_name', type: 'varchar', nullable: true })
+  customerName: string | null;
+
   // Vozvrat (to'langan chek qaytarilishi) — faqat Direktor/Administrator (TZ ruxsatlar)
   @Column({ default: false })
   refunded: boolean;

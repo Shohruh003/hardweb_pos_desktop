@@ -6,6 +6,7 @@ import { useI18n } from '../state/i18n';
 import { useAppNav } from '../state/appNav';
 import { MenuTab } from './admin/MenuTab';
 import { SkladTab } from './admin/SkladTab';
+import { CustomersTab } from './admin/CustomersTab';
 import { StationsTab } from './admin/StationsTab';
 import { CategoriesTab } from './admin/CategoriesTab';
 import { TablesTab } from './admin/TablesTab';
@@ -16,13 +17,14 @@ import { ReceiptsTab } from './admin/ReceiptsTab';
 import { TerminalsTab } from './admin/TerminalsTab';
 import { SettingsPanel } from '../components/SettingsPanel';
 
-type Tab = 'receipts' | 'menu' | 'inventory' | 'stations' | 'categories' | 'tables' | 'staff' | 'roles' | 'devices' | 'terminals' | 'settings';
+type Tab = 'receipts' | 'menu' | 'inventory' | 'customers' | 'stations' | 'categories' | 'tables' | 'staff' | 'roles' | 'devices' | 'terminals' | 'settings';
 
 // Har tab qaysi ruxsat (capability)ga bog'liq — ruxsat yo'q bo'lsa ko'rinmaydi
 const NAV: { key: Tab; tkey: string; icon: string; hint: string; cap: string }[] = [
   { key: 'receipts', tkey: 'admin.receipts', icon: '🧾', hint: 'Buyurtmalar va to‘lovlar tarixi', cap: 'history' },
   { key: 'menu', tkey: 'admin.menu', icon: '📋', hint: 'Taomlar ro‘yxati', cap: 'menu' },
   { key: 'inventory', tkey: 'admin.inventory', icon: '📦', hint: 'Ombor: mahsulotlar va qoldiq', cap: 'inventory' },
+  { key: 'customers', tkey: 'admin.customers', icon: '🙋', hint: 'Mijozlar (CRM)', cap: 'customers' },
   { key: 'stations', tkey: 'admin.stations', icon: '🏭', hint: 'Bo‘limlar (oshxona/bar/somsaxona) va printerlari', cap: 'stations' },
   { key: 'categories', tkey: 'admin.categories', icon: '🗂️', hint: 'Menyu kategoriyalari', cap: 'menu' },
   { key: 'tables', tkey: 'admin.tables', icon: '🪑', hint: 'Stollar va zallar', cap: 'tables' },
@@ -134,6 +136,7 @@ export function AdminPage() {
             {tab === 'receipts' && <ReceiptsTab />}
             {tab === 'menu' && <MenuTab />}
             {tab === 'inventory' && <SkladTab />}
+            {tab === 'customers' && <CustomersTab />}
             {tab === 'stations' && <StationsTab />}
             {tab === 'categories' && <CategoriesTab />}
             {tab === 'tables' && <TablesTab />}

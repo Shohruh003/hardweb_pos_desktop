@@ -120,6 +120,9 @@ export function ReceiptPreview({
                 To‘lov turi: {PAYMENT_LABEL[receipt.paymentType]}
               </div>
             )}
+            {receipt.customerName && (
+              <div className="text-[11px] mt-1">🙋 Mijoz: {receipt.customerName}</div>
+            )}
             {receipt.note && (
               <div className="text-[11px] mt-1 border-t border-dashed border-black/40 pt-1">
                 📝 Izoh: {receipt.note}

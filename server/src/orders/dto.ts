@@ -44,12 +44,22 @@ export class CreateOrderDto {
   @IsOptional()
   @IsString()
   note?: string;
+
+  @IsOptional()
+  @IsUUID()
+  customerId?: string;
 }
 
 export class SetNoteDto {
   @IsOptional()
   @IsString()
   note?: string;
+}
+
+export class SetCustomerDto {
+  @IsOptional()
+  @IsUUID()
+  customerId?: string;
 }
 
 export class UpdateOrderStatusDto {

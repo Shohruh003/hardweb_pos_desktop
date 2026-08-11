@@ -89,6 +89,7 @@ const DICT: Record<string, Record<Lang, string>> = {
   // Admin bo'limlari
   'admin.menu': { uz: 'Menyu', ru: 'Меню', en: 'Menu' },
   'admin.inventory': { uz: 'Sklad', ru: 'Склад', en: 'Inventory' },
+  'admin.customers': { uz: 'Mijozlar', ru: 'Клиенты', en: 'Customers' },
   'admin.stations': { uz: 'Bo‘limlar', ru: 'Цеха', en: 'Stations' },
   'admin.categories': { uz: 'Kategoriyalar', ru: 'Категории', en: 'Categories' },
   'admin.tables': { uz: 'Stollar', ru: 'Столы', en: 'Tables' },

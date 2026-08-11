@@ -21,6 +21,7 @@ export const CAPABILITIES: Capability[] = [
   { key: 'reports', label: 'Hisobotlar (atchot)', group: 'manage', icon: '📊' },
   { key: 'menu', label: 'Menyu boshqarish', group: 'manage', icon: '📋' },
   { key: 'inventory', label: 'Sklad (ombor)', group: 'manage', icon: '📦' },
+  { key: 'customers', label: 'Mijozlar (CRM)', group: 'manage', icon: '🙋' },
   { key: 'stations', label: 'Bo‘limlar (sexlar)', group: 'manage', icon: '🏭' },
   { key: 'tables', label: 'Stollar boshqarish', group: 'manage', icon: '🪑' },
   { key: 'staff', label: 'Xodimlar boshqarish', group: 'manage', icon: '👥' },

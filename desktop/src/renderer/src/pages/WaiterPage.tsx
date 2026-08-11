@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Category,
+  Customer,
   MenuItem,
   MenuUnit,
   Order,
@@ -94,6 +95,9 @@ export function WaiterPage() {
   const [moreOpen, setMoreOpen] = useState(false); // 3-nuqta menyu (annul/stol/ofitsiant)
   const [noteOpen, setNoteOpen] = useState(false); // chekka izoh modali
   const [noteText, setNoteText] = useState('');
+  const [customerOpen, setCustomerOpen] = useState(false); // mijoz tanlash modali
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [customerSearch, setCustomerSearch] = useState('');
   const [changeTableOpen, setChangeTableOpen] = useState(false);
   const [changeWaiterOpen, setChangeWaiterOpen] = useState(false);
   const [waiters, setWaiters] = useState<User[]>([]);
@@ -428,6 +432,29 @@ export function WaiterPage() {
       setExistingOrder(updated);
       setNoteOpen(false);
       setFeedback({ variant: 'success', title: 'Izoh saqlandi', subtitle: noteText.trim() || 'Izoh olib tashlandi' });
+    } catch (e) {
+      setFeedback({ variant: 'warning', title: 'Xatolik', subtitle: (e as Error).message });
+    }
+  }
+
+  // Mijoz (CRM) — 3-nuqta menyudan biriktirish
+  async function openCustomer() {
+    setMoreOpen(false);
+    setCustomerSearch('');
+    try {
+      setCustomers(await api.get<Customer[]>('/customers'));
+    } catch {
+      setCustomers([]);
+    }
+    setCustomerOpen(true);
+  }
+  async function setOrderCustomer(customerId: string | null) {
+    if (!existingOrder) return;
+    try {
+      const updated = await api.post<Order>(`/orders/${existingOrder.id}/customer`, { customerId: customerId ?? undefined });
+      setExistingOrder(updated);
+      setCustomerOpen(false);
+      setFeedback({ variant: 'success', title: 'Mijoz biriktirildi', subtitle: updated.customerName ?? 'Olib tashlandi' });
     } catch (e) {
       setFeedback({ variant: 'warning', title: 'Xatolik', subtitle: (e as Error).message });
     }
@@ -918,6 +945,53 @@ export function WaiterPage() {
         </Modal>
       )}
 
+      {customerOpen && (
+        <Modal title="Mijoz tanlash" onClose={() => setCustomerOpen(false)}>
+          <input
+            value={customerSearch}
+            onChange={(e) => setCustomerSearch(e.target.value)}
+            autoFocus
+            placeholder="🔎 Ism yoki telefon..."
+            className="w-full mb-3 px-3 py-2.5 rounded-xl bg-bg border border-border outline-none focus:border-primary"
+          />
+          {existingOrder?.customerName && (
+            <button
+              onClick={() => setOrderCustomer(null)}
+              className="w-full text-left mb-2 px-3 py-2 rounded-lg text-danger bg-danger/10 text-sm font-semibold"
+            >
+              ✕ Mijozni olib tashlash ({existingOrder.customerName})
+            </button>
+          )}
+          <div className="space-y-1.5 max-h-[50vh] overflow-auto">
+            {customers
+              .filter((c) => {
+                const q = customerSearch.trim().toLowerCase();
+                return !q || c.name.toLowerCase().includes(q) || c.phone.includes(q);
+              })
+              .map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => setOrderCustomer(c.id)}
+                  className="w-full text-left px-3 py-2.5 rounded-xl border border-border hover:border-primary hover:bg-surface-hover flex items-center gap-3"
+                >
+                  <span className="w-9 h-9 rounded-full bg-primary/20 text-primary font-bold flex items-center justify-center shrink-0">
+                    {c.name.charAt(0)}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block font-semibold truncate">{c.name}</span>
+                    <span className="block text-xs text-muted truncate">{c.phone || '—'}</span>
+                  </span>
+                </button>
+              ))}
+            {customers.length === 0 && (
+              <div className="text-muted text-sm text-center py-4">
+                Mijoz yo‘q. Admin → Mijozlar bo‘limidan qo‘shing.
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
       <div className="h-full flex flex-col">
         {/* Yuqori header — qidiruv (butun kenglik bo'ylab) */}
         <div className="flex items-center gap-2 p-3 border-b border-border">
@@ -1074,6 +1148,12 @@ export function WaiterPage() {
                         >
                           📝 Chekka izoh
                         </button>
+                        <button
+                          onClick={openCustomer}
+                          className="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-bg"
+                        >
+                          🙋 Mijoz {existingOrder?.customerName ? `(${existingOrder.customerName})` : ''}
+                        </button>
                         <div className="border-t border-border my-1" />
                         <button
                           onClick={annulOrder}
@@ -1085,6 +1165,15 @@ export function WaiterPage() {
                     )}
                   </div>
                 </div>
+                {existingOrder.customerName && (
+                  <button
+                    onClick={openCustomer}
+                    className="w-full text-left mb-2 px-3 py-2 rounded-lg bg-primary/10 border border-primary/30 text-sm flex items-center gap-2"
+                  >
+                    <span>🙋</span>
+                    <span className="flex-1 font-semibold">{existingOrder.customerName}</span>
+                  </button>
+                )}
                 {existingOrder.note && (
                   <button
                     onClick={openNote}

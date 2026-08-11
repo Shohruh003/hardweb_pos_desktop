@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import {
+  CustomerEntity,
   ExciseCodeEntity,
   FiscalDocEntity,
   MenuItemEntity,
@@ -29,6 +30,7 @@ import { InventoryModule } from '../inventory/inventory.module';
       FiscalDocEntity,
       ExciseCodeEntity,
       StationEntity,
+      CustomerEntity,
     ]),
     TelegramModule,
     InventoryModule,
