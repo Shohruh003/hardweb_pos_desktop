@@ -11,7 +11,8 @@
     { "from": ".runtime", "to": "runtime" }
   ],
   "win": {
-    "target": "nsis"
+    "target": "nsis",
+    "icon": "build/icon.png"
   },
   "nsis": {
     "oneClick": true,

@@ -70,8 +70,11 @@ export class SeedService implements OnModuleInit {
     const stations = await this.seedStations();
     const menu = await this.seedMenu(stations);
     await this.seedInventory(menu);
-    await this.seedHistory(staff, tables, menu);
-    await this.seedActiveOrders(staff, tables, menu);
+    // Demo buyurtmalar/tarix — faqat demo rejimda (real restoranda toza start + tez).
+    if (process.env.SEED_DEMO !== 'false') {
+      await this.seedHistory(staff, tables, menu);
+      await this.seedActiveOrders(staff, tables, menu);
+    }
 
     this.logger.log(
       'Seed tayyor. Login: ofitsiant/oshpaz/kassir/admin/direktor — parol: 1234',

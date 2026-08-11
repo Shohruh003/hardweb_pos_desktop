@@ -201,8 +201,20 @@ function stopEmbeddedServer(): void {
   }
 }
 
+// Windows yoqilganda ilova o'zi ochilsin (kassa terminali doim ishlab tursin).
+// Faqat real o'rnatmada — dev/demoda kerak emas.
+function setupAutoStart(): void {
+  if (__MOCK__ || !app.isPackaged || process.platform !== 'win32') return;
+  try {
+    app.setLoginItemSettings({ openAtLogin: true, args: [] });
+  } catch {
+    /* ignore */
+  }
+}
+
 app.whenReady().then(() => {
   startEmbeddedServer();
+  setupAutoStart();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
