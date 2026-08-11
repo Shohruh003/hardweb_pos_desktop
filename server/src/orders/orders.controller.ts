@@ -17,6 +17,7 @@ import {
   AddExciseDto,
   CreateOrderDto,
   PayOrderDto,
+  SetNoteDto,
   UpdateOrderStatusDto,
 } from './dto';
 
@@ -57,6 +58,12 @@ export class OrdersController {
   @Post(':id/request-bill')
   requestBill(@Param('id') id: string) {
     return this.orders.requestBill(id);
+  }
+
+  // Chekka izoh qo'shish/o'zgartirish (Примечание)
+  @Post(':id/note')
+  setNote(@Param('id') id: string, @Body() dto: SetNoteDto) {
+    return this.orders.setNote(id, dto?.note);
   }
 
   // Buyurtmadan ayrim taomlarni olib tashlash (qaytarish)

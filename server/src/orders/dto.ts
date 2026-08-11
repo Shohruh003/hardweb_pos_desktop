@@ -40,6 +40,16 @@ export class CreateOrderDto {
   @ValidateNested({ each: true })
   @Type(() => CreateOrderItemDto)
   items: CreateOrderItemDto[];
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+export class SetNoteDto {
+  @IsOptional()
+  @IsString()
+  note?: string;
 }
 
 export class UpdateOrderStatusDto {

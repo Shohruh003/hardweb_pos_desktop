@@ -190,7 +190,7 @@ interface MockItem {
 interface MockOrder {
   id: string; tableId: string; tableNumber: number; hall: string | null; waiterId: string; waiterName: string;
   status: OrderStatus; openedAt: string; closedAt: string | null;
-  queueNumber: number | null; items: MockItem[]; total: number;
+  queueNumber: number | null; items: MockItem[]; total: number; note?: string | null;
   refunded?: boolean; refundReason?: string | null; refundedAt?: string | null;
 }
 const hallOf = (tableId: string): string | null => tables.find((t) => t.id === tableId)?.hall ?? null;
@@ -489,10 +489,21 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     if (shortage) return fail(shortage);
     const table = tables.find((t) => t.id === body.tableId)!;
     const w = users.find((u) => u.id === body.waiterId) || waiter;
+    // Stolda ochiq buyurtma bo'lsa — yangi taomlarni o'shanga qo'shamiz (server kabi)
+    const existing = orders.find((x) => x.tableId === body.tableId && x.status !== OrderStatus.Closed);
+    if (existing) {
+      const newItems = body.items.map((i: any) => makeItem(existing.id, i.menuItemId, i.quantity, i.note));
+      existing.items.push(...newItems);
+      if (body.note !== undefined) existing.note = body.note?.trim() || null;
+      existing.total = total(existing.items);
+      emit(SOCKET_EVENTS.ORDER_UPDATED, { order: existing });
+      return ok(existing);
+    }
     const id = uid();
     const order: MockOrder = {
       id, tableId: body.tableId, tableNumber: table.number, hall: table.hall, waiterId: w.id, waiterName: w.name,
       status: OrderStatus.Accepted, openedAt: new Date().toISOString(), closedAt: null, queueNumber: null,
+      note: body.note?.trim() || null,
       items: body.items.map((i: any) => makeItem(id, i.menuItemId, i.quantity, i.note)), total: 0,
     };
     order.total = total(order.items);
@@ -506,6 +517,14 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     if (o) {
       const table = tables.find((t) => t.id === o.tableId);
       if (table && table.status !== TableStatus.Free) table.status = TableStatus.AwaitingBill;
+      emit(SOCKET_EVENTS.ORDER_UPDATED, { orderId: o.id, status: o.status, order: o });
+    }
+    return ok(o);
+  }
+  if (seg[0] === 'orders' && seg[2] === 'note' && method === 'POST') {
+    const o = orders.find((x) => x.id === seg[1]);
+    if (o) {
+      o.note = body.note?.trim() || null;
       emit(SOCKET_EVENTS.ORDER_UPDATED, { orderId: o.id, status: o.status, order: o });
     }
     return ok(o);
@@ -622,7 +641,7 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
       lines: o.items.map((it) => ({ name: it.menuItemName, quantity: it.quantity, price: it.price, sum: it.price * it.quantity, unit: it.unit ?? MenuUnit.Piece })),
       subtotal, discountPercent: body.discountPercent || 0, discountAmount,
       serviceFeePercent: body.serviceFeePercent || 0, serviceFeeAmount, total: grand,
-      paymentType: body.type, createdAt: new Date().toISOString(),
+      paymentType: body.type, note: o.note ?? null, createdAt: new Date().toISOString(),
       fiscalQrPlaceholder: false, fiscalNumber, fiscalQr,
     };
     return ok({ order: o, receipt });

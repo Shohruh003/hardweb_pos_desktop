@@ -31,6 +31,10 @@ export class OrderEntity {
   @Column({ name: 'queue_number', type: 'int', nullable: true })
   queueNumber: number | null;
 
+  // Chekka izoh (Примечание) — ofitsiant/kassir kiritadi
+  @Column({ type: 'text', nullable: true })
+  note: string | null;
+
   // Vozvrat (to'langan chek qaytarilishi) — faqat Direktor/Administrator (TZ ruxsatlar)
   @Column({ default: false })
   refunded: boolean;

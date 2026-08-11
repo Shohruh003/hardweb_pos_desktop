@@ -92,6 +92,8 @@ export function WaiterPage() {
   // Yuborilgan buyurtmadan olib tashlash uchun belgilangan taomlar (id)
   const [removeIds, setRemoveIds] = useState<string[]>([]);
   const [moreOpen, setMoreOpen] = useState(false); // 3-nuqta menyu (annul/stol/ofitsiant)
+  const [noteOpen, setNoteOpen] = useState(false); // chekka izoh modali
+  const [noteText, setNoteText] = useState('');
   const [changeTableOpen, setChangeTableOpen] = useState(false);
   const [changeWaiterOpen, setChangeWaiterOpen] = useState(false);
   const [waiters, setWaiters] = useState<User[]>([]);
@@ -410,6 +412,24 @@ export function WaiterPage() {
       setFeedback({ variant: 'warning', title: 'Xatolik', subtitle: (e as Error).message });
     } finally {
       setSending(false);
+    }
+  }
+
+  // Chekka izoh (Примечание) — 3-nuqta menyudan
+  function openNote() {
+    setMoreOpen(false);
+    setNoteText(existingOrder?.note ?? '');
+    setNoteOpen(true);
+  }
+  async function saveNote() {
+    if (!existingOrder) return;
+    try {
+      const updated = await api.post<Order>(`/orders/${existingOrder.id}/note`, { note: noteText.trim() });
+      setExistingOrder(updated);
+      setNoteOpen(false);
+      setFeedback({ variant: 'success', title: 'Izoh saqlandi', subtitle: noteText.trim() || 'Izoh olib tashlandi' });
+    } catch (e) {
+      setFeedback({ variant: 'warning', title: 'Xatolik', subtitle: (e as Error).message });
     }
   }
 
@@ -880,6 +900,24 @@ export function WaiterPage() {
         </Modal>
       )}
 
+      {noteOpen && (
+        <Modal title="Chekka izoh" onClose={() => setNoteOpen(false)}>
+          <div className="text-sm text-muted mb-2">Buyurtmaga izoh (oshxona/kassa ko‘radi, chekда chiqadi)</div>
+          <textarea
+            value={noteText}
+            onChange={(e) => setNoteText(e.target.value)}
+            autoFocus
+            rows={3}
+            placeholder="Masalan: achchiq bo‘lmasin, tez tayyorlansin..."
+            className="w-full px-3 py-2.5 rounded-xl bg-bg border border-border outline-none focus:border-primary resize-none"
+          />
+          <div className="flex gap-2 mt-3">
+            <Button variant="ghost" className="flex-1" onClick={() => setNoteOpen(false)}>Bekor</Button>
+            <Button className="flex-1" onClick={saveNote}>Saqlash</Button>
+          </div>
+        </Modal>
+      )}
+
       <div className="h-full flex flex-col">
         {/* Yuqori header — qidiruv (butun kenglik bo'ylab) */}
         <div className="flex items-center gap-2 p-3 border-b border-border">
@@ -1030,6 +1068,12 @@ export function WaiterPage() {
                         >
                           🧑‍🍳 Ofitsiantni o‘zgartirish
                         </button>
+                        <button
+                          onClick={openNote}
+                          className="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-bg"
+                        >
+                          📝 Chekka izoh
+                        </button>
                         <div className="border-t border-border my-1" />
                         <button
                           onClick={annulOrder}
@@ -1041,6 +1085,15 @@ export function WaiterPage() {
                     )}
                   </div>
                 </div>
+                {existingOrder.note && (
+                  <button
+                    onClick={openNote}
+                    className="w-full text-left mb-2 px-3 py-2 rounded-lg bg-warning/10 border border-warning/30 text-sm flex items-start gap-2"
+                  >
+                    <span>📝</span>
+                    <span className="flex-1">{existingOrder.note}</span>
+                  </button>
+                )}
                 <div className="bg-success/5 border border-success/25 rounded-xl divide-y divide-success/10">
                   {existingOrder.items.map((it) => {
                     const marked = removeIds.includes(it.id);

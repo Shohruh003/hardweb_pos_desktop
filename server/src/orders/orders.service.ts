@@ -260,6 +260,7 @@ export class OrdersService {
     if (existing) {
       const newItems = buildItems(this.dataSource.manager);
       existing.items = [...(existing.items || []), ...newItems];
+      if (dto.note !== undefined) existing.note = dto.note?.trim() || null;
       // Yangi taomlar tayyorlanishi kerak — buyurtma yana faollashadi
       if (existing.status === OrderStatus.Ready) {
         existing.status = OrderStatus.Cooking;
@@ -275,6 +276,7 @@ export class OrdersService {
         tableId: dto.tableId,
         waiterId,
         status: OrderStatus.Accepted,
+        note: dto.note?.trim() || null,
         items: buildItems(manager),
       });
       const result = await manager.save(order);
@@ -302,6 +304,18 @@ export class OrdersService {
       await this.tables.save(table);
     }
     const dto = this.toDto(order, table?.number);
+    this.gateway.emitOrderUpdated(dto);
+    return dto;
+  }
+
+  // Chekka izoh (Примечание) — ofitsiant/kassir kiritadi
+  async setNote(id: string, note?: string): Promise<Order> {
+    const order = await this.orders.findOne({ where: { id } });
+    if (!order) throw new NotFoundException('Buyurtma topilmadi');
+    order.note = note?.trim() || null;
+    const saved = await this.orders.save(order);
+    const table = await this.tables.findOne({ where: { id: saved.tableId } });
+    const dto = this.toDto(saved, table?.number);
     this.gateway.emitOrderUpdated(dto);
     return dto;
   }
@@ -560,6 +574,7 @@ export class OrdersService {
       serviceFeeAmount,
       total,
       paymentType: dto.type,
+      note: order.note ?? null,
       createdAt: new Date().toISOString(),
       fiscalQrPlaceholder: !fiscalEnabled, // fiskal o'chiq bo'lsa faqat joy ko'rsatiladi
       fiscalNumber,
@@ -624,6 +639,7 @@ export class OrdersService {
       openedAt: o.openedAt?.toISOString?.() ?? String(o.openedAt),
       closedAt: o.closedAt ? o.closedAt.toISOString() : null,
       queueNumber: o.queueNumber ?? null,
+      note: o.note ?? null,
       tableNumber,
       total,
       refunded: o.refunded ?? false,

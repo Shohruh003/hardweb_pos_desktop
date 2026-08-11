@@ -108,6 +108,11 @@ export function ReceiptPreview({
             <div className="text-[11px] mt-1">
               To‘lov turi: {PAYMENT_LABEL[receipt.paymentType]}
             </div>
+            {receipt.note && (
+              <div className="text-[11px] mt-1 border-t border-dashed border-black/40 pt-1">
+                📝 Izoh: {receipt.note}
+              </div>
+            )}
 
             {/* Fiskal QR hozircha o'chirilgan */}
             <div className="text-center text-[11px] mt-3">Rahmat! Yana keling 😊</div>

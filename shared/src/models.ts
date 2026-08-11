@@ -128,10 +128,19 @@ export interface Order {
   closedAt?: string | null; // yopilgan_vaqt
   queueNumber?: number | null; // navbat_raqami
   items: OrderItem[];
+  // Chek sozlamalari (ofitsiant/kassir kiritadi):
+  servicePercent?: number; // xizmat haqi foizi (Обслуга %)
+  discountPercent?: number; // chegirma foizi (Скидка %)
+  note?: string | null; // chekka izoh (Примечание)
   // Qulaylik uchun (server to'ldiradi):
   tableNumber?: number;
   hall?: string | null; // zal nomi (tarix/filtr uchun)
-  total?: number; // jami summa
+  subtotal?: number; // taomlar summasi (chegirma/xizmatsiz)
+  serviceAmount?: number; // xizmat haqi summasi
+  discountAmount?: number; // chegirma summasi
+  total?: number; // jami summa (subtotal + xizmat - chegirma)
+  paidAmount?: number; // to'langan summa (bo'lib to'lash uchun)
+  payments?: Payment[]; // to'lovlar ro'yxati (naqd/karta/click)
   waiterName?: string | null; // ofitsiant ismi (tarix uchun)
   paymentType?: PaymentType; // to'lov turi (yopilgan bo'lsa)
   refunded?: boolean; // vozvrat qilinganmi
@@ -199,6 +208,7 @@ export interface Receipt {
   serviceFeeAmount: number;
   total: number; // to'lanadigan yakuniy summa
   paymentType: PaymentType;
+  note?: string | null; // chekka izoh (Примечание)
   createdAt: string;
   // Fiskal QR uchun joy (TZ F-6.7)
   fiscalQrPlaceholder: boolean;
