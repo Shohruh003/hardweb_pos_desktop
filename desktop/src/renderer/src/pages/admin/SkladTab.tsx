@@ -43,8 +43,9 @@ export function SkladTab() {
   // Chiqim (hisobdan chiqarish) modali
   const [writeOff, setWriteOff] = useState<Product | null>(null);
   const [woQty, setWoQty] = useState('');
-  // Kirimlar tarixi
+  // Kirimlar tarixi / Ta'minotchilar balansi
   const [showPurchases, setShowPurchases] = useState(false);
+  const [showSuppliers, setShowSuppliers] = useState(false);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
 
   async function load() {
@@ -124,9 +125,79 @@ export function SkladTab() {
     }
   }
 
+  async function openSuppliers() {
+    setShowSuppliers(true);
+    try {
+      setPurchases(await api.get<Purchase[]>('/inventory/purchases'));
+    } catch {
+      setPurchases([]);
+    }
+  }
+
+  // Sklad qoldig'ini Excel (CSV) sifatida saqlash — Excel bemalol ochadi (BOM + ; ajratgich)
+  function exportCsv() {
+    const header = ['Nom', 'Birlik', 'Qoldiq', 'Min qoldiq'];
+    const rows = filtered.map((p) => [p.name, p.unit, num(p.stock), num(p.minStock)]);
+    const csv = [header, ...rows]
+      .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(';'))
+      .join('\r\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `sklad-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const s = search.trim().toLowerCase();
   const filtered = products.filter((p) => !s || p.name.toLowerCase().includes(s));
   const lowCount = products.filter((p) => p.stock <= p.minStock).length;
+
+  // --- Ta'minotchilar balansi (kirimlardan yig'iladi) ---
+  if (showSuppliers) {
+    const map = new Map<string, { supplier: string; total: number; count: number }>();
+    for (const p of purchases) {
+      const key = p.supplier?.trim() || '—';
+      const cur = map.get(key) || { supplier: key, total: 0, count: 0 };
+      cur.total += Number(p.total);
+      cur.count += 1;
+      map.set(key, cur);
+    }
+    const balances = [...map.values()].sort((a, b) => b.total - a.total);
+    const grand = balances.reduce((s, b) => s + b.total, 0);
+    return (
+      <div className="w-full">
+        <div className="flex items-center justify-between mb-4 gap-2">
+          <div className="text-lg font-bold">🧑‍🌾 Ta'minotchilar</div>
+          <button
+            onClick={() => setShowSuppliers(false)}
+            className="flex items-center gap-1.5 px-3 h-9 rounded-lg border border-border hover:border-primary hover:bg-surface-hover font-semibold shrink-0"
+          >
+            <span className="text-lg leading-none">←</span> Orqaga
+          </button>
+        </div>
+        <div className="text-muted text-sm mb-3">
+          Jami olingan: <span className="font-bold text-text">{formatSum(grand)}</span>
+        </div>
+        <div className="bg-surface border border-border rounded-2xl divide-y divide-border">
+          {balances.length === 0 ? (
+            <div className="p-6 text-muted text-center">Hali ta'minot qilinmagan.</div>
+          ) : (
+            balances.map((b) => (
+              <div key={b.supplier} className="flex items-center justify-between px-4 py-3 gap-3">
+                <div className="min-w-0">
+                  <div className="font-semibold truncate">🧑‍🌾 {b.supplier}</div>
+                  <div className="text-sm text-muted">{b.count} ta kirim</div>
+                </div>
+                <div className="font-bold shrink-0">{formatSum(b.total)}</div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    );
+  }
 
   // --- Kirimlar tarixi sahifasi ---
   if (showPurchases) {
@@ -171,16 +242,18 @@ export function SkladTab() {
 
   return (
     <div className="w-full">
-      {/* Tepa panel: qidiruv (o'rtada) + kirimlar tarixi + qo'shish */}
-      <div className="flex items-center gap-3 mb-3">
+      {/* Tepa panel: qidiruv + amallar (mobilda o'raladi) */}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="🔎 Mahsulot qidirish..."
-          className="flex-1 px-4 py-2.5 rounded-lg bg-bg border border-border outline-none focus:border-primary"
+          className="flex-1 min-w-[160px] px-4 py-2.5 rounded-lg bg-bg border border-border outline-none focus:border-primary"
         />
-        <Button variant="ghost" onClick={openPurchaseHistory} className="shrink-0">🧾 Kirimlar tarixi</Button>
-        <Button onClick={openAdd} className="shrink-0">+ Yangi mahsulot</Button>
+        <Button variant="ghost" onClick={exportCsv} className="shrink-0">📊 Excel</Button>
+        <Button variant="ghost" onClick={openSuppliers} className="shrink-0">🧑‍🌾 Ta'minotchilar</Button>
+        <Button variant="ghost" onClick={openPurchaseHistory} className="shrink-0">🧾 Kirimlar</Button>
+        <Button onClick={openAdd} className="shrink-0">+ Mahsulot</Button>
       </div>
       <div className="text-muted text-sm mb-4">
         {filtered.length} ta mahsulot
