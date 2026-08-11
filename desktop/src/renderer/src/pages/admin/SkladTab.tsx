@@ -50,6 +50,12 @@ export function SkladTab() {
 
   async function load() {
     setProducts(await api.get<Product[]>('/inventory/products'));
+    // O'rtacha tannarx (себестоимость) uchun kirimlarni ham olamiz
+    try {
+      setPurchases(await api.get<Purchase[]>('/inventory/purchases'));
+    } catch {
+      /* kirimlar bo'lmasligi mumkin */
+    }
   }
   useEffect(() => {
     load().catch(() => {});
@@ -154,6 +160,21 @@ export function SkladTab() {
   const filtered = products.filter((p) => !s || p.name.toLowerCase().includes(s));
   const lowCount = products.filter((p) => p.stock <= p.minStock).length;
 
+  // O'rtacha tannarx (себестоимость ср.) — kirimlardan og'irlashgan o'rtacha narx
+  const avgCost = new Map<string, number>();
+  {
+    const agg = new Map<string, { sum: number; qty: number }>();
+    for (const p of purchases) {
+      const a = agg.get(p.productId) || { sum: 0, qty: 0 };
+      a.sum += Number(p.total);
+      a.qty += Number(p.quantity);
+      agg.set(p.productId, a);
+    }
+    for (const [pid, a] of agg) avgCost.set(pid, a.qty > 0 ? a.sum / a.qty : 0);
+  }
+  const stockValue = (p: Product) => p.stock * (avgCost.get(p.id) || 0);
+  const totalStockValue = filtered.reduce((acc, p) => acc + stockValue(p), 0);
+
   // --- Ta'minotchilar balansi (kirimlardan yig'iladi) ---
   if (showSuppliers) {
     const map = new Map<string, { supplier: string; total: number; count: number }>();
@@ -255,10 +276,13 @@ export function SkladTab() {
         <Button variant="ghost" onClick={openPurchaseHistory} className="shrink-0">🧾 Kirimlar</Button>
         <Button onClick={openAdd} className="shrink-0">+ Mahsulot</Button>
       </div>
-      <div className="text-muted text-sm mb-4">
-        {filtered.length} ta mahsulot
+      <div className="text-muted text-sm mb-4 flex flex-wrap items-center gap-x-2">
+        <span>{filtered.length} ta mahsulot</span>
+        {totalStockValue > 0 && (
+          <span>· Qoldiq qiymati: <span className="font-bold text-text">{formatSum(Math.round(totalStockValue))}</span></span>
+        )}
         {lowCount > 0 && (
-          <span className="ml-2 text-danger font-semibold">· {lowCount} ta kam qoldi ⚠️</span>
+          <span className="text-danger font-semibold">· {lowCount} ta kam qoldi ⚠️</span>
         )}
       </div>
 
@@ -277,6 +301,9 @@ export function SkladTab() {
                   </div>
                   <div className="text-sm text-muted">
                     Min: {num(p.minStock)} {p.unit}
+                    {(avgCost.get(p.id) || 0) > 0 && (
+                      <> · Tannarx: {formatSum(Math.round(avgCost.get(p.id) || 0))}/{p.unit} · Qiymat: {formatSum(Math.round(stockValue(p)))}</>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
