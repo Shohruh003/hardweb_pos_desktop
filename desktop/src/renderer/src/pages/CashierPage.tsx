@@ -48,9 +48,11 @@ export function CashierPage() {
   const [selected, setSelected] = useState<Order | null>(null);
   const [discount, setDiscount] = useState(0);
   const [serviceFee, setServiceFee] = useState(0);
-  const [payType, setPayType] = useState<PaymentType>(PaymentType.Cash);
   const [paying, setPaying] = useState(false);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  // Bo'lib to'lash — shu buyurtmaning to'lovlari (naqd/karta/qr)
+  const [payments, setPayments] = useState<{ id: string; type: PaymentType; amount: number }[]>([]);
+  const [payAmount, setPayAmount] = useState('');
   // To'langan, lekin hali chek chiqarilmagan hisoblar — chop etilgunча ro'yxatда qoladi
   const [unprinted, setUnprinted] = useState<{ order: Order; receipt: Receipt }[]>([]);
   const [exciseInputs, setExciseInputs] = useState<Record<string, string>>({});
@@ -145,10 +147,8 @@ export function CashierPage() {
 
   function selectOrder(o: Order) {
     setSelected(o);
-    setDiscount(0);
-    setServiceFee(0);
-    setPayType(PaymentType.Cash);
     setExciseInputs({});
+    // chegirma/xizmat/to'lovlar — selected o'zgarganda useEffect yuklaydi
   }
 
   // Aksiz kodi kerak bo'lib, hali skanerlanmagan taomlar (TZ F-8.5/8.6)
@@ -180,25 +180,59 @@ export function CashierPage() {
   const discountAmount = Math.round((subtotal * discount) / 100);
   const serviceFeeAmount = Math.round((subtotal * serviceFee) / 100);
   const total = subtotal - discountAmount + serviceFeeAmount;
+  const paidAmount = payments.reduce((s, p) => s + p.amount, 0);
+  const remaining = Math.max(0, total - paidAmount);
 
-  async function pay() {
-    if (!selected) return;
+  // Buyurtma tanlanganda — uning to'lovlari va chegirma/xizmatini yuklaymiz
+  useEffect(() => {
+    if (!selected) {
+      setPayments([]);
+      setPayAmount('');
+      return;
+    }
+    setDiscount(selected.discountPercent ?? 0);
+    setServiceFee(selected.servicePercent ?? 0);
+    setPayAmount('');
+    api
+      .get<{ id: string; type: PaymentType; amount: number }[]>(`/orders/${selected.id}/payments`)
+      .then((ps) => setPayments(ps))
+      .catch(() => setPayments([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id]);
+
+  // Bir to'lov qo'shish (bo'lib to'lash). To'liq to'langanda — chek chiqadi va hisob yopiladi.
+  async function addPayment(type: PaymentType) {
+    if (!selected || remaining <= 0) return;
+    const amt = payAmount.trim() ? Math.round(Number(payAmount)) : remaining;
+    if (!amt || amt <= 0) {
+      alert('To‘lov summasi noto‘g‘ri');
+      return;
+    }
     setPaying(true);
     try {
-      const res = await api.post<{ receipt: Receipt }>(
-        `/orders/${selected.id}/pay`,
-        {
-          type: payType,
-          discountPercent: discount,
-          serviceFeePercent: serviceFee,
-        },
-      );
-      // To'landi — lekin chek chiqarilgunча ro'yxatда "chek chiqmadi" bo'lib qoladi
-      if (selected) setUnprinted((prev) => [...prev, { order: selected, receipt: res.receipt }]);
-      setReceipt(res.receipt);
-      setSelected(null);
-      refresh();
-      // Chek faqat oynadagi "Chop etish" tugmasi bosilganda chiqadi (avtomatik emas)
+      const res = await api.post<{
+        fullyPaid: boolean;
+        receipt?: Receipt;
+        paidAmount: number;
+        payments: { id: string; type: PaymentType; amount: number }[];
+      }>(`/orders/${selected.id}/pay`, {
+        type,
+        amount: amt,
+        discountPercent: discount,
+        serviceFeePercent: serviceFee,
+      });
+      if (res.fullyPaid && res.receipt) {
+        // To'liq to'landi — chek chiqarilgunga qadar ro'yxatda "chek chiqmadi" bo'lib qoladi
+        const rc = res.receipt;
+        setUnprinted((prev) => [...prev, { order: selected, receipt: rc }]);
+        setReceipt(rc);
+        setSelected(null);
+        refresh();
+      } else {
+        // Qisman to'landi — buyurtma ochiq qoladi
+        setPayments(res.payments);
+        setPayAmount('');
+      }
     } catch (e) {
       alert((e as Error).message);
     } finally {
@@ -206,7 +240,18 @@ export function CashierPage() {
     }
   }
 
-  const payLabel: Record<string, string> = { naqd: 'Naqd', karta: 'Karta', qr: 'QR' };
+  async function removePayment(pid: string) {
+    if (!selected) return;
+    try {
+      await api.del(`/orders/${selected.id}/payments/${pid}`);
+      const ps = await api.get<{ id: string; type: PaymentType; amount: number }[]>(
+        `/orders/${selected.id}/payments`,
+      );
+      setPayments(ps);
+    } catch (e) {
+      alert((e as Error).message);
+    }
+  }
 
   // Cheklar tarixi — alohida sahifa (filtrlar + infinite scroll, ReceiptsTab qayta ishlatiladi)
   if (historyOpen) {
@@ -468,28 +513,8 @@ export function CashierPage() {
                 <Field label={t('cashier.serviceFee')} value={serviceFee} onChange={setServiceFee} />
               </div>
 
-              {/* To'lov turi (TZ F-3.2) */}
-              <div className="mb-5">
-                <div className="text-sm text-muted mb-2">{t('cashier.payType')}</div>
-                <div className="flex gap-2">
-                  {PAYMENT_OPTIONS.map((p) => (
-                    <button
-                      key={p.type}
-                      onClick={() => setPayType(p.type)}
-                      className={`flex-1 py-3 rounded-lg font-semibold ${
-                        payType === p.type
-                          ? 'bg-primary text-white'
-                          : 'bg-bg border border-border text-muted hover:text-text'
-                      }`}
-                    >
-                      {t(`pay.${p.type}`)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
               {/* Yakuniy summa */}
-              <div className="bg-bg border border-border rounded-xl p-4 mb-5 space-y-1.5">
+              <div className="bg-bg border border-border rounded-xl p-4 mb-4 space-y-1.5">
                 <SumRow label="Jami" value={formatSum(subtotal)} />
                 {discountAmount > 0 && (
                   <SumRow label={`Chegirma (${discount}%)`} value={`- ${formatSum(discountAmount)}`} color="text-danger" />
@@ -501,19 +526,64 @@ export function CashierPage() {
                   <span>To‘lanadi</span>
                   <span className="text-primary">{formatSum(total)}</span>
                 </div>
+                {paidAmount > 0 && (
+                  <>
+                    <SumRow label="To‘langan" value={formatSum(paidAmount)} color="text-success" />
+                    <div className="flex justify-between font-bold">
+                      <span>Qoldi</span>
+                      <span className={remaining > 0 ? 'text-danger' : 'text-success'}>{formatSum(remaining)}</span>
+                    </div>
+                  </>
+                )}
               </div>
 
-              <Button
-                className="w-full py-3.5 text-lg"
-                disabled={paying || pendingExcise.length > 0}
-                onClick={pay}
-              >
-                {pendingExcise.length > 0
-                  ? 'Avval aksiz kodini skanerlang'
-                  : paying
-                    ? t('common.saving')
-                    : t('cashier.pay')}
-              </Button>
+              {/* Qilingan to'lovlar (bo'lib to'lash) */}
+              {payments.length > 0 && (
+                <div className="mb-4 space-y-1.5">
+                  {payments.map((p) => (
+                    <div key={p.id} className="flex items-center gap-2 text-sm bg-bg border border-border rounded-lg px-3 py-2">
+                      <span className="font-semibold">{t(`pay.${p.type}`)}</span>
+                      <span className="ml-auto font-bold">{formatSum(p.amount)}</span>
+                      <button
+                        onClick={() => removePayment(p.id)}
+                        aria-label="O'chirish"
+                        className="w-7 h-7 shrink-0 rounded-lg hover:bg-danger/10 text-muted hover:text-danger flex items-center justify-center"
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* To'lov summasi (bo'sh qoldirilsa — qolgan summa to'liq to'lanadi) */}
+              <div className="mb-3">
+                <div className="text-sm text-muted mb-2">To‘lov summasi <span className="text-xs">(bo‘sh — qolganini to‘liq)</span></div>
+                <input
+                  value={payAmount}
+                  onChange={(e) => setPayAmount(e.target.value.replace(/[^\d]/g, ''))}
+                  inputMode="numeric"
+                  placeholder={formatSum(remaining)}
+                  className="w-full px-3 py-3 rounded-xl bg-bg border border-border outline-none focus:border-primary text-lg font-bold text-center"
+                />
+              </div>
+
+              {/* To'lov usullari — bosilganda summa shu usul bilan to'lanadi */}
+              <div className="grid grid-cols-3 gap-2">
+                {PAYMENT_OPTIONS.map((p) => (
+                  <button
+                    key={p.type}
+                    onClick={() => addPayment(p.type)}
+                    disabled={paying || pendingExcise.length > 0 || remaining <= 0}
+                    className="py-3.5 rounded-xl font-bold bg-primary text-white hover:brightness-110 active:scale-95 transition-all disabled:opacity-50"
+                  >
+                    {t(`pay.${p.type}`)}
+                  </button>
+                ))}
+              </div>
+              {pendingExcise.length > 0 && (
+                <div className="text-xs text-danger mt-2 text-center">Avval aksiz kodini skanerlang</div>
+              )}
             </div>
           </div>
         </div>

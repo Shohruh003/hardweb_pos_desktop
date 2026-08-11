@@ -105,9 +105,21 @@ export function ReceiptPreview({
               <span>TO‘LANDI</span>
               <span>{formatSum(receipt.total)}</span>
             </div>
-            <div className="text-[11px] mt-1">
-              To‘lov turi: {PAYMENT_LABEL[receipt.paymentType]}
-            </div>
+            {receipt.payments && receipt.payments.length > 1 ? (
+              <div className="text-[11px] mt-1">
+                <div className="mb-0.5">To‘lov (bo‘lib):</div>
+                {receipt.payments.map((p, i) => (
+                  <div key={i} className="flex justify-between pl-2">
+                    <span>{PAYMENT_LABEL[p.type]}</span>
+                    <span>{formatSum(p.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-[11px] mt-1">
+                To‘lov turi: {PAYMENT_LABEL[receipt.paymentType]}
+              </div>
+            )}
             {receipt.note && (
               <div className="text-[11px] mt-1 border-t border-dashed border-black/40 pt-1">
                 📝 Izoh: {receipt.note}

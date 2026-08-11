@@ -76,6 +76,12 @@ export class PayOrderDto {
   @IsEnum(PaymentType)
   type: PaymentType;
 
+  // Bo'lib to'lash uchun to'lov summasi. Berilmasa — qolgan summa to'liq to'lanadi.
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  amount?: number;
+
   // Chegirma foizi (TZ F-3.3), 0-100
   @IsOptional()
   @IsNumber()

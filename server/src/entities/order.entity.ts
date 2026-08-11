@@ -35,6 +35,13 @@ export class OrderEntity {
   @Column({ type: 'text', nullable: true })
   note: string | null;
 
+  // Chegirma/xizmat haqi foizi — to'lovda saqlanadi (bo'lib to'lashda total barqaror qoladi)
+  @Column({ name: 'discount_percent', type: 'numeric', precision: 5, scale: 2, default: 0 })
+  discountPercent: number;
+
+  @Column({ name: 'service_percent', type: 'numeric', precision: 5, scale: 2, default: 0 })
+  servicePercent: number;
+
   // Vozvrat (to'langan chek qaytarilishi) — faqat Direktor/Administrator (TZ ruxsatlar)
   @Column({ default: false })
   refunded: boolean;

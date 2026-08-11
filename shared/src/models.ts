@@ -208,6 +208,7 @@ export interface Receipt {
   serviceFeeAmount: number;
   total: number; // to'lanadigan yakuniy summa
   paymentType: PaymentType;
+  payments?: { type: PaymentType; amount: number }[]; // bo'lib to'langan bo'lsa (naqd+karta+...)
   note?: string | null; // chekka izoh (Примечание)
   createdAt: string;
   // Fiskal QR uchun joy (TZ F-6.7)

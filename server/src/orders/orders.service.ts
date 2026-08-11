@@ -21,6 +21,7 @@ import {
   Order,
   OrderStatus,
   OrderItemStatus,
+  PaymentType,
   Receipt,
   TableStatus,
   MenuUnit,
@@ -471,7 +472,14 @@ export class OrdersService {
     id: string,
     dto: PayOrderDto,
     cashierId: string,
-  ): Promise<{ order: Order; receipt: Receipt }> {
+  ): Promise<{
+    order: Order;
+    receipt?: Receipt;
+    fullyPaid: boolean;
+    paidAmount: number;
+    total: number;
+    payments: { id: string; type: PaymentType; amount: number; createdAt: string }[];
+  }> {
     const order = await this.orders.findOne({ where: { id } });
     if (!order) throw new NotFoundException('Buyurtma topilmadi');
     if (order.status === OrderStatus.Closed) {
@@ -490,69 +498,120 @@ export class OrdersService {
       );
     }
 
+    // Chegirma/xizmat foizini buyurtmaga saqlaymiz — bo'lib to'lashda total barqaror qoladi
+    if (dto.discountPercent != null) order.discountPercent = dto.discountPercent;
+    if (dto.serviceFeePercent != null) order.servicePercent = dto.serviceFeePercent;
+
     const subtotal = (order.items || []).reduce(
       (s, it) => s + Number(it.price) * Number(it.quantity),
       0,
     );
-    const discountPercent = dto.discountPercent ?? 0;
-    const serviceFeePercent = dto.serviceFeePercent ?? 0;
+    const discountPercent = Number(order.discountPercent) || 0;
+    const serviceFeePercent = Number(order.servicePercent) || 0;
     const discountAmount = Math.round((subtotal * discountPercent) / 100);
     const serviceFeeAmount = Math.round((subtotal * serviceFeePercent) / 100);
     const total = subtotal - discountAmount + serviceFeeAmount;
+
+    // Oldingi to'lovlar (bo'lib to'lash) — qolgan summani hisoblaymiz
+    const priorPayments = await this.payments.find({
+      where: { orderId: order.id },
+      order: { createdAt: 'ASC' },
+    });
+    const priorPaid = priorPayments.reduce((s, p) => s + Number(p.amount), 0);
+    const remaining = Math.max(0, total - priorPaid);
+    if (remaining <= 0) {
+      throw new BadRequestException('Hisob allaqachon to‘langan');
+    }
+    // To'lov summasi: berilmasa — qolgan summa; berilsa — qolgandan oshmaydi
+    const payAmount =
+      dto.amount != null ? Math.min(Math.round(dto.amount), remaining) : remaining;
+    if (payAmount <= 0) {
+      throw new BadRequestException('To‘lov summasi noto‘g‘ri');
+    }
+    const newPaid = priorPaid + payAmount;
+    const fullyPaid = newPaid >= total;
 
     const table = await this.tables.findOne({ where: { id: order.tableId } });
     const cashier = await this.users.findOne({ where: { id: cashierId } });
     const waiter = await this.users.findOne({ where: { id: order.waiterId } });
 
-    // Fiskal hujjat (TZ 8.1). Hozir demo generator — real OFD ulanganda shu yerda
-    // soliq operatori API'siga so'rov yuboriladi va fiskal_raqam/QR o'shandan olinadi.
+    // Fiskal hujjat (TZ 8.1) — faqat to'liq to'langanda yaratiladi
     let fiscalNumber: string | undefined;
     let fiscalQr: string | undefined;
+    let newPaymentId = '';
     const fiscalEnabled = process.env.FISCAL_ENABLED !== 'false';
 
     await this.dataSource.transaction(async (manager) => {
-      await manager.save(
+      const savedPayment = await manager.save(
         manager.create(PaymentEntity, {
           orderId: order.id,
-          amount: total,
+          amount: payAmount,
           type: dto.type,
           cashierId,
         }),
       );
-      order.status = OrderStatus.Closed;
-      order.closedAt = new Date();
+      newPaymentId = savedPayment.id;
+      // chegirma/xizmat persistini saqlaymiz
       await manager.save(order);
 
-      if (table) {
-        table.status = TableStatus.Free; // stol bo'shadi (TZ F-3.5)
-        await manager.save(table);
-      }
+      if (fullyPaid) {
+        order.status = OrderStatus.Closed;
+        order.closedAt = new Date();
+        await manager.save(order);
 
-      // Sotildi — taomlarga ketgan mahsulotlarni skladdan ayiramiz
-      await this.inventory.deductForOrder(
-        manager,
-        (order.items || []).map((it) => ({
-          menuItemId: it.menuItemId,
-          quantity: Number(it.quantity),
-        })),
-      );
+        if (table) {
+          table.status = TableStatus.Free; // stol bo'shadi (TZ F-3.5)
+          await manager.save(table);
+        }
 
-      if (fiscalEnabled) {
-        const count = await manager.count(FiscalDocEntity);
-        fiscalNumber = String(count + 1).padStart(10, '0');
-        // QR payload — real OFD'da bu soliq tekshiruv URL'i bo'ladi
-        fiscalQr =
-          `https://ofd.soliq.uz/check?fn=${fiscalNumber}` +
-          `&sum=${total}&t=${order.closedAt!.getTime()}`;
-        await manager.save(
-          manager.create(FiscalDocEntity, {
-            orderId: order.id,
-            fiscalNumber,
-            qrCode: fiscalQr,
-          }),
+        // Sotildi — taomlarga ketgan mahsulotlarni skladdan ayiramiz
+        await this.inventory.deductForOrder(
+          manager,
+          (order.items || []).map((it) => ({
+            menuItemId: it.menuItemId,
+            quantity: Number(it.quantity),
+          })),
         );
+
+        if (fiscalEnabled) {
+          const count = await manager.count(FiscalDocEntity);
+          fiscalNumber = String(count + 1).padStart(10, '0');
+          fiscalQr =
+            `https://ofd.soliq.uz/check?fn=${fiscalNumber}` +
+            `&sum=${total}&t=${order.closedAt!.getTime()}`;
+          await manager.save(
+            manager.create(FiscalDocEntity, {
+              orderId: order.id,
+              fiscalNumber,
+              qrCode: fiscalQr,
+            }),
+          );
+        }
       }
     });
+
+    const allPayments = [
+      ...priorPayments.map((p) => ({
+        id: p.id,
+        type: p.type,
+        amount: Number(p.amount),
+        createdAt: p.createdAt?.toISOString?.() ?? String(p.createdAt),
+      })),
+      { id: newPaymentId, type: dto.type, amount: payAmount, createdAt: new Date().toISOString() },
+    ];
+
+    const dtoOut = this.toDto(order, table?.number);
+    dtoOut.subtotal = subtotal;
+    dtoOut.discountPercent = discountPercent;
+    dtoOut.servicePercent = serviceFeePercent;
+    dtoOut.total = total;
+    dtoOut.paidAmount = newPaid;
+
+    if (!fullyPaid) {
+      // Qisman to'landi — buyurtma ochiq qoladi, chek chiqmaydi
+      this.gateway.emitOrderUpdated(dtoOut);
+      return { order: dtoOut, fullyPaid: false, paidAmount: newPaid, total, payments: allPayments };
+    }
 
     const receipt: Receipt = {
       orderId: order.id,
@@ -574,16 +633,44 @@ export class OrdersService {
       serviceFeeAmount,
       total,
       paymentType: dto.type,
+      payments: allPayments.map((p) => ({ type: p.type, amount: p.amount })),
       note: order.note ?? null,
       createdAt: new Date().toISOString(),
-      fiscalQrPlaceholder: !fiscalEnabled, // fiskal o'chiq bo'lsa faqat joy ko'rsatiladi
+      fiscalQrPlaceholder: !fiscalEnabled,
       fiscalNumber,
       fiscalQr,
     };
 
-    const dtoOut = this.toDto(order, table?.number);
     this.gateway.emitOrderClosed(dtoOut); // -> KDS/navbatdan o'chadi
-    return { order: dtoOut, receipt };
+    return { order: dtoOut, receipt, fullyPaid: true, paidAmount: newPaid, total, payments: allPayments };
+  }
+
+  // Bo'lib to'langan qisman to'lovni bekor qilish (chek yopilmagan bo'lsa)
+  async deletePayment(orderId: string, paymentId: string): Promise<Order> {
+    const order = await this.orders.findOne({ where: { id: orderId } });
+    if (!order) throw new NotFoundException('Buyurtma topilmadi');
+    if (order.status === OrderStatus.Closed) {
+      throw new BadRequestException('Yopilgan chek to‘lovini o‘chirib bo‘lmaydi');
+    }
+    await this.payments.delete({ id: paymentId, orderId });
+    const remaining = await this.payments.find({ where: { orderId }, order: { createdAt: 'ASC' } });
+    const paidAmount = remaining.reduce((s, p) => s + Number(p.amount), 0);
+    const table = await this.tables.findOne({ where: { id: order.tableId } });
+    const dtoOut = this.toDto(order, table?.number);
+    dtoOut.paidAmount = paidAmount;
+    this.gateway.emitOrderUpdated(dtoOut);
+    return dtoOut;
+  }
+
+  // Buyurtma to'lovlari ro'yxati (bo'lib to'lash uchun)
+  async getPayments(orderId: string) {
+    const rows = await this.payments.find({ where: { orderId }, order: { createdAt: 'ASC' } });
+    return rows.map((p) => ({
+      id: p.id,
+      type: p.type,
+      amount: Number(p.amount),
+      createdAt: p.createdAt?.toISOString?.() ?? String(p.createdAt),
+    }));
   }
 
   // Vozvrat — to'langan (yopilgan) chekni qaytarish. Faqat Direktor/Administrator
@@ -640,6 +727,8 @@ export class OrdersService {
       closedAt: o.closedAt ? o.closedAt.toISOString() : null,
       queueNumber: o.queueNumber ?? null,
       note: o.note ?? null,
+      discountPercent: Number(o.discountPercent) || 0,
+      servicePercent: Number(o.servicePercent) || 0,
       tableNumber,
       total,
       refunded: o.refunded ?? false,

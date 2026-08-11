@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   ForbiddenException,
   Get,
   Param,
@@ -123,7 +124,7 @@ export class OrdersController {
     return this.orders.refund(id, dto.reason ?? '', req.user.id, req.user.name);
   }
 
-  // Kassa: to'lov va hisobni yopish
+  // Kassa: to'lov (bo'lib to'lash — qisman yoki to'liq). To'liq bo'lganda chek chiqadi.
   @Post(':id/pay')
   pay(
     @Param('id') id: string,
@@ -131,5 +132,17 @@ export class OrdersController {
     @Request() req: any,
   ) {
     return this.orders.pay(id, dto, req.user.id);
+  }
+
+  // Buyurtma to'lovlari ro'yxati (bo'lib to'lash)
+  @Get(':id/payments')
+  getPayments(@Param('id') id: string) {
+    return this.orders.getPayments(id);
+  }
+
+  // Qisman to'lovni bekor qilish (chek yopilmagan bo'lsa)
+  @Delete(':id/payments/:paymentId')
+  deletePayment(@Param('id') id: string, @Param('paymentId') paymentId: string) {
+    return this.orders.deletePayment(id, paymentId);
   }
 }

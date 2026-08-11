@@ -191,6 +191,7 @@ interface MockOrder {
   id: string; tableId: string; tableNumber: number; hall: string | null; waiterId: string; waiterName: string;
   status: OrderStatus; openedAt: string; closedAt: string | null;
   queueNumber: number | null; items: MockItem[]; total: number; note?: string | null;
+  discountPercent?: number; servicePercent?: number;
   refunded?: boolean; refundReason?: string | null; refundedAt?: string | null;
 }
 const hallOf = (tableId: string): string | null => tables.find((t) => t.id === tableId)?.hall ?? null;
@@ -618,20 +619,49 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     });
     return ok(o);
   }
+  if (seg[0] === 'orders' && seg[2] === 'payments' && seg[3] && method === 'DELETE') {
+    // Qisman to'lovni bekor qilish (chek yopilmagan bo'lsa)
+    const o = orders.find((x) => x.id === seg[1]);
+    if (!o) return fail('Buyurtma topilmadi');
+    if (o.status === OrderStatus.Closed) return fail('Yopilgan chek to‘lovini o‘chirib bo‘lmaydi');
+    const idx = payments.findIndex((p) => p.id === seg[3] && p.orderId === o.id);
+    if (idx >= 0) payments.splice(idx, 1);
+    emit(SOCKET_EVENTS.ORDER_UPDATED, { order: o });
+    return ok(o);
+  }
+  if (seg[0] === 'orders' && seg[2] === 'payments' && method === 'GET') {
+    return ok(payments.filter((p) => p.orderId === seg[1]).map((p) => ({ id: p.id, type: p.type, amount: p.amount, createdAt: p.createdAt })));
+  }
   if (seg[0] === 'orders' && seg[2] === 'pay' && method === 'POST') {
     const o = orders.find((x) => x.id === seg[1]);
     if (!o) return fail('Buyurtma topilmadi');
+    if (o.status === OrderStatus.Closed) return fail('Hisob allaqachon yopilgan');
     const missing = o.items.filter((it) => it.exciseRequired && !it.exciseCode);
     if (missing.length) return fail(`Aksiz kodi skanerlanmagan: ${missing.map((m) => m.menuItemName).join(', ')}`);
-    const subtotal = o.total;
-    const discountAmount = Math.round((subtotal * (body.discountPercent || 0)) / 100);
-    const serviceFeeAmount = Math.round((subtotal * (body.serviceFeePercent || 0)) / 100);
+    if (body.discountPercent != null) o.discountPercent = body.discountPercent;
+    if (body.serviceFeePercent != null) o.servicePercent = body.serviceFeePercent;
+    const subtotal = total(o.items);
+    const discountPercent = o.discountPercent || 0;
+    const serviceFeePercent = o.servicePercent || 0;
+    const discountAmount = Math.round((subtotal * discountPercent) / 100);
+    const serviceFeeAmount = Math.round((subtotal * serviceFeePercent) / 100);
     const grand = subtotal - discountAmount + serviceFeeAmount;
+    const priorPaid = payments.filter((p) => p.orderId === o.id).reduce((s, p) => s + p.amount, 0);
+    const remaining = Math.max(0, grand - priorPaid);
+    if (remaining <= 0) return fail('Hisob allaqachon to‘langan');
+    const payAmount = body.amount != null ? Math.min(Math.round(body.amount), remaining) : remaining;
+    if (payAmount <= 0) return fail('To‘lov summasi noto‘g‘ri');
+    payments.push({ id: uid(), orderId: o.id, amount: payAmount, type: body.type, cashierId: cashier.id, createdAt: new Date().toISOString() });
+    const newPaid = priorPaid + payAmount;
+    const fullyPaid = newPaid >= grand;
+    const allPayments = payments.filter((p) => p.orderId === o.id).map((p) => ({ id: p.id, type: p.type, amount: p.amount, createdAt: p.createdAt }));
+    if (!fullyPaid) {
+      emit(SOCKET_EVENTS.ORDER_UPDATED, { order: o });
+      return ok({ order: o, fullyPaid: false, paidAmount: newPaid, total: grand, payments: allPayments });
+    }
     o.status = OrderStatus.Closed; o.closedAt = new Date().toISOString();
-    // Sotildi — mahsulotlarni skladdan ayiramiz
     deductStock(o.items.map((it) => ({ menuItemId: it.menuItemId, quantity: it.quantity })));
     const table = tables.find((t) => t.id === o.tableId); if (table) table.status = TableStatus.Free;
-    payments.push({ id: uid(), orderId: o.id, amount: grand, type: body.type, cashierId: cashier.id, createdAt: new Date().toISOString() });
     fiscalCounter++;
     const fiscalNumber = String(fiscalCounter).padStart(10, '0');
     const fiscalQr = `https://ofd.soliq.uz/check?fn=${fiscalNumber}&sum=${grand}&t=${Date.now()}`;
@@ -639,12 +669,13 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any): Pr
     const receipt = {
       orderId: o.id, tableNumber: o.tableNumber, hall: o.hall ?? hallOf(o.tableId), waiterName: o.waiterName, cashierName: cashier.name,
       lines: o.items.map((it) => ({ name: it.menuItemName, quantity: it.quantity, price: it.price, sum: it.price * it.quantity, unit: it.unit ?? MenuUnit.Piece })),
-      subtotal, discountPercent: body.discountPercent || 0, discountAmount,
-      serviceFeePercent: body.serviceFeePercent || 0, serviceFeeAmount, total: grand,
-      paymentType: body.type, note: o.note ?? null, createdAt: new Date().toISOString(),
+      subtotal, discountPercent, discountAmount,
+      serviceFeePercent, serviceFeeAmount, total: grand,
+      paymentType: body.type, payments: allPayments.map((p) => ({ type: p.type, amount: p.amount })),
+      note: o.note ?? null, createdAt: new Date().toISOString(),
       fiscalQrPlaceholder: false, fiscalNumber, fiscalQr,
     };
-    return ok({ order: o, receipt });
+    return ok({ order: o, receipt, fullyPaid: true, paidAmount: newPaid, total: grand, payments: allPayments });
   }
 
   // Reports
