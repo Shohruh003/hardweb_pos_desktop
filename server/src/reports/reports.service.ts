@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { MoreThanOrEqual, Repository } from 'typeorm';
 
 import {
   OrderEntity,
@@ -148,5 +148,33 @@ export class ReportsService {
       ordersCount: Number(r.ordersCount),
       revenue: Number(r.revenue),
     }));
+  }
+
+  // Vozvratlar (qaytarilgan cheklar) — soni, umumiy summasi va ro'yxati
+  async refunds(period: ReportPeriod) {
+    const start = this.periodStart(period);
+    const orders = await this.orders.find({
+      where: { refunded: true, refundedAt: MoreThanOrEqual(start) },
+      relations: ['items'],
+      order: { refundedAt: 'DESC' },
+    });
+    const items = orders.map((o) => {
+      const total = (o.items || []).reduce(
+        (a, it) => a + Number(it.price) * it.quantity,
+        0,
+      );
+      return {
+        id: o.id,
+        total,
+        reason: o.refundReason || '',
+        refundedAt: o.refundedAt,
+        products: (o.items || []).map((it) => ({
+          name: it.menuItemName,
+          quantity: it.quantity,
+        })),
+      };
+    });
+    const total = items.reduce((a, r) => a + r.total, 0);
+    return { count: items.length, total, items };
   }
 }

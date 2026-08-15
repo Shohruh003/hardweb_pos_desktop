@@ -62,8 +62,15 @@ export function SettingsPanel({
     try {
       const r = await api.post<{ chatId: string | null }>('/settings/telegram-detect', { token: s.telegramToken });
       if (r.chatId) {
-        setS({ ...s, telegramChatId: r.chatId });
-        setMsg(`Chat ID topildi: ${r.chatId} ✓`);
+        // Bir nechta admin — mavjud ro'yxatga qo'shib boramiz (takrorlamasdan)
+        const list = (s.telegramChatId ?? '').split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean);
+        if (list.includes(r.chatId)) {
+          setMsg(`Bu ID allaqachon ro'yxatda: ${r.chatId}`);
+        } else {
+          const next = [...list, r.chatId].join(', ');
+          setS({ ...s, telegramChatId: next });
+          setMsg(`Qo'shildi: ${r.chatId} ✓  (jami ${list.length + 1} ta admin) — "Saqlash"ni bosing`);
+        }
       } else {
         setMsg('Topilmadi — avval botga Telegram\'da /start yozing, keyin qayta bosing');
       }
@@ -125,6 +132,8 @@ export function SettingsPanel({
         Odamning <b>raqamli Telegram ID</b>'sini yozing (masalan <b>123456789</b>). Bir
         nechta bo‘lsa <b>vergul bilan</b>: <span className="font-mono">123, 456</span>.
         ID'ni <b>@userinfobot</b>dan olasiz yoki "Avtomatik olish" bilan.<br />
+        <b>Bir nechta admin:</b> har bir admin botга <b>/start</b> bossin, so'ng "Avtomatik
+        olish"ни <b>ketma-ket</b> bosing — har biri ro'yxatga qo'shiladi. Hisobot hammасiга boradi.<br />
         <i>Muhim: o‘sha odam botга avval bir marta <b>/start</b> bosган bo‘lishi shart —
         Telegram qoidasi (aks holda xabar yetmaydi). Kanal kerak bo‘lsa <b>@kanal_nomi</b>
         ham yozish mumkin.</i>

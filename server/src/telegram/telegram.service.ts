@@ -170,6 +170,11 @@ export class TelegramService implements OnModuleInit {
       where: { status: OrderStatus.Closed, closedAt: Between(start, end) },
     });
 
+    // Hali yopilmagan (ochiq) cheklar — hisobot chala emasligini bildirish uchun
+    const openCount = await this.orders.count({
+      where: { status: Not(OrderStatus.Closed), refunded: false },
+    });
+
     const fmt = (n: number) => new Intl.NumberFormat('uz-UZ').format(n);
 
     // Vozvrat qilingan mahsulotlar ro'yxati (eng ko'pi 15 ta chek)
@@ -194,7 +199,11 @@ export class TelegramService implements OnModuleInit {
         `↩️ Vozvratlar: ${refundedOrders.length} ta — <b>${fmt(refundTotal)} so'm</b>\n` +
         refundBlock +
         `\n━━━━━━━━━━━━\n` +
-        `✅ Sof (rasxodsiz): <b>${fmt(revenue - expenseTotal)} so'm</b>`,
+        `✅ Sof (rasxodsiz): <b>${fmt(revenue - expenseTotal)} so'm</b>` +
+        (openCount > 0
+          ? `\n\n⚠️ <b>Diqqat:</b> hozir <b>${openCount} ta chek hali ochiq</b> (yopilmagan). ` +
+            `Hisobot to'liq bo'lishi uchun barcha stollar yopilgach qayta yuboring.`
+          : `\n\n🟢 Barcha cheklar yopilgan — hisobot to'liq.`),
     );
   }
 }

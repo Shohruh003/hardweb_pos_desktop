@@ -7,6 +7,14 @@ import { api } from '../lib/api';
 type Period = 'day' | 'week' | 'month';
 interface DailyPoint { date: string; revenue: number }
 interface ExpenseData { items: unknown[]; total: number }
+interface RefundItem {
+  id: string;
+  total: number;
+  reason: string;
+  refundedAt: string | null;
+  products: { name: string; quantity: number }[];
+}
+interface RefundData { count: number; total: number; items: RefundItem[] }
 
 const PERIODS: { key: Period; label: string }[] = [
   { key: 'day', label: 'Bugun' },
@@ -30,6 +38,7 @@ export function Dashboard({ onBack }: { onBack: () => void }) {
   const [waiters, setWaiters] = useState<WaiterStat[]>([]);
   const [daily, setDaily] = useState<DailyPoint[]>([]);
   const [expenses, setExpenses] = useState<ExpenseData>({ items: [], total: 0 });
+  const [refunds, setRefunds] = useState<RefundData>({ count: 0, total: 0, items: [] });
 
   useEffect(() => {
     const days = period === 'month' ? 30 : period === 'week' ? 14 : 7;
@@ -38,6 +47,7 @@ export function Dashboard({ onBack }: { onBack: () => void }) {
     api.get<WaiterStat[]>(`/reports/waiters?period=${period}`).then(setWaiters).catch(() => {});
     api.get<DailyPoint[]>(`/reports/daily?days=${days}`).then(setDaily).catch(() => {});
     api.get<ExpenseData>('/expenses').then(setExpenses).catch(() => {});
+    api.get<RefundData>(`/reports/refunds?period=${period}`).then(setRefunds).catch(() => {});
   }, [period]);
 
   const revenue = summary?.revenue ?? 0;
@@ -58,12 +68,19 @@ export function Dashboard({ onBack }: { onBack: () => void }) {
     { label: "O'rtacha chek", value: formatSum(summary?.avgCheck ?? 0), accent: 'teal', icon: '📊' },
     { label: 'Rasxod', value: formatSum(expenses.total ?? 0), accent: 'danger', icon: '📉' },
     { label: 'Sof tushum', value: formatSum(net), accent: 'primary', icon: '📈' },
+    {
+      label: `Vozvrat${refunds.count ? ` (${refunds.count} ta)` : ''}`,
+      value: formatSum(refunds.total ?? 0),
+      accent: 'amber',
+      icon: '↩️',
+    },
   ];
   const accentBg: Record<string, string> = {
     primary: 'from-emerald-500/15 to-emerald-500/5 border-emerald-500/25',
     violet: 'from-violet-500/15 to-violet-500/5 border-violet-500/25',
     teal: 'from-teal-500/15 to-teal-500/5 border-teal-500/25',
     danger: 'from-rose-500/15 to-rose-500/5 border-rose-500/25',
+    amber: 'from-amber-500/15 to-amber-500/5 border-amber-500/25',
   };
 
   return (
@@ -136,6 +153,56 @@ export function Dashboard({ onBack }: { onBack: () => void }) {
             valueFmt={(v) => formatSum(v)}
           />
         </div>
+      </div>
+
+      {/* Vozvratlar (qaytarilgan cheklar) ro'yxati */}
+      <div className="bg-surface border border-border rounded-2xl p-4 sm:p-5 mt-5">
+        <div className="flex items-center justify-between mb-4">
+          <div className="font-bold flex items-center gap-2">
+            <span>↩️ Vozvratlar</span>
+            <span className="text-xs font-semibold text-amber-500 bg-amber-500/10 rounded-full px-2 py-0.5">
+              {refunds.count} ta · {formatSum(refunds.total)}
+            </span>
+          </div>
+        </div>
+        {refunds.items.length === 0 ? (
+          <div className="text-sm text-muted py-6 text-center">
+            Bu davrda vozvrat qilinmagan 🎉
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {refunds.items.map((r) => (
+              <div
+                key={r.id}
+                className="flex items-start justify-between gap-3 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5"
+              >
+                <div className="min-w-0">
+                  <div className="text-sm font-medium truncate">
+                    {r.products.map((p) => `${p.quantity}× ${p.name}`).join(', ') || '—'}
+                  </div>
+                  {r.reason && (
+                    <div className="text-xs text-muted mt-0.5">Sabab: {r.reason}</div>
+                  )}
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-sm font-extrabold text-amber-500">
+                    −{formatSum(r.total)}
+                  </div>
+                  {r.refundedAt && (
+                    <div className="text-[11px] text-muted">
+                      {new Date(r.refundedAt).toLocaleString('uz-UZ', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
