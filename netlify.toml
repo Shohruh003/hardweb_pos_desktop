@@ -1,0 +1,21 @@
+# DasturXon — demo web (mock) Netlify uchun.
+# Netlify bu repoga ulangan bo'lsa, har push'da avtomatik build qiladi:
+#   1. root'da `npm install` (workspaces: shared/server/desktop/cloud bog'lanadi)
+#   2. desktop'da mock renderer build (VITE_MOCK — serversiz, soxta ma'lumot)
+#   3. desktop/out/renderer ni tarqatadi
+# @hardweb-pos/shared vite alias orqali shared/src'dan olinadi — alohida build shart emas.
+
+[build]
+  command = "npm run build:mock --workspace=desktop"
+  publish = "desktop/out/renderer"
+
+[build.environment]
+  NODE_VERSION = "20"
+  # Electron binar faylini yuklab olmasin (web build uchun kerak emas, tezroq)
+  ELECTRON_SKIP_BINARY_DOWNLOAD = "1"
+
+# SPA — istalgan yo'l index.html ga (sahifa yangilanganda bo'sh bo'lmasin)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
