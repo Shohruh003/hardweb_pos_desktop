@@ -19,6 +19,8 @@ export default {
         'primary-hover': c('--c-primary-hover'),
         success: c('--c-success'),
         warning: c('--c-warning'),
+        // "Chek berildi" (schot berilgan stol) — ikkala temada ham yorqin sariq (yellow-400), qora matn
+        bill: c('--c-bill'),
         danger: c('--c-danger'),
         info: c('--c-info'),
       },

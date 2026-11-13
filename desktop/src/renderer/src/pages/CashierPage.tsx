@@ -1,176 +1,260 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import {
-  MenuUnit,
   Order,
-  OrderItem,
   OrderStatus,
-  PaymentType,
+  OrderType,
   Receipt,
   ReportSummary,
   SOCKET_EVENTS,
-  calcOrderTotals,
   hasCapability,
-  lineSum,
-  remainingAmount,
+  orderDisplayName,
+  orderTypeOf,
   roundSum,
-  sumPayments,
 } from '@hardweb-pos/shared';
+import type { MenuItem, SplitOrderResult } from '@hardweb-pos/shared';
 import { AppShell } from '../components/AppShell';
-import { Button, StatusBadge, formatSum } from '../components/ui';
+import { formatSum } from '../components/ui';
 import { ReceiptPreview } from '../components/ReceiptPreview';
 import { Dashboard } from '../components/Dashboard';
-import { Modal } from '../components/Modal';
 import { PrintFailedToasts, usePrintFailedToasts } from '../components/PrintFailedToasts';
-import { cleanDecimalInput, cleanDigitsInput, formatQty, parseDecimal } from '../components/numeric';
+import PaymentModal, { type PayResult } from '../components/PaymentModal';
+import SplitCheckModal from '../components/SplitCheckModal';
+import OrderModeTabs, { type OrderModeValue } from '../components/OrderModeTabs';
+import DeliveryInfoModal, { type DeliveryInfo } from '../components/DeliveryInfoModal';
+import { CashierOrderCard } from '../components/cashier/CashierOrderCard';
+import { CashMovementsModal } from '../components/cashier/CashMovementsModal';
+import { DebtsModal } from '../components/cashier/DebtsModal';
+import { StopListModal } from '../components/cashier/StopListModal';
+import { orderTitle, todayKey } from '../components/cashier/orderType';
+import { readLocal, useMediaQuery, useNow, writeLocal } from '../components/cashier/hooks';
+import {
+  AlertIcon,
+  CashFlowIcon,
+  ChartIcon,
+  CheckIcon,
+  DebtIcon,
+  PlusIcon,
+  ReceiptIcon,
+  StopIcon,
+  TablesIcon,
+} from '../components/cashier/icons';
 import { ReceiptsTab } from './admin/ReceiptsTab';
 import { BackButton } from '../components/BackButton';
 import { api } from '../lib/api';
 import { getSocket } from '../lib/socket';
+import { sortHalls, usePosSettings, loadPosSettings } from '../lib/posSettings';
 import { useI18n } from '../state/i18n';
 import { useAuth } from '../state/auth';
-import { useConfirm } from '../state/confirm';
+import { useAppNav } from '../state/appNav';
 
-interface ExpenseRow {
-  id: string;
-  amount: number;
-  note: string | null;
-  cashierName: string | null;
-  createdAt: string;
+/** To'langan, lekin chek hali chiqarilmagan hisob (shu qurilmada saqlanadi) */
+interface UnprintedEntry {
+  order: Order;
+  receipt: Receipt;
+  at: number; // qachon to'langan (ms)
 }
 
-/** Bitta to'lov (bo'lib to'lash) — GET /orders/:id/payments va pay javobi */
-interface PaymentRow {
-  id: string;
-  type: PaymentType;
-  amount: number;
-  createdAt?: string;
-}
-
-/** POST /orders/:id/pay javobi */
-interface PayResponse {
-  order?: Order;
-  fullyPaid: boolean;
+/** Kartochka to'ri elementi: ochiq hisob yoki "chek chiqmadi" */
+interface Bill {
+  key: string;
+  order: Order;
   receipt?: Receipt;
-  paidAmount?: number;
-  total?: number;
-  payments?: PaymentRow[];
+  unprinted: boolean;
 }
 
-const PAYMENT_OPTIONS: { type: PaymentType; label: string }[] = [
-  { type: PaymentType.Cash, label: 'Naqd' },
-  { type: PaymentType.Card, label: 'Karta' },
-  { type: PaymentType.QR, label: 'QR' },
-];
+const MODE_KEY = 'cashier.mode';
+const UNPRINTED_KEY = 'cashier.unprinted.v1';
+const MAX_UNPRINTED = 30;
+const UNPRINTED_TTL_MS = 24 * 60 * 60 * 1000;
+const MODES: OrderModeValue[] = ['all', OrderType.DineIn, OrderType.Takeaway, OrderType.Delivery];
 
-/** Buyurtma qatorlari -> pul hisobi uchun (narx × miqdor) */
-const moneyLines = (items: OrderItem[] | undefined) =>
-  (items ?? []).map((it) => ({ price: it.price ?? 0, quantity: it.quantity }));
+const EMPTY_TEXT: Record<string, string> = {
+  all: 'Ochiq hisob yo‘q',
+  [OrderType.DineIn]: 'Stollarda ochiq hisob yo‘q',
+  [OrderType.Takeaway]: 'Olib ketish buyurtmalari yo‘q',
+  [OrderType.Delivery]: 'Yetkazib berish buyurtmalari yo‘q',
+};
 
-// Kassa moduli (TZ 5.3): hisobni ko'rish, chegirma, to'lov turi, chek chiqarish.
-// Barcha summalar shared/money (calcOrderTotals, sumPayments, remainingAmount) bilan —
-// server, chek va demo bilan aynan bir xil, butun so'mda.
+function loadMode(): OrderModeValue {
+  const v = readLocal(MODE_KEY);
+  return (MODES as string[]).includes(v ?? '') ? (v as OrderModeValue) : 'all';
+}
+
+// "Chek chiqmadi" ro'yxati shu qurilmada saqlanadi — kassir ofitsiant ekraniga o'tib (yangi
+// buyurtma) qaytganda yoki dastur qayta ochilganda ham chop etilmagan cheklar yo'qolmaydi.
+function loadUnprinted(): UnprintedEntry[] {
+  try {
+    const raw = readLocal(UNPRINTED_KEY);
+    const list: unknown = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(list)) return [];
+    const min = Date.now() - UNPRINTED_TTL_MS;
+    return list
+      .filter(
+        (u): u is UnprintedEntry =>
+          !!u && typeof u === 'object' && !!u.order?.id && !!u.receipt?.orderId && typeof u.at === 'number' && u.at >= min,
+      )
+      .slice(0, MAX_UNPRINTED);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Yangi ro'yxatda o'zgarmagan buyurtmalar uchun eski obyektni qaytaradi — memo kartochkalar
+ * faqat haqiqatan o'zgarganda qayta chiziladi (socket har o'zgarishda butun ro'yxatni yuklaydi).
+ */
+function reuseUnchanged(prev: Order[], next: Order[]): Order[] {
+  if (prev.length === 0) return next;
+  const byId = new Map(prev.map((o) => [o.id, o] as const));
+  let identical = prev.length === next.length;
+  const out = next.map((o, i) => {
+    const old = byId.get(o.id);
+    if (old && JSON.stringify(old) === JSON.stringify(o)) {
+      if (prev[i] !== old) identical = false;
+      return old;
+    }
+    identical = false;
+    return o;
+  });
+  return identical ? prev : out;
+}
+
+// Kassa moduli (TZ 5.3): ochiq hisoblar (stolga — har bir hisob alohida kartochka, bitta stolning
+// hisoblari yonma-yon; olib ketish; yetkazib berish), to'lov, chek, hisobni bo'lish, kirim/chiqim va
+// kassa holati, qarzlar, stop list, cheklar tarixi, hisobot. To'lov oynasi — PaymentModal (ofitsiant
+// ekrani ham ishlatadi). "Stollar" — POS ekrani (kassir ofitsiantlar o'rniga ham ishlaydi).
+// Barcha summalar shared/money bilan — server, chek va demo bilan aynan bir xil, butun so'mda.
 export function CashierPage() {
   const { t } = useI18n();
   const { user } = useAuth();
-  const confirm = useConfirm();
+  const nav = useAppNav();
+  const pos = usePosSettings();
   const canHistory = hasCapability(user, 'history');
   // Tushum/statistikani ko'rish ruxsati (direktor bera oladi)
   const canRevenue = hasCapability(user, 'revenue') || hasCapability(user, 'reports');
+  // POS ekrani (stollar, yangi buyurtma, hisobni o'zgartirish) — 'waiter' ruxsati bilan
+  const canPos = hasCapability(user, 'waiter');
+  // Hisobni bo'lish — ofitsiant yoki kassir (server ham shunday tekshiradi)
+  const canSplit = canPos || hasCapability(user, 'cashier');
+  const narrow = useMediaQuery('(max-width: 639px)');
+  const now = useNow(30_000);
+
   const [historyOpen, setHistoryOpen] = useState(false);
   const [dashboardOpen, setDashboardOpen] = useState(false);
   const [orders, setOrders] = useState<Order[]>([]);
   const [ordersLoaded, setOrdersLoaded] = useState(false);
-  const [selected, setSelected] = useState<Order | null>(null);
-  const [discount, setDiscount] = useState(0);
-  const [serviceFee, setServiceFee] = useState(0);
-  const [paying, setPaying] = useState(false);
-  const [payError, setPayError] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const [payOrder, setPayOrder] = useState<Order | null>(null);
+  const [splitOrder, setSplitOrder] = useState<Order | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
-  // Bo'lib to'lash — shu buyurtmaning to'lovlari (naqd/karta/qr)
-  const [payments, setPayments] = useState<PaymentRow[]>([]);
-  const [payAmount, setPayAmount] = useState(''); // faqat raqamlar (butun so'm)
-  // To'langan, lekin hali chek chiqarilmagan hisoblar — chop etilgunча ro'yxatда qoladi
-  const [unprinted, setUnprinted] = useState<{ order: Order; receipt: Receipt }[]>([]);
-  const [exciseInputs, setExciseInputs] = useState<Record<string, string>>({});
-  const [savingExcise, setSavingExcise] = useState(false);
+  const [unprinted, setUnprinted] = useState<UnprintedEntry[]>(loadUnprinted);
   const [summary, setSummary] = useState<ReportSummary | null>(null);
-  const [hallFilter, setHallFilter] = useState<string>('');
-  const [expenses, setExpenses] = useState<{ items: ExpenseRow[]; total: number }>({ items: [], total: 0 });
-  const [showExpenses, setShowExpenses] = useState(false);
-  const [expAmount, setExpAmount] = useState('');
-  const [expNote, setExpNote] = useState('');
-  const [expSaving, setExpSaving] = useState(false);
-  const [expError, setExpError] = useState('');
-  // Socket hodisalari bir marta obuna bo'ladi — ochiq hisob id'sini ref orqali o'qiymiz
-  const selectedIdRef = useRef<string | null>(null);
+  const [expensesTotal, setExpensesTotal] = useState(0);
+  const [showCash, setShowCash] = useState(false);
+  const [showDebts, setShowDebts] = useState(false);
+  const [showStop, setShowStop] = useState(false);
+  const [stopCount, setStopCount] = useState(0);
+  const [mode, setMode] = useState<OrderModeValue>(loadMode);
+  const [hallFilter, setHallFilter] = useState('');
+  const [deliveryEdit, setDeliveryEdit] = useState<Order | null>(null);
+  const [toast, setToast] = useState('');
   // Bo'lim printeriga chek chiqmadi (server "print:failed") — kassa hammasini ko'radi
   const printFails = usePrintFailedToasts({ max: 6 });
 
-  function loadPayments(orderId: string) {
-    api
-      .get<PaymentRow[]>(`/orders/${orderId}/payments`)
-      .then((ps) => {
-        if (selectedIdRef.current === orderId) setPayments(Array.isArray(ps) ? ps : []);
-      })
-      .catch(() => {});
-  }
+  const ordersRef = useRef<Order[]>([]);
+  const payOrderRef = useRef<Order | null>(null);
+  payOrderRef.current = payOrder;
+  const canRevenueRef = useRef(canRevenue);
+  canRevenueRef.current = canRevenue;
+  const reqSeq = useRef(0);
+  const refreshTimer = useRef<number | undefined>(undefined);
+  const toastTimer = useRef<number | undefined>(undefined);
 
-  function loadExpenses() {
-    api.get<{ items: ExpenseRow[]; total: number }>('/expenses').then(setExpenses).catch(() => {});
-  }
+  useEffect(() => writeLocal(MODE_KEY, mode), [mode]);
+  useEffect(() => {
+    writeLocal(UNPRINTED_KEY, unprinted.length ? JSON.stringify(unprinted) : null);
+  }, [unprinted]);
+  useEffect(() => () => window.clearTimeout(toastTimer.current), []);
 
-  function refresh() {
-    api
-      .get<Order[]>('/orders')
-      .then((list) => {
-        setOrders(list);
-        setOrdersLoaded(true);
-        // Ochiq to'lov oynasi eng yangi holat bilan (ofitsiant taom qo'shgan/olib tashlagan bo'lishi mumkin)
-        setSelected((cur) => (cur ? list.find((o) => o.id === cur.id) ?? cur : cur));
-      })
-      .catch(() => {});
-    // Boshqa terminalda shu hisobga to'lov qo'shilgan/o'chirilgan bo'lishi mumkin
-    if (selectedIdRef.current) loadPayments(selectedIdRef.current);
-    // Bugungi tushum / smena yakuni (TZ: kassir kunlik tushumni ko'radi)
-    api.get<ReportSummary>('/reports/summary?period=day').then(setSummary).catch(() => {});
-    loadExpenses();
-  }
+  const showToast = useCallback((text: string) => {
+    window.clearTimeout(toastTimer.current);
+    setToast(text);
+    toastTimer.current = window.setTimeout(() => setToast(''), 4000);
+  }, []);
 
-  async function addExpense() {
-    if (expSaving) return;
-    const amount = Number(expAmount);
-    if (!amount || amount <= 0) {
-      setExpError('Summani kiriting');
-      return;
-    }
-    setExpSaving(true);
-    setExpError('');
+  const refreshOrders = useCallback(async () => {
+    const seq = ++reqSeq.current;
     try {
-      await api.post('/expenses', { amount, note: expNote.trim() || undefined });
-      setExpAmount('');
-      setExpNote('');
-      loadExpenses();
+      const list = await api.get<Order[]>('/orders');
+      if (seq !== reqSeq.current) return; // kechikkan (eskirgan) javob
+      const next = reuseUnchanged(ordersRef.current, Array.isArray(list) ? list : []);
+      ordersRef.current = next;
+      setOrders(next);
+      setOrdersLoaded(true);
+      setLoadError('');
+      // Ochiq to'lov oynasi eng yangi holat bilan (ofitsiant taom qo'shgan/olib tashlagan bo'lishi mumkin)
+      setPayOrder((cur) => (cur ? next.find((o) => o.id === cur.id) ?? cur : cur));
     } catch (e) {
-      setExpError((e as Error).message || 'Rasxod saqlanmadi');
-    } finally {
-      setExpSaving(false);
+      if (seq !== reqSeq.current) return;
+      setLoadError((e as Error)?.message || 'Buyurtmalar yuklanmadi');
+      setOrdersLoaded(true);
     }
-  }
+  }, []);
+
+  // Bugungi tushum / sof tushum (faqat tushumni ko'rish ruxsati bo'lsa). Sof tushum = tushum − chiqim
+  // (kirim — tushum emas, hisobga olinmaydi).
+  const refreshStats = useCallback(() => {
+    if (!canRevenueRef.current) return;
+    api.get<ReportSummary>('/reports/summary?period=day').then(setSummary).catch(() => {});
+    const d = todayKey();
+    api
+      .get<{ total?: number; items?: { amount?: number; kind?: string }[] }>(`/expenses?from=${d}&to=${d}&date=${d}&kind=chiqim`)
+      .then((res) => {
+        // Eski server turini bilmaydi — barcha yozuvlar chiqim; yangi server — faqat chiqim qaytaradi
+        const items = Array.isArray(res?.items) ? res.items : null;
+        const total = items
+          ? items.filter((x) => x?.kind !== 'kirim').reduce((s, x) => s + roundSum(x?.amount), 0)
+          : roundSum(res?.total);
+        setExpensesTotal(total);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Stop list: nechta taom tugagan (sarlavhadagi tugmada qizil son)
+  const refreshStopCount = useCallback(() => {
+    api
+      .get<MenuItem[]>('/menu/items')
+      .then((list) => setStopCount(Array.isArray(list) ? list.filter((it) => it.available === false).length : 0))
+      .catch(() => {});
+  }, []);
+
+  // Socket hodisalari ketma-ket kelsa (bir buyurtma — bir nechta hodisa) bitta yangilash
+  const scheduleRefresh = useCallback(() => {
+    window.clearTimeout(refreshTimer.current);
+    refreshTimer.current = window.setTimeout(() => {
+      void refreshOrders();
+      refreshStats();
+    }, 200);
+  }, [refreshOrders, refreshStats]);
 
   useEffect(() => {
-    refresh();
+    void refreshOrders();
+    refreshStats();
+    refreshStopCount();
     const socket = getSocket();
-    const onChange = () => refresh();
+    let menuTimer: number | undefined;
+    const onChange = () => scheduleRefresh();
     // Yangi zakas kelganda — kassa printeridan avtomatik chek (#11).
     // Printer sozlanmagan bo'lsa hech narsa chiqmaydi (best-effort).
     const onCreated = (payload: { order?: Order }) => {
-      refresh();
+      scheduleRefresh();
       const order = payload?.order;
       if (order) {
         window.hardweb?.printer?.printOrderTicket?.(order).catch(() => undefined);
       }
     };
-    // Faqat printeri sozlangan terminal (kassa) relay cheklarни chop etadi
+    // Faqat printeri sozlangan terminal (kassa) relay cheklarini chop etadi
     const printIfHost = async (fn: () => Promise<unknown> | undefined) => {
       try {
         const cfg = await window.hardweb?.printer?.getConfig?.();
@@ -181,211 +265,220 @@ export function CashierPage() {
     };
     // Boshqa terminal Schot bossa — kassa printeridan hisob chiqadi (relay)
     const onPrintBill = (payload: { order?: Order }) => {
-      if (payload?.order) printIfHost(() => window.hardweb?.printer?.printBill?.(payload.order!));
+      if (payload?.order) {
+        const order = payload.order;
+        // Restoran nomi schot sarlavhasi uchun (sozlamadan; o'qib bo'lmasa Electron oxirgi ma'lum nomni oladi)
+        printIfHost(async () => {
+          const { restaurantName } = await loadPosSettings().catch(() => ({ restaurantName: '' }));
+          return window.hardweb?.printer?.printBill?.({ ...order, restaurantName });
+        });
+      }
     };
-    // Boshqa terminal to'lov qilса — kassa printeridan chek chiqadi (relay)
+    // Boshqa terminal to'lov qilsa — kassa printeridan chek chiqadi (relay)
     const onPrintReceipt = (payload: { receipt?: Receipt }) => {
       if (payload?.receipt) printIfHost(() => window.hardweb?.printer?.printReceipt?.(payload.receipt!));
+    };
+    // Menyu o'zgardi (stop list) — tugagan taomlar soni
+    const onMenu = () => {
+      window.clearTimeout(menuTimer);
+      menuTimer = window.setTimeout(refreshStopCount, 400);
+    };
+    const onConnect = () => {
+      scheduleRefresh();
+      refreshStopCount();
     };
     socket.on(SOCKET_EVENTS.ORDER_CREATED, onCreated);
     socket.on(SOCKET_EVENTS.ORDER_UPDATED, onChange);
     socket.on(SOCKET_EVENTS.ORDER_CLOSED, onChange);
     socket.on(SOCKET_EVENTS.PRINT_BILL, onPrintBill);
     socket.on(SOCKET_EVENTS.PRINT_RECEIPT, onPrintReceipt);
+    socket.on(SOCKET_EVENTS.MENU_CHANGED, onMenu);
+    // Aloqa uzilib qayta ulanganda — o'tkazib yuborilgan o'zgarishlarni olamiz
+    socket.on('connect', onConnect);
     return () => {
+      window.clearTimeout(refreshTimer.current);
+      window.clearTimeout(menuTimer);
       socket.off(SOCKET_EVENTS.ORDER_CREATED, onCreated);
       socket.off(SOCKET_EVENTS.ORDER_UPDATED, onChange);
       socket.off(SOCKET_EVENTS.ORDER_CLOSED, onChange);
       socket.off(SOCKET_EVENTS.PRINT_BILL, onPrintBill);
       socket.off(SOCKET_EVENTS.PRINT_RECEIPT, onPrintReceipt);
+      socket.off(SOCKET_EVENTS.MENU_CHANGED, onMenu);
+      socket.off('connect', onConnect);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshOrders, refreshStats, refreshStopCount, scheduleRefresh]);
+
+  // ---- Ro'yxat: tur bo'yicha filtr, sanoq, tartib ----
+  const active = useMemo(() => orders.filter((o) => o.status !== OrderStatus.Closed), [orders]);
+
+  const counts = useMemo(() => {
+    const c: Partial<Record<OrderModeValue, number>> = {
+      all: active.length,
+      [OrderType.DineIn]: 0,
+      [OrderType.Takeaway]: 0,
+      [OrderType.Delivery]: 0,
+    };
+    for (const o of active) {
+      const ty = orderTypeOf(o);
+      c[ty] = (c[ty] ?? 0) + 1;
+    }
+    return c;
+  }, [active]);
+
+  // Stolga hisoblar zallari (sozlamadagi tartibda)
+  const halls = useMemo(
+    () =>
+      sortHalls(
+        active.filter((o) => orderTypeOf(o) === OrderType.DineIn && o.hall).map((o) => o.hall as string),
+        pos.hallOrder,
+      ),
+    [active, pos.hallOrder],
+  );
+  // Tanlangan zalda hisob qolmasa (filtr paneli yashiriladi) — hammasi ko'rsatiladi
+  const activeHall = mode === OrderType.DineIn && hallFilter && halls.includes(hallFilter) ? hallFilter : '';
+
+  // Stol -> shu stoldagi ochiq hisoblar (bo'lish manzili, to'lov oynasidagi "butun stol")
+  const checksByTable = useMemo(() => {
+    const m = new Map<string, Order[]>();
+    for (const o of active) {
+      if (orderTypeOf(o) !== OrderType.DineIn || !o.tableId) continue;
+      const arr = m.get(o.tableId);
+      if (arr) arr.push(o);
+      else m.set(o.tableId, [o]);
+    }
+    return m;
+  }, [active]);
+  const siblingsOf = useCallback(
+    (o: Order | null): Order[] | undefined =>
+      o && o.tableId && orderTypeOf(o) === OrderType.DineIn ? (checksByTable.get(o.tableId) ?? []).filter((x) => x.id !== o.id) : undefined,
+    [checksByTable],
+  );
+
+  const bills = useMemo(() => {
+    const hallRank = new Map(halls.map((h, i) => [h, i] as const));
+    const list: Bill[] = [
+      ...unprinted.map((u) => ({ key: `u-${u.order.id}`, order: u.order, receipt: u.receipt, unprinted: true })),
+      ...active.map((o) => ({ key: o.id, order: o, unprinted: false })),
+    ].filter((b) => {
+      const ty = orderTypeOf(b.order);
+      if (mode !== 'all' && ty !== mode) return false;
+      if (activeHall && (ty !== OrderType.DineIn || b.order.hall !== activeHall)) return false;
+      return true;
+    });
+    // Tartib: chop etilmagan cheklar -> tayyor olib ketish/yetkazish -> qolgan olib ketish/yetkazish
+    // (vaqt / kunlik raqam bo'yicha) -> stollar (zal tartibi, stol raqami, hisob raqami — bitta
+    // stolning hisoblari yonma-yon)
+    const rank = (b: Bill) => {
+      if (b.unprinted) return 0;
+      if (orderTypeOf(b.order) !== OrderType.DineIn) return b.order.status === OrderStatus.Ready ? 1 : 2;
+      return 3;
+    };
+    return list.sort((a, b) => {
+      const ra = rank(a);
+      const rb = rank(b);
+      if (ra !== rb) return ra - rb;
+      if (ra === 0) return (b.receipt?.createdAt ?? '').localeCompare(a.receipt?.createdAt ?? '');
+      if (ra === 3) {
+        const ha = hallRank.get(a.order.hall ?? '') ?? Number.MAX_SAFE_INTEGER;
+        const hb = hallRank.get(b.order.hall ?? '') ?? Number.MAX_SAFE_INTEGER;
+        if (ha !== hb) return ha - hb;
+        const tn = (a.order.tableNumber ?? 0) - (b.order.tableNumber ?? 0);
+        if (tn !== 0) return tn;
+        // Bitta stoldagi hisoblar: Hisob 1, Hisob 2…
+        return (a.order.checkNo ?? 1) - (b.order.checkNo ?? 1);
+      }
+      // Kunlik raqam yarim tunda qaytadan boshlanadi — avval ochilgan vaqt, keyin raqam
+      const byTime = String(a.order.openedAt).localeCompare(String(b.order.openedAt));
+      if (byTime !== 0) return byTime;
+      return (a.order.queueNumber ?? 0) - (b.order.queueNumber ?? 0);
+    });
+  }, [unprinted, active, mode, activeHall, halls]);
+
+  const removeUnprinted = useCallback((orderId: string) => {
+    setUnprinted((prev) => prev.filter((u) => u.order.id !== orderId));
   }, []);
 
-  const active = orders.filter((o) => o.status !== OrderStatus.Closed);
-  // Faol hisoblar + to'langan-lekin-chop etilmagan hisoblar (belgi bilan)
-  type Bill = Order & { _unprinted?: boolean; _receipt?: Receipt };
-  const bills: Bill[] = [
-    ...active.map((o) => ({ ...o })),
-    ...unprinted.map((u) => ({ ...u.order, _unprinted: true, _receipt: u.receipt })),
-  ];
-  // Zallar bo'yicha bo'lish (VIP, oddiy va h.k.)
-  const halls = Array.from(new Set(bills.map((o) => o.hall).filter(Boolean))) as string[];
-  // Tanlangan zalda hisob qolmasa (filtr paneli yashiriladi) — hammasi ko'rsatiladi
-  const activeHall = hallFilter && halls.includes(hallFilter) ? hallFilter : '';
-  const shown = activeHall ? bills.filter((o) => o.hall === activeHall) : bills;
+  // Kartochka bosildi: chop etilmagan bo'lsa chek oynasi, aks holda to'lov
+  const openBill = useCallback((o: Order, rc?: Receipt) => {
+    if (rc) setReceipt(rc);
+    else setPayOrder(o);
+  }, []);
+  const editDelivery = useCallback((o: Order) => setDeliveryEdit(o), []);
+  // "O‘zgartirish" — POS ekranida shu hisob (stol + hisob / olib ketish / yetkazish) ochiladi
+  const navRef = useRef(nav);
+  navRef.current = nav;
+  const editOnPos = useCallback((o: Order) => navRef.current.open('waiter', { waiterTarget: { orderId: o.id } }), []);
+  const openSplit = useCallback((o: Order) => setSplitOrder(o), []);
 
-  // Kartochkadagi summa: chop etilmagan chek — chekdagi yakuniy summa; ochiq hisob — chegirma/xizmat bilan
-  function billTotal(o: Bill): number {
-    if (o._unprinted && o._receipt) return roundSum(o._receipt.total);
-    return calcOrderTotals(moneyLines(o.items), o.discountPercent, o.servicePercent).total;
-  }
-
-  // Ro'yxatдаги hisobни bosish: chop etilmagan bo'lsa chek oynasi, aks holda to'lov
-  function openBill(o: Bill) {
-    if (o._unprinted && o._receipt) setReceipt(o._receipt);
-    else selectOrder(o);
-  }
-  function removeUnprinted(orderId: string) {
-    setUnprinted((prev) => prev.filter((u) => u.order.id !== orderId));
-  }
-
-  function selectOrder(o: Order) {
-    setSelected(o);
-    setExciseInputs({});
-    // chegirma/xizmat/to'lovlar — selected o'zgarganda useEffect yuklaydi
-  }
-  function closePayment() {
-    if (paying) return;
-    setSelected(null);
-  }
-
-  // Aksiz kodi kerak bo'lib, hali skanerlanmagan taomlar (TZ F-8.5/8.6)
-  const pendingExcise = (selected?.items ?? []).filter((it) => it.exciseRequired && !it.exciseCode);
-
-  async function saveExcise() {
-    if (!selected) return;
-    const codes = pendingExcise
-      .map((it) => ({ orderItemId: it.id, code: (exciseInputs[it.id] || '').trim() }))
-      .filter((c) => c.code.length > 0);
-    if (codes.length === 0) return;
-    setSavingExcise(true);
-    setPayError('');
-    try {
-      const updated = await api.post<Order>(`/orders/${selected.id}/excise`, {
-        codes,
-      });
-      setSelected(updated); // yangilangan (exciseCode bilan) buyurtma
-      setExciseInputs({});
-    } catch (e) {
-      setPayError((e as Error).message || 'Aksiz kodlari saqlanmadi');
-    } finally {
-      setSavingExcise(false);
-    }
-  }
-
-  // ---- Pul hisobi (shared/money — server bilan bir xil, butun so'm) ----
-  const totals = calcOrderTotals(moneyLines(selected?.items), discount, serviceFee);
-  const paidAmount = sumPayments(payments);
-  const remaining = remainingAmount(totals.total, paidAmount);
-  // Kiritilgan summa (bo'sh — qolgan summa to'liq); qolgandan ko'p bo'lsa ortig'i — qaytim
-  const typedAmount = payAmount ? Number(payAmount) : null;
-  const change = typedAmount !== null && typedAmount > remaining ? typedAmount - remaining : 0;
-  // Ochiq hisob boshqa joyda yopilgan/bekor qilingan (ro'yxatda yo'q)
-  const selectedGone = !!selected && ordersLoaded && !orders.some((o) => o.id === selected.id);
-  // To'langan summa jami summadan oshib ketgan (chegirma oshirilgan) — server bunday yopishni rad etadi
-  const overpaid = paidAmount > totals.total;
-  // Oldingi to'lovlar jami summani qoplagan (yoki hisob 0 so'm) — yangi to'lovsiz "Hisobni yopish"
-  const canSettle =
-    !!selected && !selectedGone && selected.items.length > 0 && remaining <= 0 && !overpaid;
-
-  // Buyurtma tanlanganda — uning to'lovlari va chegirma/xizmatini yuklaymiz
-  useEffect(() => {
-    selectedIdRef.current = selected?.id ?? null;
-    setPayAmount('');
-    setPayError('');
-    setPayments([]);
-    if (!selected) return;
-    setDiscount(Number(selected.discountPercent) || 0);
-    setServiceFee(Number(selected.servicePercent) || 0);
-    loadPayments(selected.id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected?.id]);
-
-  // Bir to'lov qo'shish (bo'lib to'lash). To'liq to'langanda — chek chiqadi va hisob yopiladi.
-  async function addPayment(type: PaymentType) {
-    if (!selected || paying || remaining <= 0 || selectedGone) return;
-    // Server ham qolgan summadan oshirmaydi; ortig'i (qaytim) to'lov sifatida yozilmaydi
-    const amt = typedAmount !== null ? Math.min(typedAmount, remaining) : remaining;
-    if (!(amt > 0)) {
-      setPayError('To‘lov summasi noto‘g‘ri — 0 dan katta summa kiriting');
-      return;
-    }
-    const order = selected;
-    setPaying(true);
-    setPayError('');
-    try {
-      const res = await api.post<PayResponse>(`/orders/${order.id}/pay`, {
-        type,
-        amount: amt,
-        discountPercent: discount,
-        serviceFeePercent: serviceFee,
-      });
-      applyPayResult(order, res);
-    } catch (e) {
-      setPayError((e as Error).message || 'To‘lov o‘tmadi');
-      // Hisob holati o'zgargan bo'lishi mumkin (boshqa joyda to'langan/taom qo'shilgan) — yangilaymiz
-      refresh();
-    } finally {
-      setPaying(false);
-    }
-  }
-
-  // Hisobni yangi to'lovsiz yopish: oldingi to'lovlar jami summani qoplagan (masalan to'lovdan keyin
-  // taom olib tashlangan) yoki to'lanadigan summa 0 so'm (100% chegirma). Server hisobni yopadi,
-  // stolni bo'shatadi, skladdan ayiradi va chekni oldingi to'lovlar bilan qaytaradi.
-  async function settleBill() {
-    if (!selected || paying || !canSettle) return;
-    const order = selected;
-    setPaying(true);
-    setPayError('');
-    try {
-      const res = await api.post<PayResponse>(`/orders/${order.id}/pay`, {
-        // Yangi to'lov yozilmaydi; tur faqat 0 so'mlik chek uchun (to'lovlar bo'lsa — oxirgisiniki)
-        type: payments.length ? payments[payments.length - 1].type : PaymentType.Cash,
-        discountPercent: discount,
-        serviceFeePercent: serviceFee,
-      });
-      applyPayResult(order, res);
-    } catch (e) {
-      setPayError((e as Error).message || 'Hisob yopilmadi');
-      refresh();
-    } finally {
-      setPaying(false);
-    }
-  }
-
-  // To'lov javobi: to'liq — chek oynasi ("chek chiqmadi" ro'yxatiga), qisman — hisob ochiq qoladi
-  function applyPayResult(order: Order, res: PayResponse) {
-    if (res.fullyPaid) {
-      // To'liq to'landi — chek chiqarilgunga qadar ro'yxatda "chek chiqmadi" bo'lib qoladi
-      const rc = res.receipt;
-      if (rc) {
-        setUnprinted((prev) => [...prev.filter((u) => u.order.id !== order.id), { order, receipt: rc }]);
-        setReceipt(rc);
+  // To'lov natijasi: to'liq — chek "chek chiqmadi" ro'yxatiga (chop etilguncha), ro'yxat yangilanadi
+  const handlePaid = useCallback(
+    (res: PayResult) => {
+      if (res?.fullyPaid && res.receipt) {
+        const rc = res.receipt;
+        const base = payOrderRef.current;
+        const fresh = res.order;
+        const order: Order | null =
+          base && fresh
+            ? {
+                ...base,
+                ...fresh,
+                hall: fresh.hall ?? base.hall,
+                waiterName: fresh.waiterName ?? base.waiterName,
+                tableNumber: fresh.tableNumber ?? base.tableNumber,
+              }
+            : fresh ?? base;
+        if (order) {
+          setUnprinted((prev) =>
+            [{ order, receipt: rc, at: Date.now() }, ...prev.filter((u) => u.order.id !== order.id)].slice(0, MAX_UNPRINTED),
+          );
+        }
       }
-      setSelected(null);
-      refresh();
-      return;
-    }
-    // Qisman to'landi — buyurtma ochiq qoladi; javobdagi eng yangi holatni olamiz
-    if (Array.isArray(res.payments)) setPayments(res.payments);
-    else loadPayments(order.id);
-    if (res.order && res.order.id === order.id && Array.isArray(res.order.items)) setSelected(res.order);
-    setPayAmount('');
-  }
+      scheduleRefresh();
+    },
+    [scheduleRefresh],
+  );
 
-  async function removePayment(p: PaymentRow) {
-    if (!selected) return;
-    const ok = await confirm({
-      title: 'To‘lovni o‘chirish',
-      message: `${t(`pay.${p.type}`)} — ${formatSum(roundSum(p.amount))} to‘lovi o‘chirilsinmi? Summa qoldiqqa qaytadi.`,
-      confirmText: 'O‘chirish',
-      danger: true,
+  const closePayment = useCallback(() => setPayOrder(null), []);
+  const receiptPrinted = useCallback((rc: Receipt) => removeUnprinted(rc.orderId), [removeUnprinted]);
+
+  // Hisob bo'lindi (kartochkadan): ikkala hisob yangilanadi
+  const splitDone = useCallback(
+    (r: SplitOrderResult) => {
+      setSplitOrder(null);
+      showToast(`✓ Hisob bo‘lindi: ${orderDisplayName(r.target)} — ${formatSum(roundSum(r.target.total ?? 0))}`);
+      scheduleRefresh();
+    },
+    [showToast, scheduleRefresh],
+  );
+
+  async function saveDelivery(o: Order, info: DeliveryInfo) {
+    // Xato bo'lsa — DeliveryInfoModal ochiq qoladi va xabarni ko'rsatadi
+    await api.patch(`/orders/${o.id}/delivery`, {
+      phone: info.phone,
+      address: info.address,
+      note: info.note,
+      deliveryFee: info.deliveryFee,
     });
-    if (!ok) return;
-    const orderId = selected.id;
-    setPayError('');
-    try {
-      await api.del(`/orders/${orderId}/payments/${p.id}`);
-    } catch (e) {
-      setPayError((e as Error).message || 'To‘lov o‘chirilmadi');
-    }
-    loadPayments(orderId);
+    setDeliveryEdit(null);
+    scheduleRefresh();
   }
 
+  function newOrder() {
+    const waiterMode = mode === OrderType.Takeaway || mode === OrderType.Delivery ? mode : OrderType.Takeaway;
+    nav.open('waiter', { waiterMode });
+  }
+
+  // Bo'lim printeri xabarlari pastda (yuqoridagi "Yangi buyurtma" tugmasini to'smaydi); to'lov yoki
+  // chek oynasi ochiq bo'lsa — vaqtincha yashiriladi (summani to'smasin), oyna yopilgach yana chiqadi
+  const anyModal = !!payOrder || !!receipt || !!splitOrder || showCash || showDebts || showStop || !!deliveryEdit;
   const printToasts = (
-    <PrintFailedToasts toasts={printFails.toasts} onDismiss={printFails.dismiss} onClearAll={printFails.clear} />
+    <PrintFailedToasts
+      toasts={printFails.toasts}
+      onDismiss={printFails.dismiss}
+      onClearAll={printFails.clear}
+      placement="bottom"
+      hidden={anyModal}
+    />
   );
 
   // Cheklar tarixi — alohida sahifa (filtrlar + infinite scroll, ReceiptsTab qayta ishlatiladi)
@@ -395,10 +488,12 @@ export function CashierPage() {
         {printToasts}
         <div className="h-full flex flex-col p-3 sm:p-6 overflow-hidden">
           <div className="flex items-center justify-between gap-2 mb-4 shrink-0">
-            <div className="text-xl font-bold">🧾 Cheklar tarixi</div>
+            <div className="text-xl font-bold flex items-center gap-2">
+              <ReceiptIcon className="w-6 h-6 text-primary" /> Cheklar tarixi
+            </div>
             <button
               onClick={() => setHistoryOpen(false)}
-              className="shrink-0 flex items-center gap-1.5 px-3 h-9 rounded-lg border border-border hover:border-primary hover:bg-surface-hover font-semibold"
+              className="shrink-0 flex items-center gap-1.5 px-4 h-11 rounded-lg border border-border hover:border-primary hover:bg-surface-hover font-semibold"
             >
               <span className="text-lg leading-none">←</span> Orqaga
             </button>
@@ -420,420 +515,234 @@ export function CashierPage() {
     );
   }
 
-  const payDisabled = paying || pendingExcise.length > 0 || remaining <= 0 || selectedGone;
+  const net = (summary?.revenue ?? 0) - expensesTotal;
 
   return (
     <AppShell title={t('title.cashier')}>
       {printToasts}
       <div className="h-full flex flex-col">
-        {/* Soddalashtirilgan tepa panel: tugmalar (tushum ko'rsatkichlari ruxsatga bog'liq) */}
-        <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border overflow-x-auto">
+        {/* 1-qator: buyurtma turlari (sanoq bilan) + stollar (POS) + yangi buyurtma */}
+        <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 pt-3 pb-2">
+          <div className="flex-1 min-w-0 overflow-x-auto">
+            <OrderModeTabs
+              value={mode}
+              onChange={(v) => {
+                setMode(v);
+                setHallFilter('');
+              }}
+              counts={counts}
+              withAll
+              compact={narrow}
+            />
+          </div>
+          {canPos && (
+            <button
+              type="button"
+              data-testid="cashier-open-tables"
+              onClick={() => nav.open('waiter')}
+              aria-label="Stollar"
+              title="Stollar — POS ekrani (taom qo‘shish, hisobni o‘zgartirish)"
+              className="shrink-0 h-12 sm:h-14 px-3.5 sm:px-5 rounded-xl bg-surface border-2 border-primary/60 text-text hover:bg-primary/10 font-extrabold text-base sm:text-lg flex items-center gap-2 active:scale-[0.97] transition-transform"
+            >
+              <TablesIcon className="w-6 h-6 text-primary" />
+              <span className="hidden sm:inline whitespace-nowrap">Stollar</span>
+            </button>
+          )}
+          {canPos && (
+            <button
+              type="button"
+              data-testid="cashier-new-order"
+              onClick={newOrder}
+              aria-label="Yangi buyurtma"
+              title="Yangi buyurtma (olib ketish / yetkazib berish)"
+              className="shrink-0 h-12 sm:h-14 px-3.5 sm:px-5 rounded-xl bg-primary-hover text-white font-extrabold text-base sm:text-lg flex items-center gap-2 shadow-lg shadow-primary/25 hover:brightness-110 active:scale-[0.97] transition-transform"
+            >
+              <PlusIcon className="w-6 h-6" />
+              <span className="hidden sm:inline whitespace-nowrap">Yangi buyurtma</span>
+            </button>
+          )}
+        </div>
+
+        {/* 2-qator: tushum ko'rsatkichlari (ruxsatga bog'liq), kassa amallari, tarix, orqaga */}
+        <div className="flex items-center gap-2 px-3 sm:px-5 pb-3 border-b border-border overflow-x-auto">
           {canRevenue && (
             <>
               <SummaryStat label="Bugungi tushum" value={formatSum(summary?.revenue ?? 0)} accent />
-              <SummaryStat label="Sof tushum" value={formatSum((summary?.revenue ?? 0) - expenses.total)} />
-              <button
-                onClick={() => setDashboardOpen(true)}
-                className="shrink-0 px-3.5 py-2 rounded-lg bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 text-sm font-bold whitespace-nowrap"
-              >
-                📊 Hisobot
-              </button>
+              <SummaryStat label="Sof tushum" value={formatSum(net)} />
+              <ToolButton icon={<ChartIcon className="w-5 h-5 text-primary" />} label="Hisobot" onClick={() => setDashboardOpen(true)} testId="cashier-report" />
             </>
           )}
-          <button
-            onClick={() => {
-              setExpError('');
-              setShowExpenses(true);
-            }}
-            className="shrink-0 px-3 py-2 rounded-lg bg-surface border border-border hover:border-primary text-sm font-semibold whitespace-nowrap"
-          >
-            ＋ Rasxod
-          </button>
+          <ToolButton
+            icon={<CashFlowIcon className="w-5 h-5 text-primary" />}
+            label="Kirim / Chiqim"
+            onClick={() => setShowCash(true)}
+            testId="cashier-cash"
+          />
+          <ToolButton icon={<DebtIcon className="w-5 h-5 text-danger" />} label="Qarzlar" onClick={() => setShowDebts(true)} testId="cashier-debts" />
+          <ToolButton
+            icon={<StopIcon className="w-5 h-5 text-danger" />}
+            label="Stop list"
+            onClick={() => setShowStop(true)}
+            testId="cashier-stoplist"
+            badge={stopCount > 0 ? stopCount : undefined}
+          />
           {canHistory && (
-            <button
+            <ToolButton
+              icon={<ReceiptIcon className="w-5 h-5 text-primary" />}
+              label="Cheklar tarixi"
               onClick={() => setHistoryOpen(true)}
-              className="shrink-0 px-3 py-2 rounded-lg bg-surface border border-border hover:border-primary text-sm font-semibold whitespace-nowrap"
-            >
-              🧾 Cheklar tarixi
-            </button>
+              testId="cashier-history"
+            />
           )}
           <BackButton className="ml-auto" />
         </div>
 
-        {showExpenses && (
-          <Modal title="Kunlik rasxodlar" onClose={() => setShowExpenses(false)} wide>
-            <div className="flex flex-col sm:flex-row gap-2 mb-3">
-              <input
-                value={expAmount}
-                inputMode="numeric"
-                onChange={(e) => {
-                  setExpAmount(cleanDigitsInput(e.target.value));
-                  setExpError('');
-                }}
-                placeholder="Summa"
-                className="w-full sm:w-36 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary"
-              />
-              <input
-                value={expNote}
-                onChange={(e) => setExpNote(e.target.value)}
-                placeholder="Izoh (masalan: non, gaz, ...)"
-                className="flex-1 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary"
-                onKeyDown={(e) => e.key === 'Enter' && addExpense()}
-              />
-              <Button onClick={addExpense} disabled={expSaving} className="shrink-0">
-                {expSaving ? 'Saqlanmoqda…' : 'Qo‘shish'}
-              </Button>
-            </div>
-            {expAmount && Number(expAmount) > 0 && (
-              <div className="text-sm text-muted mb-2">
-                Summa: <span className="font-semibold text-text">{formatSum(Number(expAmount))}</span>
-              </div>
-            )}
-            {expError && (
-              <div className="mb-3 bg-danger/10 border border-danger/40 text-danger rounded-lg px-3 py-2 text-sm font-semibold">
-                ⚠️ {expError}
-              </div>
-            )}
-            <div className="bg-bg rounded-xl divide-y divide-border max-h-[45vh] overflow-auto">
-              {expenses.items.length === 0 ? (
-                <div className="text-muted text-sm p-4 text-center">Bugun rasxod yo‘q</div>
-              ) : (
-                expenses.items.map((e) => (
-                  <div key={e.id} className="flex justify-between px-3 py-2 text-sm">
-                    <span className="text-muted">
-                      {new Date(e.createdAt).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}
-                      {e.note ? ` · ${e.note}` : ''}
-                      {e.cashierName ? ` · ${e.cashierName}` : ''}
-                    </span>
-                    <span className="font-semibold text-danger">- {formatSum(roundSum(e.amount))}</span>
-                  </div>
-                ))
-              )}
-            </div>
-            <div className="flex justify-between mt-3 font-bold">
-              <span>Jami rasxod</span>
-              <span className="text-danger">{formatSum(roundSum(expenses.total))}</span>
-            </div>
-          </Modal>
-        )}
-
-        {/* Ochiq hisoblar — kartochka to'ri (bosilsa to'lov modal ochiladi) */}
-        <div className="flex-1 overflow-auto p-4 sm:p-6">
-          {/* Zal bo'yicha filtr (VIP / oddiy / terrasa) */}
-          {halls.length > 1 && (
-            <div className="flex gap-2 flex-wrap mb-4">
+        {/* Ochiq hisoblar — kartochka to'ri (bosilsa to'lov oynasi ochiladi) */}
+        <div className="flex-1 overflow-auto p-3 sm:p-5">
+          {loadError && (
+            <div
+              role="alert"
+              className="mb-3 flex items-center gap-2 rounded-xl border border-danger/50 bg-danger/10 px-3 py-2 text-sm font-semibold text-danger"
+            >
+              <AlertIcon className="w-5 h-5 shrink-0" />
+              <span className="flex-1">Hisoblar yangilanmadi: {loadError}</span>
               <button
-                onClick={() => setHallFilter('')}
-                className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold border transition-colors ${
-                  activeHall === '' ? 'bg-primary text-white border-primary' : 'bg-surface border-border text-muted hover:text-text'
-                }`}
+                onClick={() => void refreshOrders()}
+                className="h-9 px-3 rounded-lg border border-danger/50 hover:bg-danger/10 font-bold"
               >
-                {t('common.all')}
+                Qayta urinish
               </button>
-              {halls.map((h) => (
+            </div>
+          )}
+
+          {/* Zal bo'yicha filtr (faqat "Stolga" rejimida) */}
+          {mode === OrderType.DineIn && halls.length > 1 && (
+            <div className="flex gap-2 flex-wrap mb-3">
+              {['', ...halls].map((h) => (
                 <button
-                  key={h}
+                  key={h || '__all'}
                   onClick={() => setHallFilter(h)}
-                  className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold border transition-colors ${
-                    activeHall === h ? 'bg-primary text-white border-primary' : 'bg-surface border-border text-muted hover:text-text'
+                  className={`h-11 px-4 rounded-xl text-sm font-bold border-2 transition-colors ${
+                    activeHall === h ? 'bg-primary-hover text-white border-primary-hover' : 'bg-surface border-border text-text hover:border-primary'
                   }`}
                 >
-                  {h}
+                  {h || t('common.all')}
                 </button>
               ))}
             </div>
           )}
-          <div className="text-sm text-muted mb-3">
-            {t('cashier.openBills')} — {shown.length} ta
-          </div>
-          {shown.length === 0 ? (
-            <div className="flex flex-col items-center justify-center text-muted py-24">
-              <div className="text-5xl mb-3">🍽️</div>
-              <div>{t('cashier.noBills')}</div>
+
+          {!ordersLoaded ? (
+            <div className="flex flex-col items-center justify-center text-muted py-24 gap-3">
+              <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+              <div>{t('common.loading')}</div>
+            </div>
+          ) : bills.length === 0 ? (
+            <div className="flex flex-col items-center justify-center text-muted py-20 gap-4 text-center">
+              <div className="w-20 h-20 rounded-full bg-surface border border-border flex items-center justify-center">
+                <ReceiptIcon className="w-10 h-10 text-muted" />
+              </div>
+              <div className="text-lg font-semibold text-text">{EMPTY_TEXT[mode] ?? t('cashier.noBills')}</div>
+              {canPos && (
+                <div className="flex flex-wrap justify-center gap-2">
+                  {mode !== OrderType.DineIn && (
+                    <button
+                      type="button"
+                      onClick={newOrder}
+                      className="h-14 px-6 rounded-xl bg-primary-hover text-white font-extrabold text-lg flex items-center gap-2 shadow-lg active:scale-[0.97] transition-transform"
+                    >
+                      <PlusIcon className="w-6 h-6" /> Yangi buyurtma
+                    </button>
+                  )}
+                  {mode === OrderType.DineIn && (
+                    <button
+                      type="button"
+                      onClick={() => nav.open('waiter')}
+                      className="h-14 px-6 rounded-xl bg-surface border-2 border-primary/60 text-text font-extrabold text-lg flex items-center gap-2 active:scale-[0.97] transition-transform"
+                    >
+                      <TablesIcon className="w-6 h-6 text-primary" /> Stollar
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4">
-              {shown.map((o) => {
-                const ready = o.status === OrderStatus.Ready;
-                const unp = !!o._unprinted;
-                return (
-                  <button
-                    key={unp ? `u-${o.id}` : o.id}
-                    onClick={() => openBill(o)}
-                    className={`group text-left rounded-2xl border p-4 lift animate-card-in transition-all hover:border-primary hover:-translate-y-0.5 ${
-                      unp ? 'bg-warning/10 border-warning/50' : ready ? 'bg-success/5 border-success/30' : 'bg-surface border-border'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="text-2xl font-extrabold leading-none">
-                        <span className="text-muted text-lg font-bold">№</span>
-                        {o.tableNumber ?? '—'}
-                      </div>
-                      {unp ? (
-                        <span className="text-[11px] font-bold text-warning bg-warning/20 rounded px-1.5 py-0.5">
-                          chek chiqmadi
-                        </span>
-                      ) : (
-                        <StatusBadge status={o.status} />
-                      )}
-                    </div>
-                    <div className="text-xs text-muted mt-2 truncate">
-                      {o.hall ? `${o.hall} · ` : ''}
-                      {o.items.length} ta taom
-                    </div>
-                    <div className="mt-4 text-xl font-extrabold text-primary">{formatSum(billTotal(o))}</div>
-                    <div
-                      className={`mt-2 text-xs font-semibold transition-colors ${
-                        unp ? 'text-warning' : 'text-muted group-hover:text-primary'
-                      }`}
-                    >
-                      {unp ? '🖨 Chek chiqarish uchun bosing →' : 'To‘lov uchun bosing →'}
-                    </div>
-                  </button>
-                );
-              })}
+            // Telefonda kartochkalar o'z balandligida; kattaroq ekranda qatordagi kartochkalar bir xil (summalar bir chiziqda)
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-2.5 sm:gap-3 items-start sm:items-stretch">
+              {bills.map((b) => (
+                <CashierOrderCard
+                  key={b.key}
+                  order={b.order}
+                  unprinted={b.unprinted}
+                  receipt={b.receipt}
+                  now={now}
+                  onOpen={openBill}
+                  onEditDelivery={editDelivery}
+                  onEdit={canPos ? editOnPos : undefined}
+                  onSplit={canSplit ? openSplit : undefined}
+                />
+              ))}
             </div>
           )}
         </div>
       </div>
 
-      {/* To'lov modal oynasi — kartochka bosilganda ochiladi */}
-      {selected && (
+      {/* Qisqa xabar (masalan hisob bo'lingandan keyin) — ishni to'xtatmaydi */}
+      {toast && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 animate-overlay-in p-4"
-          onClick={closePayment}
+          role="status"
+          className="fixed z-40 left-1/2 -translate-x-1/2 top-[calc(4.5rem+var(--printbanner-h,0px))] max-w-[92vw] rounded-2xl bg-success text-black px-4 py-3 font-extrabold shadow-2xl flex items-center gap-2 animate-pop-in"
         >
-          <div
-            className="bg-surface border border-border rounded-2xl w-full max-w-[520px] max-h-[92vh] flex flex-col animate-pop-in"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="px-5 py-3.5 border-b border-border font-bold flex items-center justify-between sticky top-0 bg-surface rounded-t-2xl">
-              <span>Stol №{selected.tableNumber ?? '—'} — hisob</span>
-              <button onClick={closePayment} className="text-muted hover:text-text text-xl leading-none">
-                ✕
-              </button>
-            </div>
-            <div className="p-5 overflow-auto">
-              {selectedGone && (
-                <div className="mb-4 bg-warning/10 border-2 border-warning/60 rounded-xl p-3 text-sm font-semibold text-text">
-                  ⚠️ Bu hisob boshqa joyda yopildi yoki bekor qilindi — to‘lov qabul qilinmaydi.
-                </div>
-              )}
-
-              <div className="bg-bg border border-border rounded-xl divide-y divide-border mb-5">
-                {selected.items.map((it) => (
-                  <div key={it.id} className="flex justify-between gap-3 px-4 py-2.5">
-                    <span>
-                      <span className="text-primary font-semibold">
-                        {it.unit === MenuUnit.Weight ? `${formatQty(it.quantity)} kg` : `${formatQty(it.quantity)}×`}
-                      </span>{' '}
-                      {it.menuItemName}
-                      {it.note && <span className="text-warning text-sm"> ({it.note})</span>}
-                    </span>
-                    <span className="font-semibold whitespace-nowrap">{formatSum(lineSum(it.price ?? 0, it.quantity))}</span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Aksiz kodlarini skanerlash (TZ F-8.5/8.6) */}
-              {pendingExcise.length > 0 && (
-                <div className="bg-warning/10 border border-warning/40 rounded-xl p-4 mb-5">
-                  <div className="font-semibold text-warning mb-2">Aksiz kodi skanerlanishi kerak</div>
-                  <div className="space-y-2">
-                    {pendingExcise.map((it) => (
-                      <div key={it.id} className="flex items-center gap-2">
-                        <span className="flex-1">{it.menuItemName}</span>
-                        <input
-                          autoFocus
-                          value={exciseInputs[it.id] || ''}
-                          onChange={(e) => setExciseInputs((p) => ({ ...p, [it.id]: e.target.value }))}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') saveExcise();
-                          }}
-                          placeholder="Aksiz kodini skanerlang yoki kiriting"
-                          className="flex-[2] px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                  <Button variant="ghost" className="mt-3" disabled={savingExcise} onClick={saveExcise}>
-                    {savingExcise ? 'Saqlanmoqda...' : 'Aksiz kodlarini saqlash'}
-                  </Button>
-                </div>
-              )}
-
-              {/* Chegirma va xizmat haqi (TZ F-3.3) */}
-              <div className="grid grid-cols-2 gap-4 mb-5">
-                <PercentField label={t('cashier.discount')} value={discount} onChange={setDiscount} />
-                <PercentField label={t('cashier.serviceFee')} value={serviceFee} onChange={setServiceFee} />
-              </div>
-
-              {/* Yakuniy summa */}
-              <div className="bg-bg border border-border rounded-xl p-4 mb-4 space-y-1.5">
-                <SumRow label="Jami" value={formatSum(totals.subtotal)} />
-                {totals.discountAmount > 0 && (
-                  <SumRow
-                    label={`Chegirma (${totals.discountPercent}%)`}
-                    value={`- ${formatSum(totals.discountAmount)}`}
-                    color="text-danger"
-                  />
-                )}
-                {totals.serviceAmount > 0 && (
-                  <SumRow
-                    label={`Xizmat haqi (${totals.servicePercent}%)`}
-                    value={`+ ${formatSum(totals.serviceAmount)}`}
-                  />
-                )}
-                <div className="border-t border-border pt-2 flex justify-between text-lg font-bold">
-                  <span>To‘lanadi</span>
-                  <span className="text-primary">{formatSum(totals.total)}</span>
-                </div>
-                {paidAmount > 0 && (
-                  <>
-                    <SumRow label="To‘langan" value={formatSum(paidAmount)} color="text-success" />
-                    <div className="flex justify-between font-bold">
-                      <span>Qoldi</span>
-                      <span className={remaining > 0 ? 'text-danger' : 'text-success'}>{formatSum(remaining)}</span>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* Qilingan to'lovlar (bo'lib to'lash) */}
-              {payments.length > 0 && (
-                <div className="mb-4 space-y-1.5">
-                  {payments.map((p) => (
-                    <div
-                      key={p.id}
-                      className="flex items-center gap-2 text-sm bg-bg border border-border rounded-lg px-3 py-2"
-                    >
-                      <span className="font-semibold">{t(`pay.${p.type}`)}</span>
-                      <span className="ml-auto font-bold">{formatSum(roundSum(p.amount))}</span>
-                      <button
-                        onClick={() => removePayment(p)}
-                        disabled={paying}
-                        aria-label="To‘lovni o‘chirish"
-                        className="w-9 h-9 shrink-0 rounded-lg hover:bg-danger/10 text-muted hover:text-danger flex items-center justify-center disabled:opacity-50"
-                      >
-                        🗑️
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {canSettle ? (
-                /* Hisob to'liq qoplangan (yoki 0 so'm) — yangi to'lov kerak emas, faqat yopish */
-                <div className="rounded-2xl border-2 border-success/60 bg-success/10 p-4 animate-pop-in">
-                  <div className="text-center text-lg font-extrabold text-success">
-                    {paidAmount > 0 ? '✓ Hisob to‘liq to‘langan' : '✓ To‘lanadigan summa 0 so‘m'}
-                  </div>
-                  <div className="text-center text-sm text-text mt-1 mb-3">
-                    {paidAmount > 0
-                      ? 'Yangi to‘lov kerak emas — hisobni yoping, chek chiqadi va stol bo‘shaydi.'
-                      : 'Hisob to‘lovsiz yopiladi — chek chiqadi va stol bo‘shaydi.'}
-                  </div>
-                  {payError && (
-                    <div
-                      role="alert"
-                      className="mb-3 bg-danger/10 border border-danger/50 text-danger rounded-xl px-3.5 py-2.5 text-sm font-semibold"
-                    >
-                      ⚠️ {payError}
-                    </div>
-                  )}
-                  <button
-                    onClick={settleBill}
-                    disabled={paying || pendingExcise.length > 0}
-                    className="w-full py-4 rounded-xl text-lg font-extrabold bg-success text-white shadow-lg hover:brightness-110 active:scale-[0.98] transition-all disabled:opacity-50"
-                  >
-                    {paying ? 'Yopilmoqda…' : '✅ Hisobni yopish'}
-                  </button>
-                  {pendingExcise.length > 0 && (
-                    <div className="text-xs text-danger mt-2 text-center">Avval aksiz kodini skanerlang</div>
-                  )}
-                </div>
-              ) : (
-                <>
-                  {/* To'lov summasi (bo'sh qoldirilsa — qolgan summa to'liq to'lanadi) */}
-                  <div className="mb-3">
-                    <div className="text-sm text-muted mb-2">
-                      To‘lov summasi <span className="text-xs">(bo‘sh — qolganini to‘liq)</span>
-                    </div>
-                    <input
-                      value={payAmount}
-                      // Faqat raqamlar: bo'shliq/vergul/nuqta minglik ajratgich sifatida olib tashlanadi
-                      onChange={(e) => {
-                        setPayAmount(cleanDigitsInput(e.target.value));
-                        setPayError('');
-                      }}
-                      inputMode="numeric"
-                      placeholder={formatSum(remaining)}
-                      className="w-full px-3 py-3 rounded-xl bg-bg border border-border outline-none focus:border-primary text-lg font-bold text-center"
-                    />
-                    <div className="mt-1.5 min-h-[20px] text-sm text-center">
-                      {remaining > 0 &&
-                        (typedAmount === null ? (
-                          <span className="text-muted">Qolgan {formatSum(remaining)} to‘liq to‘lanadi</span>
-                        ) : change > 0 ? (
-                          <span className="font-bold text-success">
-                            Qaytim: {formatSum(change)}{' '}
-                            <span className="font-normal text-muted">· to‘lov {formatSum(remaining)}</span>
-                          </span>
-                        ) : (
-                          <span className="text-text">
-                            {formatSum(typedAmount)} to‘lanadi
-                            {remaining - typedAmount > 0 && (
-                              <span className="text-muted"> · keyin qoladi {formatSum(remaining - typedAmount)}</span>
-                            )}
-                          </span>
-                        ))}
-                    </div>
-                  </div>
-
-                  {payError && (
-                    <div
-                      role="alert"
-                      className="mb-3 bg-danger/10 border border-danger/50 text-danger rounded-xl px-3.5 py-2.5 text-sm font-semibold"
-                    >
-                      ⚠️ {payError}
-                    </div>
-                  )}
-
-                  {/* To'lov usullari — bosilganda summa shu usul bilan to'lanadi */}
-                  <div className="grid grid-cols-3 gap-2">
-                    {PAYMENT_OPTIONS.map((p) => (
-                      <button
-                        key={p.type}
-                        onClick={() => addPayment(p.type)}
-                        disabled={payDisabled}
-                        className="py-3.5 rounded-xl font-bold bg-primary text-white hover:brightness-110 active:scale-95 transition-all disabled:opacity-50"
-                      >
-                        {paying ? '…' : t(`pay.${p.type}`)}
-                      </button>
-                    ))}
-                  </div>
-                  {pendingExcise.length > 0 && (
-                    <div className="text-xs text-danger mt-2 text-center">Avval aksiz kodini skanerlang</div>
-                  )}
-                  {/* To'lovlar jami summadan oshib ketgan (chegirma oshirildi) — tugmalar nega o'chiq */}
-                  {!selectedGone && overpaid && (
-                    <div className="mt-3 rounded-xl border border-warning/50 bg-warning/10 px-3.5 py-2.5 text-sm font-semibold text-text text-center">
-                      ⚠️ To‘langan summa jami summadan {formatSum(paidAmount - totals.total)} ko‘p — chegirma/xizmat
-                      haqini tekshiring yoki ortiqcha to‘lovni o‘chiring.
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
+          <CheckIcon className="w-5 h-5 shrink-0" />
+          <span className="truncate">{toast}</span>
         </div>
+      )}
+
+      {showCash && <CashMovementsModal onClose={() => setShowCash(false)} onChanged={refreshStats} />}
+      {showDebts && <DebtsModal onClose={() => setShowDebts(false)} onChanged={refreshStats} />}
+      {showStop && <StopListModal onClose={() => setShowStop(false)} onChanged={setStopCount} />}
+
+      {payOrder && (
+        <PaymentModal
+          key={payOrder.id}
+          order={payOrder}
+          siblings={siblingsOf(payOrder)}
+          onClose={closePayment}
+          onPaid={handlePaid}
+          onChanged={scheduleRefresh}
+          onReceiptPrinted={receiptPrinted}
+        />
+      )}
+
+      {splitOrder && (
+        <SplitCheckModal
+          order={splitOrder}
+          siblings={siblingsOf(splitOrder)}
+          onClose={() => setSplitOrder(null)}
+          onDone={splitDone}
+        />
       )}
 
       {receipt && (
         <ReceiptPreview
           receipt={receipt}
+          afterPayment
           onPrinted={() => removeUnprinted(receipt.orderId)}
           onClose={() => setReceipt(null)}
+        />
+      )}
+
+      {deliveryEdit && (
+        <DeliveryInfoModal
+          title={`${orderTitle(deliveryEdit)} — mijoz ma‘lumotlari`}
+          initial={{
+            phone: deliveryEdit.phone ?? '',
+            address: deliveryEdit.address ?? '',
+            note: deliveryEdit.note ?? '',
+            deliveryFee: deliveryEdit.deliveryFee ?? 0,
+          }}
+          onSave={(info) => saveDelivery(deliveryEdit, info)}
+          onClose={() => setDeliveryEdit(null)}
         />
       )}
     </AppShell>
@@ -843,63 +752,44 @@ export function CashierPage() {
 function SummaryStat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   return (
     <div
-      className={`shrink-0 rounded-xl border px-4 py-2 whitespace-nowrap ${
+      className={`shrink-0 rounded-xl border px-3.5 py-1.5 whitespace-nowrap ${
         accent ? 'bg-primary/10 border-primary/30' : 'bg-surface border-border'
       }`}
     >
-      <div className="text-[11px] text-muted">{label}</div>
-      <div className={`font-bold ${accent ? 'text-primary text-lg' : 'text-base'}`}>{value}</div>
+      <div className="text-[11px] text-muted font-semibold">{label}</div>
+      <div className={`font-extrabold leading-tight tabular-nums ${accent ? 'text-primary text-lg' : 'text-base text-text'}`}>{value}</div>
     </div>
   );
 }
 
-// Foiz maydoni (0–100). Matn holati alohida saqlanadi: "2," / "2." kabi oraliq yozuv yo'qolmaydi,
-// vergul nuqtaga aylanadi ("2,5" -> 2.5), 100 dan katta qiymat 100 ga tushiriladi.
-function PercentField({
+/** Kassa sarlavhasidagi amal tugmasi: belgi + nom (+ qizil son) */
+function ToolButton({
+  icon,
   label,
-  value,
-  onChange,
+  onClick,
+  testId,
+  badge,
 }: {
+  icon: ReactNode;
   label: string;
-  value: number;
-  onChange: (n: number) => void;
+  onClick: () => void;
+  testId: string;
+  badge?: number;
 }) {
-  const [text, setText] = useState(value ? String(value) : '');
-  // Tashqaridan qiymat o'zgarsa (boshqa hisob tanlandi) — matnni moslaymiz
-  useEffect(() => {
-    setText((cur) => (parseDecimal(cur) === value ? cur : value ? String(value) : ''));
-  }, [value]);
-
   return (
-    <label className="block">
-      <span className="text-sm text-muted">{label}</span>
-      <input
-        inputMode="decimal"
-        placeholder="0"
-        value={text}
-        onFocus={(e) => e.target.select()}
-        onChange={(e) => {
-          const clean = cleanDecimalInput(e.target.value, 2);
-          const n = parseDecimal(clean);
-          if (n > 100) {
-            setText('100');
-            onChange(100);
-            return;
-          }
-          setText(clean);
-          onChange(n);
-        }}
-        className="w-full mt-1 px-3 py-2.5 rounded-lg bg-bg border border-border text-text text-lg font-semibold outline-none focus:border-primary"
-      />
-    </label>
-  );
-}
-
-function SumRow({ label, value, color }: { label: string; value: string; color?: string }) {
-  return (
-    <div className="flex justify-between">
-      <span className="text-muted">{label}</span>
-      <span className={color ?? ''}>{value}</span>
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid={testId}
+      className="relative shrink-0 h-12 px-3.5 rounded-xl bg-surface border border-border hover:border-primary hover:bg-surface-hover text-sm font-bold text-text whitespace-nowrap flex items-center gap-2 active:scale-[0.97] transition-transform"
+    >
+      {icon}
+      {label}
+      {typeof badge === 'number' && (
+        <span className="min-w-[22px] h-[22px] px-1.5 rounded-full bg-danger text-white text-xs font-black flex items-center justify-center">
+          {badge}
+        </span>
+      )}
+    </button>
   );
 }

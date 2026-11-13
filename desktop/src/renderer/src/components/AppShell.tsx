@@ -6,8 +6,16 @@ import { ThemeLangControls } from './ThemeLangControls';
 import { useI18n } from '../state/i18n';
 import ChangePasswordModal from './ChangePasswordModal';
 import { PendingOrdersModal, usePendingOrders } from './PendingOrdersModal';
+import { StatusBar } from './StatusBar';
+import { PRINT_BANNER_HEIGHT, PrintQueueBanner, usePrintBannerVisible } from './printing/PrintQueueBanner';
+import { canSeePrinting } from './printing/printingStore';
 
-// Barcha ekranlar uchun umumiy ramka: yuqori panel + kontent
+// Barcha ekranlar uchun umumiy ramka: yuqori panel + kontent.
+// Kassir va administrator/direktor uchun qo'shimcha (kontentni to'smaydi — sahifa qisqaradi):
+//  • sarlavha ostida — chiqmay turgan oshxona/bar cheklari qatori (faqat shunday chek bo'lsa, B17);
+//  • eng pastda — server va bo'lim printerlari holati qatori (B26; telefonda ko'rinmaydi).
+// Suzuvchi xabarlar (PrintFailedToasts) shu qatorlarni to'smasligi uchun ularning balandligi CSS
+// o'zgaruvchilarida beriladi: --printbanner-h (yuqori), --statusbar-h (pastki, md+).
 export function AppShell({
   title,
   children,
@@ -35,6 +43,9 @@ export function AppShell({
   const rejected = pendingList.filter((p) => p.failed).length;
   const [pendingOpen, setPendingOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
+  // Chek navbati / printerlar holati — faqat kassir va administrator/direktor ko'radi
+  const showPrinting = canSeePrinting(user);
+  const printBanner = usePrintBannerVisible();
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ top: 0, right: 0 });
@@ -64,7 +75,10 @@ export function AppShell({
   }, [menuOpen]);
 
   return (
-    <div className="h-full flex flex-col app-bg text-text">
+    <div
+      className={`h-full flex flex-col app-bg text-text ${showPrinting ? 'md:[--statusbar-h:2.25rem]' : ''}`}
+      style={printBanner ? ({ '--printbanner-h': PRINT_BANNER_HEIGHT } as React.CSSProperties) : undefined}
+    >
       <header className="relative z-50 flex items-center justify-between gap-2 px-3 sm:px-6 py-2.5 glass border-b border-border">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <span className="text-primary font-extrabold text-lg tracking-tight shrink-0">
@@ -178,7 +192,9 @@ export function AppShell({
           )}
         </div>
       </header>
-      <main className="flex-1 overflow-hidden">{children}</main>
+      {showPrinting && <PrintQueueBanner />}
+      <main className="flex-1 min-h-0 overflow-hidden">{children}</main>
+      {showPrinting && <StatusBar />}
 
       {/* Mobil: o'ngdan chiqadigan yon menu (drawer) */}
       {mobileDrawer && drawerOpen && (

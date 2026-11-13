@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   UnauthorizedException,
@@ -13,6 +14,8 @@ import { randomBytes } from 'crypto';
 import { UserEntity } from '../entities';
 import { isFullAccessRole } from '@hardweb-pos/shared';
 import { LoginThrottle } from './login-throttle';
+import { DirectorAccess } from './director-access';
+import { DIRECTOR_LOCAL_ONLY_MESSAGE } from './local-request';
 import {
   BCRYPT_COST,
   safeCompare,
@@ -34,6 +37,7 @@ export class AuthService {
     private readonly users: Repository<UserEntity>,
     private readonly jwt: JwtService,
     private readonly throttle: LoginThrottle,
+    private readonly directorAccess: DirectorAccess,
   ) {}
 
   // Login + parol bilan kirish (Direktor/SuperAdmin uchun yagona yo'l)
@@ -72,6 +76,14 @@ export class AuthService {
       }
       // Noto'g'ri urinish begin() da allaqachon sanalgan
       throw new UnauthorizedException(WRONG_LOGIN_MESSAGE);
+    }
+
+    // B35: direktor/SuperAdmin faqat server kompyuteridan (sozlama yoqilganda). Parol to'g'ri bo'lgani
+    // uchun bu muvaffaqiyatsiz parol urinishi sifatida sanalmaydi
+    if (await this.directorAccess.isBlocked(matched.role, ip)) {
+      this.throttle.release(attempt);
+      this.logger.warn(`Direktor tashqi kompyuterdan kirishga urindi: ${matched.login ?? matched.name} (${ip})`);
+      throw new ForbiddenException(DIRECTOR_LOCAL_ONLY_MESSAGE);
     }
 
     this.throttle.succeed(attempt);

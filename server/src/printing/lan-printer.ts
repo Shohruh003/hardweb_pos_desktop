@@ -161,6 +161,40 @@ export function sendToLanPrinter(
   });
 }
 
+export type ProbeResult = { ok: true } | { ok: false; message: string };
+
+/**
+ * Printer "tirikmi" tekshiruvi (holat qatori uchun): faqat TCP ulanish ochiladi va darhol yopiladi —
+ * printerga HECH QANDAY bayt yuborilmaydi (qog'ozga hech narsa chiqmaydi). `timeoutMs` ichida
+ * ulansa — ok. Hech qachon reject qilmaydi.
+ */
+export function probeLanPrinter(addr: PrinterAddress, timeoutMs = 3000): Promise<ProbeResult> {
+  const where = formatAddress(addr);
+  return new Promise<ProbeResult>((resolve) => {
+    let socket: Socket | null = null;
+    let done = false;
+    const finish = (r: ProbeResult) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (socket && !socket.destroyed) socket.destroy();
+      resolve(r);
+    };
+    const timer = setTimeout(
+      () => finish({ ok: false, message: `Printer javob bermadi (${where})` }),
+      timeoutMs,
+    );
+    try {
+      socket = connect({ host: addr.host, port: addr.port });
+    } catch (e) {
+      finish({ ok: false, message: describeSocketError(e, addr).message });
+      return;
+    }
+    socket.once('connect', () => finish({ ok: true }));
+    socket.on('error', (err) => finish({ ok: false, message: describeSocketError(err, addr).message }));
+  });
+}
+
 /**
  * Bir printerga (host:port) yuboriladigan ishlarni ketma-ket bajarish navbati.
  * Ko'p termal printerlar bir vaqtda faqat bitta ulanishni qabul qiladi — shuning uchun

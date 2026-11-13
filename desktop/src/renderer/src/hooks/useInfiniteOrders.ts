@@ -10,6 +10,8 @@ export interface OrderFilters {
   dateFrom?: string; // ISO
   dateTo?: string; // ISO
   search?: string;
+  /** B7: buyurtma turi (stol / olib_ketish / yetkazish) — server ?type= filtri */
+  type?: string;
 }
 
 interface PageResult {

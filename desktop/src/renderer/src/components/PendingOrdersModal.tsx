@@ -1,16 +1,22 @@
 import { useEffect, useState } from 'react';
+import { MenuUnit, OrderType } from '@hardweb-pos/shared';
 import { Modal } from './Modal';
 import { Button, formatDateTime, formatTime } from './ui';
 import { formatQty } from './numeric';
 import {
   PendingOrder,
+  RETRY_HINT,
+  TIMEOUT_HINT,
   discardPendingOrder,
   getPendingOrders,
   onPendingChange,
+  pendingTitle,
+  pendingType,
   retryPendingOrder,
 } from '../lib/offlineQueue';
 import { useConnectivity } from '../state/connectivity';
 import { useConfirm } from '../state/confirm';
+import { OrderTypeBadge, formatKg, phoneLabel } from './waiter/orderUi';
 
 /** offlineQueue'dagi "yuborilmoqda" belgisi shu vaqtdan keyin eskirgan hisoblanadi (u yerdagi CLAIM_TTL_MS) */
 const SENDING_TTL_MS = 45_000;
@@ -32,11 +38,13 @@ function isSending(p: PendingOrder): boolean {
 }
 
 // Taom nomi: WaiterPage navbatga qo'shganda ko'rsatish uchun nomni ham saqlaydi
-// (server bu qo'shimcha maydonni e'tiborsiz qoldiradi). Eski yozuvlarda nom bo'lmasligi mumkin.
+// (server bu qo'shimcha maydonni olmaydi). Eski yozuvlarda nom bo'lmasligi mumkin.
 function itemsLabel(p: PendingOrder): string {
   const named = p.items.map((it) => {
     const name = (it as { name?: unknown }).name;
-    return typeof name === 'string' && name.trim() ? `${name.trim()} ×${formatQty(it.quantity)}` : null;
+    if (typeof name !== 'string' || !name.trim()) return null;
+    // Kg taom — og'irlik 3 xonagacha ("1,107 kg"), dona — "×3"
+    return it.unit === MenuUnit.Weight ? `${name.trim()} ${formatKg(it.quantity)} kg` : `${name.trim()} ×${formatQty(it.quantity)}`;
   });
   if (named.every((x): x is string => !!x)) return named.join(', ');
   return `${p.items.length} ta taom`;
@@ -48,9 +56,10 @@ function whenLabel(createdAt: number): string {
   return sameDay ? formatTime(iso) : formatDateTime(iso);
 }
 
-// Yuborilmagan (oflayn saqlangan) buyurtmalar — AppShell'dagi sariq son bosilganda ochiladi.
-// Server rad etgan buyurtmalar avtomatik qayta yuborilmaydi: xodim sababini ko'rib,
-// "Qayta yuborish" yoki "O‘chirish"ni tanlaydi.
+// Yuborilmagan (oflayn saqlangan) buyurtmalar — AppShell'dagi sariq son (yoki ofitsiant ekranidagi
+// "Navbatda (oflayn)" kartochkasi) bosilganda ochiladi. Server rad etgan buyurtmalar avtomatik qayta
+// yuborilmaydi: xodim sababini ko'rib, "Qayta yuborish" yoki "O‘chirish"ni tanlaydi. Server javob
+// bermagan (timeout) yangi yozuvlar o'zi qayta yuboriladi — clientRequestId tufayli ikki marta tushmaydi (B32).
 export function PendingOrdersModal({ onClose }: { onClose: () => void }) {
   const confirm = useConfirm();
   const { online, flushNow } = useConnectivity();
@@ -80,9 +89,10 @@ export function PendingOrdersModal({ onClose }: { onClose: () => void }) {
   }
 
   async function remove(p: PendingOrder) {
+    const title = pendingTitle(p);
     const ok = await confirm({
       title: 'Buyurtmani o‘chirish',
-      message: `Stol №${p.tableNumber ?? '—'} uchun yuborilmagan buyurtma o‘chirilsinmi? U oshxonaga bormaydi va qaytarib bo‘lmaydi.`,
+      message: `${title}: yuborilmagan buyurtma o‘chirilsinmi? U oshxonaga bormaydi va qaytarib bo‘lmaydi.`,
       confirmText: 'O‘chirish',
       danger: true,
     });
@@ -94,9 +104,9 @@ export function PendingOrdersModal({ onClose }: { onClose: () => void }) {
   return (
     <Modal title="📤 Yuborilmagan buyurtmalar" onClose={onClose} wide>
       <div className="text-sm text-muted mb-4 leading-relaxed">
-        Bu buyurtmalar server bilan aloqa yo‘qligida shu qurilmada saqlangan. Aloqa tiklanganda o‘zi yuboriladi.
-        Server <b className="text-danger">rad etganlari</b> avtomatik yuborilmaydi — sababini ko‘rib, qayta yuboring
-        yoki o‘chiring.
+        Bu buyurtmalar server bilan aloqa yo‘qligida (yoki server javob bermaganda) shu qurilmada saqlangan. Aloqa
+        tiklanganda o‘zi yuboriladi — oshxonaga ikki marta tushmaydi. Server <b className="text-danger">rad etganlari</b>{' '}
+        avtomatik yuborilmaydi — sababini ko‘rib, qayta yuboring yoki o‘chiring.
       </div>
 
       {list.length === 0 ? (
@@ -108,19 +118,33 @@ export function PendingOrdersModal({ onClose }: { onClose: () => void }) {
         <div className="space-y-2.5 max-h-[55vh] overflow-auto">
           {list.map((p) => {
             const sending = isSending(p);
+            const type = pendingType(p);
+            // Javob kelmagan (timeout) eski yozuv — server rad etmagan, lekin qabul qilgan bo'lishi mumkin
+            const unsure = !!p.failed && p.lastError === TIMEOUT_HINT;
+            // Javob kelmagan yangi yozuv — o'zi qayta yuboriladi
+            const retrying = !p.failed && p.lastError === RETRY_HINT;
             return (
               <div
                 key={p.localId}
+                data-testid="pending-order"
                 className={`rounded-xl border-2 p-3 ${
                   p.failed ? 'border-danger/60 bg-danger/5' : 'border-warning/50 bg-warning/5'
                 }`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="font-extrabold text-lg leading-tight">
-                      Stol №{p.tableNumber ?? '—'}
-                      <span className="text-sm font-semibold text-muted"> · {whenLabel(p.createdAt)}</span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <OrderTypeBadge type={type} />
+                      <span className="text-sm font-semibold text-muted">{whenLabel(p.createdAt)}</span>
                     </div>
+                    <div className="font-extrabold text-lg leading-tight mt-1">{pendingTitle(p)}</div>
+                    {type === OrderType.Delivery && !p.orderId && (p.phone || p.address) && (
+                      <div className="text-sm text-text mt-0.5 break-words">
+                        {p.phone && <span className="font-semibold">{phoneLabel(p.phone)}</span>}
+                        {p.phone && p.address && <span className="text-muted"> · </span>}
+                        {p.address}
+                      </div>
+                    )}
                     <div className="text-sm text-text mt-0.5 break-words">{itemsLabel(p)}</div>
                   </div>
                   <span
@@ -132,13 +156,13 @@ export function PendingOrdersModal({ onClose }: { onClose: () => void }) {
                           : 'bg-warning/20 text-warning'
                     }`}
                   >
-                    {p.failed ? 'Rad etildi' : sending ? 'Yuborilmoqda…' : 'Kutmoqda'}
+                    {unsure ? 'Tekshiring' : p.failed ? 'Rad etildi' : sending ? 'Yuborilmoqda…' : retrying ? 'Qayta uriniladi' : 'Kutmoqda'}
                   </span>
                 </div>
 
                 {p.lastError && (
                   <div className={`text-sm mt-2 font-semibold ${p.failed ? 'text-danger' : 'text-text'}`}>
-                    {p.failed ? '⚠️ Server javobi: ' : 'Oxirgi urinish: '}
+                    {unsure ? '⚠️ ' : p.failed ? '⚠️ Server javobi: ' : 'Oxirgi urinish: '}
                     {p.lastError}
                     {p.attempts ? <span className="text-muted font-normal"> ({p.attempts} marta urinildi)</span> : null}
                   </div>

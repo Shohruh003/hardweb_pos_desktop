@@ -15,6 +15,7 @@ export interface PrinterConfig {
   printerName: string;
   autoCut: boolean;
   kitchen: KitchenPrinter[];
+  restaurantName?: string; // chek sarlavhasi (oxirgi to'lov chekidan eslab qolinadi)
 }
 export interface PrintResult {
   ok: boolean;
@@ -34,7 +35,8 @@ declare global {
         printReceipt: (receipt: Receipt) => Promise<PrintResult>;
         printKitchen: (order: Order) => Promise<PrintResult>;
         printOrderTicket: (order: Order) => Promise<PrintResult>;
-        printBill: (order: Order) => Promise<PrintResult>;
+        // Schot: restoran nomini ham qo'shib yuborish mumkin ({...order, restaurantName}) — chek sarlavhasi
+        printBill: (order: Order & { restaurantName?: string | null }) => Promise<PrintResult>;
         printStation: (
           order: Order,
           host: string,

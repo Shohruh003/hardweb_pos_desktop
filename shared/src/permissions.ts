@@ -17,6 +17,7 @@ export const CAPABILITIES: Capability[] = [
   { key: 'cashier', label: 'Kassa (to‘lov)', group: 'ops', icon: '💵' },
   { key: 'revenue', label: 'Tushum / statistikani ko‘rish', group: 'ops', icon: '📈' },
   { key: 'refund', label: 'Vozvrat qilish', group: 'ops', icon: '↩️' },
+  { key: 'void', label: 'Otkaz (yuborilgan taom/hisobni bekor qilish)', group: 'ops', icon: '🚫' },
   // Boshqaruv
   { key: 'history', label: 'Cheklar tarixi', group: 'manage', icon: '🧾' },
   { key: 'reports', label: 'Hisobotlar (atchot)', group: 'manage', icon: '📊' },
@@ -44,7 +45,9 @@ export const ALL_CAPABILITY_KEYS = CAPABILITIES.map((c) => c.key);
 export const DEFAULT_ROLE_CAPABILITIES: Readonly<Partial<Record<UserRole, readonly string[]>>> = {
   [UserRole.Waiter]: ['waiter'],
   [UserRole.Cook]: ['kitchen'],
-  [UserRole.Cashier]: ['cashier', 'history', 'revenue'],
+  // Kassir olib ketish / yetkazish buyurtmalarini ham o'zi ochadi (ZimZim'dagidek) — 'waiter' ham bor.
+  // Otkaz (yuborilgan taomni bekor qilish) — faqat kassir, administrator va direktorda; ofitsiantda YO'Q.
+  [UserRole.Cashier]: ['cashier', 'waiter', 'void', 'history', 'revenue'],
   [UserRole.Admin]: [
     'history',
     'reports',
@@ -57,6 +60,7 @@ export const DEFAULT_ROLE_CAPABILITIES: Readonly<Partial<Record<UserRole, readon
     'terminals',
     'settings',
     'refund',
+    'void',
     'cashier',
   ],
 };

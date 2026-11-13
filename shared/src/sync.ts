@@ -17,7 +17,7 @@ export interface SyncPayment {
   id: string;
   orderId: string;
   amount: number;
-  type: PaymentType;
+  type: PaymentType | (string & {}); // to'lov usuli kaliti (B30)
   createdAt: string;
 }
 

@@ -25,6 +25,13 @@ export enum OrderStatus {
   Closed = 'yopildi', // hisob yopilgan
 }
 
+/** Buyurtma turi — stolga (zalda), olib ketish yoki yetkazib berish */
+export enum OrderType {
+  DineIn = 'stol', // stolga (zalda o'tiradi) — stol tanlanadi, xizmat haqi qo'shiladi
+  Takeaway = 'olib_ketish', // olib ketish — stolsiz, kunlik tartib raqam (#12)
+  Delivery = 'yetkazish', // yetkazib berish — stolsiz, telefon + manzil, kunlik tartib raqam
+}
+
 /** Buyurtma elementi holati (oshxonada alohida taom) */
 export enum OrderItemStatus {
   Pending = 'kutilmoqda',

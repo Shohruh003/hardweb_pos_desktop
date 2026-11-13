@@ -67,11 +67,16 @@ export class UsersService {
     return list.map(toStaffRow);
   }
 
+  // Buyurtma oladigan xodimlar ("Ofitsiant" almashtirish ro'yxati): faol ofitsiantlar va 'waiter'
+  // ruxsati bor boshqa xodimlar (masalan olib ketish/yetkazishni o'zi ochadigan kassir). Oshpazlar —
+  // 'waiter' ruxsati bo'lmasa — kirmaydi; direktor/superadmin ro'yxatga qo'shilmaydi.
   async findWaiters() {
-    const list = await this.users.find({
-      where: { role: UserRole.Waiter, active: true },
-      order: { name: 'ASC' },
-    });
+    const all = await this.users.find({ where: { active: true }, order: { name: 'ASC' } });
+    const list = all.filter(
+      (u) =>
+        u.role === UserRole.Waiter ||
+        (!isFullAccessRole(u.role) && Array.isArray(u.permissions) && u.permissions.includes('waiter')),
+    );
     return list.map((u) => ({
       id: u.id,
       name: u.name,

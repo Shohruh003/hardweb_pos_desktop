@@ -24,6 +24,8 @@ export default defineConfig(({ mode }) => ({
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
     build: {
+      // Kichraytirilgan (minify) bundle — telefon (8080) va terminallarda tezroq yuklanadi
+      minify: 'esbuild',
       rollupOptions: {
         input: { index: resolve(__dirname, 'src/renderer/index.html') },
       },

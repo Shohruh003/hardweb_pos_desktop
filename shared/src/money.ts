@@ -8,6 +8,8 @@
 export interface MoneyLine {
   price: number | string;
   quantity: number | string;
+  /** stoldagi buyurtmada "olib ketish" (saboy) uchun belgilangan qator — xizmat haqi OLINMAYDI */
+  takeaway?: boolean | null;
 }
 
 export interface OrderTotals {
@@ -15,8 +17,10 @@ export interface OrderTotals {
   discountPercent: number;
   discountAmount: number;
   servicePercent: number;
+  serviceBase: number; // xizmat haqi hisoblanadigan summa (olib ketiladigan qatorlarsiz)
   serviceAmount: number;
-  total: number; // to'lanadigan yakuniy summa = subtotal - chegirma + xizmat
+  deliveryFee: number; // yetkazish narxi (faqat yetkazish buyurtmasida; chegirma/xizmat unga tegmaydi)
+  total: number; // to'lanadigan yakuniy summa = subtotal - chegirma + xizmat + yetkazish narxi
 }
 
 /** Butun so'mga yaxlitlash. NaN/Infinity -> 0. */
@@ -38,26 +42,36 @@ export function lineSum(price: number | string, quantity: number | string): numb
 }
 
 /**
- * Buyurtma summalari. Chegirma va xizmat haqi subtotal'dan hisoblanadi
+ * Buyurtma summalari. Chegirma subtotal'dan, xizmat haqi esa xizmat bazasidan hisoblanadi
  * (xizmat haqi chegirmadan keyingi summaga emas — mavjud biznes qoida saqlangan).
+ * Xizmat bazasi = "olib ketish" (saboy) deb belgilangan qatorlarsiz subtotal: zalda o'tirgan mehmon
+ * o'zi bilan olib ketadigan taomlarga xizmat haqi olinmaydi (eski POS'dagidek).
  */
 export function calcOrderTotals(
   lines: MoneyLine[],
   discountPercent?: number | string | null,
   servicePercent?: number | string | null,
+  deliveryFee?: number | string | null,
 ): OrderTotals {
   const subtotal = (lines || []).reduce((sum, l) => sum + lineSum(l.price, l.quantity), 0);
+  const serviceBase = (lines || []).reduce(
+    (sum, l) => (l.takeaway ? sum : sum + lineSum(l.price, l.quantity)),
+    0,
+  );
   const d = clampPercent(discountPercent);
   const s = clampPercent(servicePercent);
   const discountAmount = roundSum((subtotal * d) / 100);
-  const serviceAmount = roundSum((subtotal * s) / 100);
+  const serviceAmount = roundSum((serviceBase * s) / 100);
+  const fee = Math.max(0, roundSum(deliveryFee));
   return {
     subtotal,
     discountPercent: d,
     discountAmount,
     servicePercent: s,
+    serviceBase,
     serviceAmount,
-    total: subtotal - discountAmount + serviceAmount,
+    deliveryFee: fee,
+    total: subtotal - discountAmount + serviceAmount + fee,
   };
 }
 

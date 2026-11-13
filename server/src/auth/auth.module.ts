@@ -4,16 +4,17 @@ import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
-import { UserEntity } from '../entities';
+import { SettingsEntity, UserEntity } from '../entities';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
 import { LoginThrottle } from './login-throttle';
+import { DirectorAccess } from './director-access';
 import { jwtExpiresIn, jwtSecret } from './user-view';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([UserEntity]),
+    TypeOrmModule.forFeature([UserEntity, SettingsEntity]),
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -25,8 +26,8 @@ import { jwtExpiresIn, jwtSecret } from './user-view';
       }),
     }),
   ],
-  providers: [AuthService, JwtStrategy, LoginThrottle],
+  providers: [AuthService, JwtStrategy, LoginThrottle, DirectorAccess],
   controllers: [AuthController],
-  exports: [AuthService],
+  exports: [AuthService, DirectorAccess],
 })
 export class AuthModule {}

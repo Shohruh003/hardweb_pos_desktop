@@ -16,6 +16,7 @@ export interface PrinterConfig {
   printerName: string;
   autoCut: boolean;
   kitchen: KitchenPrinter[];
+  restaurantName?: string; // chek sarlavhasi (oxirgi to'lov chekidan eslab qolinadi)
 }
 
 export interface PrintResult {
@@ -39,7 +40,8 @@ contextBridge.exposeInMainWorld('hardweb', {
       ipcRenderer.invoke('printer:print-kitchen', order),
     printOrderTicket: (order: Order): Promise<PrintResult> =>
       ipcRenderer.invoke('printer:print-order-ticket', order),
-    printBill: (order: Order): Promise<PrintResult> =>
+    // Schot: restoran nomini ham qo'shib yuborish mumkin ({...order, restaurantName}) — chek sarlavhasi
+    printBill: (order: Order & { restaurantName?: string | null }): Promise<PrintResult> =>
       ipcRenderer.invoke('printer:print-bill', order),
     printStation: (
       order: Order,

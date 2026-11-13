@@ -18,6 +18,7 @@
   --c-primary-hover: 5 150 105;
   --c-success: 34 197 94;
   --c-warning: 234 179 8;
+  --c-bill: 250 204 21;
   --c-danger: 239 68 68;
   --c-info: 139 92 246;
   --c-scrollbar: 48 52 60;
@@ -36,6 +37,8 @@
   --c-primary-hover: 4 120 87;
   --c-success: 22 163 74;
   --c-warning: 217 119 6;
+  /* "Chek berildi" — yorug' temada ham to'q sariq (amber) emas, aynan yorqin sariq */
+  --c-bill: 250 204 21;
   --c-danger: 220 38 38;
   --c-info: 124 58 237;
   --c-scrollbar: 193 200 210;
@@ -57,20 +60,20 @@ body {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-/* Sekin suzuvchi aurora yorug'liklar — chuqurlik va "muallaq" his */
+/* Aurora yorug'liklar — chuqurlik va "muallaq" his. STATIK: filter/animatsiya yo'q.
+   Avval blur(48px) + cheksiz animatsiya edi — har kadrda butun ekran qayta xiralashtirilardi:
+   kuchsiz monobloklarda (Windows 10, Intel GPU) qora bo'laklar va sekinlik keltirib chiqardi. */
 body::before {
   content: '';
   position: fixed;
-  inset: -25%;
+  inset: 0;
   z-index: -2;
+  pointer-events: none;
   background:
-    radial-gradient(42% 42% at 20% 25%, rgba(16, 185, 129, 0.22), transparent 60%),
-    radial-gradient(48% 48% at 82% 72%, rgba(99, 102, 241, 0.2), transparent 60%),
-    radial-gradient(40% 40% at 65% 15%, rgba(236, 72, 153, 0.12), transparent 60%),
-    radial-gradient(45% 45% at 28% 85%, rgba(14, 165, 233, 0.1), transparent 60%);
-  filter: blur(48px) saturate(125%);
-  animation: aurora 24s ease-in-out infinite alternate;
-  will-change: transform;
+    radial-gradient(55% 55% at 18% 22%, rgba(16, 185, 129, 0.16), transparent 72%),
+    radial-gradient(60% 60% at 84% 76%, rgba(16, 185, 129, 0.08), transparent 72%),
+    radial-gradient(50% 50% at 66% 12%, rgba(236, 72, 153, 0.07), transparent 72%),
+    radial-gradient(55% 55% at 26% 88%, rgba(245, 158, 11, 0.06), transparent 72%);
 }
 /* Studio yorug'lik (tepadan) + vignette (chekkalar to'qroq) — statik */
 body::after {
@@ -82,11 +85,6 @@ body::after {
   background:
     radial-gradient(1200px 700px at 50% -20%, rgba(255, 255, 255, 0.05), transparent 60%),
     radial-gradient(135% 135% at 50% 45%, transparent 52%, rgba(0, 0, 0, 0.5));
-}
-@keyframes aurora {
-  0% { transform: translate3d(0, 0, 0) scale(1) rotate(0deg); }
-  50% { transform: translate3d(2%, -3%, 0) scale(1.12) rotate(4deg); }
-  100% { transform: translate3d(-3%, 2%, 0) scale(1.06) rotate(-3deg); }
 }
 [data-theme='light'] body::before {
   opacity: 0.55;
@@ -102,11 +100,10 @@ body::after {
   background: transparent;
 }
 
-/* Shisha (glass) panel — yarim shaffof + orqa fon xiralashuvi */
+/* Shisha (glass) panel — deyarli to'liq surface rangi. backdrop-filter ataylab ishlatilmaydi:
+   u har kadrda orqa fonni qayta xiralashtiradi (kuchsiz GPU'da artefakt, GPU'siz rejimda CPU yuki). */
 .glass {
-  background-color: rgb(var(--c-surface) / 0.72);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background-color: rgb(var(--c-surface) / 0.94);
 }
 
 /* Buyurtma tugmalari va kartalar tezkor muhitda bosishga qulay (katta) */

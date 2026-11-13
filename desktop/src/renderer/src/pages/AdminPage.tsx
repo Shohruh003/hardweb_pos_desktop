@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { hasCapability } from '@hardweb-pos/shared';
+import { hasCapability, isFullAccessRole } from '@hardweb-pos/shared';
 import { AppShell } from '../components/AppShell';
 import { useAuth } from '../state/auth';
 import { useI18n } from '../state/i18n';
@@ -40,8 +40,11 @@ export function AdminPage() {
   const { user } = useAuth();
   const { t } = useI18n();
   const { goHome } = useAppNav();
-  // Faqat ruxsat berilgan tablar
-  const nav = NAV.filter((n) => hasCapability(user, n.cap));
+  // Faqat ruxsat berilgan tablar. "Sozlamalar" — faqat direktor/SuperAdmin (server GET/PATCH /settings
+  // faqat ularga ruxsat beradi; administratorga tab ko'rinsa ham 403 chiqardi)
+  const nav = NAV.filter(
+    (n) => hasCapability(user, n.cap) && (n.key !== 'settings' || isFullAccessRole(user?.role ?? '')),
+  );
   const [tab, setTab] = useState<Tab>(nav[0]?.key ?? 'settings');
   const [drawerOpen, setDrawerOpen] = useState(false); // mobil hamburger
   const current = nav.find((n) => n.key === tab) ?? nav[0];

@@ -23,8 +23,16 @@ export class MenuItemEntity {
   @Column({ name: 'station_id', type: 'uuid', nullable: true })
   stationId: string | null;
 
-  @Column({ nullable: true, type: 'text' })
+  // Rasm — data URL (base64). select:false: ro'yxatlar, buyurtma va chek so'rovlari uni
+  // O'QIMAYDI (har telefonga yuzlab KB base64 ketmasin). Rasm alohida ochiq manzildan beriladi:
+  // GET /api/menu/items/:id/image (kerak joyda addSelect('m.image') bilan o'qiladi).
+  @Column({ nullable: true, type: 'text', select: false })
   image: string | null;
+
+  // Rasm versiyasi — har o'zgarishda (yuklash/o'chirish) +1. Rasm manzilida ?v=<n> bo'lib keladi:
+  // brauzer rasmni uzoq keshlaydi, yangi rasm esa yangi manzil bilan darhol ko'rinadi.
+  @Column({ name: 'image_version', type: 'int', default: 0 })
+  imageVersion: number;
 
   // Taomga ketadigan mahsulotlar/ingredientlar (matn — har birini yangi qatordan)
   @Column({ nullable: true, type: 'text' })

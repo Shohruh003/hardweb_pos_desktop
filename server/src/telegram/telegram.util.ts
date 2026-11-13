@@ -63,3 +63,93 @@ export function localDateKey(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
+
+/**
+ * Hozirgacha kelgan eng so'nggi kunlik hisobot vaqti: bugungi hisobot vaqti o'tgan bo'lsa — bugun,
+ * aks holda kechagi. Masalan vaqt 23:59 bo'lsa, 00:30 da — kechagi 23:59.
+ */
+export function latestReportDue(now: Date, at: { h: number; m: number }): Date {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), at.h, at.m, 0, 0);
+  if (today.getTime() <= now.getTime()) return today;
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, at.h, at.m, 0, 0);
+}
+
+/** Summa: "6 000" (butun so'm, minglar bo'shliq bilan) */
+export function formatMoney(value: unknown): string {
+  const n = Math.round(Number(value));
+  return new Intl.NumberFormat('uz-UZ').format(Number.isFinite(n) ? n : 0);
+}
+
+/** Miqdor: dona -> "2", kg -> "1,107 kg" (ko'pi bilan 3 xona kasr, suzuvchi qoldiqsiz) */
+export function formatQuantity(quantity: unknown, unit?: string | null): string {
+  const q = Number(quantity);
+  if (!Number.isFinite(q)) return '?';
+  const n = String(Math.round(q * 1000) / 1000).replace('.', ',');
+  return unit === 'kg' ? `${n} kg` : n;
+}
+
+/** Otkaz xabaridagi taom qatori. sum/price — bo'lsa summa ko'rsatiladi (so'mda) */
+export interface VoidNoticeItem {
+  name: string;
+  quantity: number | string;
+  unit?: string | null;
+  sum?: number | string | null;
+  price?: number | string | null;
+}
+
+export interface VoidNotice {
+  orderName: string;
+  items: VoidNoticeItem[];
+  reason?: string | null;
+  userName?: string | null;
+  wholeOrder?: boolean;
+}
+
+/** Bitta xabarda ko'pi bilan shuncha taom nomi (qolgani "yana N ta") */
+const VOID_MAX_ITEMS = 10;
+
+/**
+ * Otkaz haqida direktorga qisqa xabar (HTML; foydalanuvchi matni escapeHtml orqali):
+ *   🚫 Otkaz: Stol 5 — 1 × BULYON (6 000 so‘m) — sabab: Mijoz voz kechdi — Kassir
+ * Butun hisob bekor qilinsa — "Otkaz (butun hisob)". Taom bo'lmasa — null.
+ */
+export function buildVoidMessage(p: VoidNotice): string | null {
+  const items = (Array.isArray(p?.items) ? p.items : []).filter(
+    (it) => it && Number(it.quantity) > 0,
+  );
+  if (items.length === 0) return null;
+
+  // Qator summasi: sum berilgan bo'lsa — o'sha, aks holda narx × miqdor (butun so'mga)
+  const sumOf = (it: VoidNoticeItem): number | null => {
+    if (it.sum != null && Number.isFinite(Number(it.sum))) return Math.round(Number(it.sum));
+    if (it.price != null && Number.isFinite(Number(it.price))) {
+      return Math.round(Number(it.price) * Number(it.quantity));
+    }
+    return null;
+  };
+  const shown = items.slice(0, VOID_MAX_ITEMS).map((it) => {
+    const sum = sumOf(it);
+    return (
+      `${formatQuantity(it.quantity, it.unit)} × ${escapeHtml(String(it.name || 'Taom'))}` +
+      (sum != null ? ` (${formatMoney(sum)} so‘m)` : '')
+    );
+  });
+  const more = items.length > VOID_MAX_ITEMS ? `, … yana ${items.length - VOID_MAX_ITEMS} ta` : '';
+  const sums = items.map(sumOf);
+  const total =
+    items.length > 1 && sums.every((s) => s != null)
+      ? ` = <b>${formatMoney(sums.reduce((a: number, s) => a + (s ?? 0), 0))} so‘m</b>`
+      : '';
+  const reason = String(p.reason ?? '').trim();
+  const user = String(p.userName ?? '').trim();
+
+  return (
+    `🚫 <b>Otkaz${p.wholeOrder ? ' (butun hisob)' : ''}</b>: ` +
+    `${escapeHtml(String(p.orderName || 'Buyurtma'))} — ` +
+    shown.join(', ') +
+    more +
+    total +
+    ` — sabab: ${reason ? escapeHtml(reason) : 'ko‘rsatilmagan'}` +
+    (user ? ` — ${escapeHtml(user)}` : '')
+  );
+}

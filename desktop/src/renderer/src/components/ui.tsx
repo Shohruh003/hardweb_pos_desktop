@@ -35,8 +35,13 @@ export function StatusBadge({ status }: { status: OrderStatus }) {
   );
 }
 
+// Summa: "11 000 so‘m" — minglar bo'sh joy bilan (o'zbekcha uslub), barcha qurilmada bir xil.
+// Intl('uz-UZ') ba'zi Electron/Windows'da "11,000" chiqarardi — rus sozlamali kompyuterda
+// vergul kasr ajratgichdek o'qiladi (11,000 = 11 so'm?). Shuning uchun qo'lda formatlaymiz.
 export function formatSum(n: number): string {
-  return new Intl.NumberFormat('uz-UZ').format(n) + ' so‘m';
+  const v = Math.round(Number(n) || 0);
+  const digits = String(Math.abs(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  return `${v < 0 ? '−' : ''}${digits} so‘m`;
 }
 
 // Vaqt: 14:32

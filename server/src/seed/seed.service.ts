@@ -4,12 +4,14 @@ import * as bcrypt from 'bcryptjs';
 
 import {
   CategoryEntity,
+  CustomerEntity,
   MenuItemEntity,
   OrderEntity,
   OrderItemEntity,
   PaymentEntity,
   ProductEntity,
   RecipeItemEntity,
+  SettingsEntity,
   StationEntity,
   TableEntity,
   UserEntity,
@@ -18,19 +20,38 @@ import {
   MenuUnit,
   OrderItemStatus,
   OrderStatus,
+  OrderType,
   PaymentType,
   ProductUnit,
   TableStatus,
   UserRole,
+  calcOrderTotals,
 } from '@hardweb-pos/shared';
 import { safeCompare } from '../auth/user-view';
 import { LicenseService } from '../license/license.service';
+import { businessDateOf } from '../orders/order-rules';
 
 /** Real rejimdagi yagona boshlang'ich foydalanuvchi (parol vaqtinchalik — birinchi kirishda almashtiriladi) */
 const REAL_DIRECTOR = { name: 'Direktor', login: 'direktor', password: '1234' };
 /** Demo xodimlarning umumiy paroli */
 const DEMO_PASSWORD = '1234';
 const BCRYPT_COST = 10;
+/** Demo: stolga buyurtmalarning xizmat haqi foizi (faqat demo seed'da; real bazada 0 — direktor qo'yadi) */
+const DEMO_SERVICE_PERCENT = 10;
+/** Demo: ofitsiant ulushi foizi (ofitsiantlar hisoboti uchun; real bazada 0 — direktor qo'yadi) */
+const DEMO_WAITER_SHARE_PERCENT = 5;
+
+/** Demo mijozlar (CRM) — yetkazishda telefon bo'yicha avtomatik topiladi */
+const DEMO_CUSTOMERS = [
+  { name: 'Aziza Karimova', phone: '+998 90 111 22 33', note: 'Doimiy mijoz — achchiq qalampirsiz' },
+  { name: 'Botir Xolmatov', phone: '93 555 66 77', note: null },
+];
+/** Demo yetkazish manzillari (telefon -> manzil) */
+const DEMO_DELIVERY = [
+  { phone: '+998901112233', address: 'Chilonzor tumani, 9-kvartal, 12-uy, 45-xonadon' },
+  { phone: '+998935556677', address: 'Yunusobod, 4-mavze, 17-uy (2-podyezd, 3-qavat)' },
+  { phone: '+998977001020', address: 'Mirzo Ulug‘bek, Buyuk Ipak Yo‘li 154, ofis 7' },
+];
 
 /** SEED_DEMO=false — real restoran (toza baza); boshqa har qanday qiymat yoki yo'q — demo */
 function isRealMode(): boolean {
@@ -160,23 +181,46 @@ export class SeedService implements OnModuleInit {
   // ---- Demo rejim: to'liq prezentatsiya ma'lumotlari ----
   private async seedDemo(manager: EntityManager) {
     this.logger.log('Boshlang‘ich (demo) ma’lumotlar yuklanmoqda...');
+    await this.seedSettings(manager);
     const staff = await this.seedUsers(manager);
     const tables = await this.seedTables(manager);
     const stations = await this.seedStations(manager);
     const menu = await this.seedMenu(manager, stations);
     await this.seedInventory(manager, menu);
+    const customers = await this.seedCustomers(manager);
     await this.seedHistory(manager, staff, tables, menu);
+    await this.seedTakeawayHistory(manager, staff, menu);
     await this.seedActiveOrders(manager, staff, tables, menu);
+    await this.seedOpenTakeaway(manager, staff, menu, customers);
+  }
+
+  // ---- Sozlamalar: stolga buyurtmalarga xizmat haqi (faqat demo) ----
+  private async seedSettings(manager: EntityManager) {
+    const repo = manager.getRepository(SettingsEntity);
+    const s = (await repo.findOne({ where: { id: 'main' } })) ?? repo.create({ id: 'main' });
+    s.serviceDineInPercent = DEMO_SERVICE_PERCENT;
+    // Ofitsiantlar hisobotida ulush ko'rinsin (demo): stolga buyurtmalar summasidan 5%
+    s.waiterSharePercent = DEMO_WAITER_SHARE_PERCENT;
+    await repo.save(s);
+  }
+
+  // ---- Mijozlar (CRM) ----
+  private async seedCustomers(manager: EntityManager) {
+    return manager
+      .getRepository(CustomerEntity)
+      .save(DEMO_CUSTOMERS.map((c) => ({ ...c })) as Partial<CustomerEntity>[]);
   }
 
   // ---- Xodimlar (bir nechta ofitsiant — filtrlar chiroyli ko'rinishi uchun) ----
   private async seedUsers(manager: EntityManager) {
     const passwordHash = await bcrypt.hash(DEMO_PASSWORD, BCRYPT_COST);
     // Har rol uchun standart ruxsatlar (capabilities). Direktor/SuperAdmin — barchasi avtomatik.
+    // Kassir olib ketish / yetkazish buyurtmalarini ham ochadi — 'waiter' ruxsati bilan.
+    // Otkaz ('void') — faqat kassir va administratorda (ofitsiantda yo'q) — B19.
     const W = ['waiter'];
     const K = ['kitchen'];
-    const C = ['cashier', 'history', 'revenue'];
-    const A = ['history', 'reports', 'menu', 'inventory', 'stations', 'tables', 'staff', 'devices', 'terminals', 'settings', 'refund', 'cashier'];
+    const C = ['cashier', 'waiter', 'void', 'history', 'revenue'];
+    const A = ['history', 'reports', 'menu', 'inventory', 'stations', 'tables', 'staff', 'devices', 'terminals', 'settings', 'refund', 'void', 'cashier'];
     // Har bir xodim UNIKAL 4 xonali PIN bilan kiradi (demo parollarini almashtirish shart emas)
     const rows = await manager.getRepository(UserEntity).save([
       { name: 'Aziz Karimov', role: UserRole.Waiter, login: 'ofitsiant', pin: '1111', passwordHash, active: true, permissions: W },
@@ -185,7 +229,7 @@ export class SeedService implements OnModuleInit {
       { name: 'Nodira Salimova', role: UserRole.Waiter, login: 'nodira', pin: '4444', passwordHash, active: true, permissions: W },
       { name: 'Bekzod Toshev', role: UserRole.Cook, login: 'oshpaz', pin: '5555', passwordHash, active: true, permissions: K },
       { name: 'Dilnoza Ergasheva', role: UserRole.Cashier, login: 'kassir', pin: '1234', passwordHash, active: true, permissions: C },
-      { name: 'Malika Nazarova', role: UserRole.Cashier, login: 'kassir2', pin: '4321', passwordHash, active: true, permissions: ['cashier'] },
+      { name: 'Malika Nazarova', role: UserRole.Cashier, login: 'kassir2', pin: '4321', passwordHash, active: true, permissions: ['cashier', 'waiter', 'void'] },
       { name: 'Sardor Admin', role: UserRole.Admin, login: 'admin', pin: '9999', passwordHash, active: true, permissions: A },
       { name: 'Direktor', role: UserRole.Director, login: 'direktor', pin: '0000', passwordHash, active: true },
       { name: 'Super Admin (vendor)', role: UserRole.SuperAdmin, login: 'superadmin', pin: '7777', passwordHash, active: true },
@@ -374,7 +418,8 @@ export class SeedService implements OnModuleInit {
           exciseCode: mi.exciseRequired ? randomExcise() : null,
         }),
       );
-      const total = items.reduce((s, it) => s + it.price * it.quantity, 0);
+      // To'langan summa = chek summasi (stolga — demo xizmat haqi bilan, butun so'm)
+      const total = calcOrderTotals(items, 0, DEMO_SERVICE_PERCENT).total;
 
       // Vaqt: oxirgi 20 kun ichida, ish soatlari (11:00–23:00)
       const daysAgo = Math.floor(Math.random() * 20);
@@ -385,10 +430,13 @@ export class SeedService implements OnModuleInit {
 
       const order = await orders.save(
         orders.create({
+          type: OrderType.DineIn,
           tableId: table.id,
           waiterId: waiter.id,
           status: OrderStatus.Closed,
           closedAt: closed,
+          businessDate: businessDateOf(opened),
+          servicePercent: DEMO_SERVICE_PERCENT,
           items,
         }),
       );
@@ -420,6 +468,150 @@ export class SeedService implements OnModuleInit {
       ]);
     }
     this.logger.log(`Tarix: ${COUNT} ta yopilgan buyurtma yaratildi`);
+  }
+
+  // ---- Tarix: olib ketish / yetkazish (o'tgan kunlar, har kun 1 dan raqamlangan) ----
+  private async seedTakeawayHistory(
+    manager: EntityManager,
+    staff: { waiters: UserEntity[]; cashier: UserEntity },
+    menu: MenuItemEntity[],
+  ) {
+    const payTypes = [PaymentType.Cash, PaymentType.Card, PaymentType.QR];
+    const orders = manager.getRepository(OrderEntity);
+    const payments = manager.getRepository(PaymentEntity);
+    let created = 0;
+
+    for (let daysAgo = 1; daysAgo <= 6; daysAgo++) {
+      // Shu kunning buyurtma vaqtlari (o'sish tartibida) — raqam shu tartibda 1, 2, 3...
+      const count = 3 + Math.floor(Math.random() * 3);
+      const times: Date[] = [];
+      for (let k = 0; k < count; k++) {
+        const t = new Date();
+        t.setDate(t.getDate() - daysAgo);
+        t.setHours(11 + Math.floor(Math.random() * 11), Math.floor(Math.random() * 60), 0, 0);
+        times.push(t);
+      }
+      times.sort((a, b) => a.getTime() - b.getTime());
+
+      for (let k = 0; k < times.length; k++) {
+        const opened = times[k];
+        const closed = new Date(opened.getTime() + (10 + Math.floor(Math.random() * 30)) * 60000);
+        const delivery = Math.random() < 0.35;
+        const dest = pick(DEMO_DELIVERY);
+        const items = sample(menu, 1 + Math.floor(Math.random() * 3)).map((mi) =>
+          manager.create(OrderItemEntity, {
+            menuItemId: mi.id,
+            menuItemName: mi.name,
+            price: Number(mi.price),
+            quantity: 1 + Math.floor(Math.random() * 2),
+            note: null,
+            status: OrderItemStatus.Ready,
+            exciseRequired: mi.exciseRequired,
+            exciseCode: mi.exciseRequired ? randomExcise() : null,
+          }),
+        );
+        const order = await orders.save(
+          orders.create({
+            type: delivery ? OrderType.Delivery : OrderType.Takeaway,
+            tableId: null,
+            waiterId: staff.cashier.id,
+            status: OrderStatus.Closed,
+            closedAt: closed,
+            queueNumber: k + 1,
+            businessDate: businessDateOf(opened),
+            phone: delivery ? dest.phone : null,
+            address: delivery ? dest.address : null,
+            items,
+          }),
+        );
+        await payments.save(
+          payments.create({
+            orderId: order.id,
+            amount: calcOrderTotals(items).total, // olib ketish/yetkazish — xizmat haqisiz
+            type: pick(payTypes),
+            cashierId: staff.cashier.id,
+          }),
+        );
+        // Vaqtlarni orqaga surish (seedHistory bilan bir xil format)
+        await manager.query('UPDATE orders SET opened_at = ?, closed_at = ? WHERE id = ?', [
+          toDbDatetime(opened),
+          toDbDatetime(closed),
+          order.id,
+        ]);
+        await manager.query('UPDATE payments SET created_at = ? WHERE order_id = ?', [
+          toDbDatetime(closed),
+          order.id,
+        ]);
+        created++;
+      }
+    }
+    this.logger.log(`Tarix: ${created} ta olib ketish / yetkazish buyurtmasi`);
+  }
+
+  // ---- Bugungi ochiq olib ketish (#1, #2) va yetkazish (#3) buyurtmalari ----
+  private async seedOpenTakeaway(
+    manager: EntityManager,
+    staff: { waiters: UserEntity[]; cashier: UserEntity },
+    menu: MenuItemEntity[],
+    customers: CustomerEntity[],
+  ) {
+    const orders = manager.getRepository(OrderEntity);
+    const today = businessDateOf();
+    const dest = DEMO_DELIVERY[0];
+    // Yetkazish telefoni CRM'dagi mijozga mos — xuddi server create()dagidek bog'lanadi
+    const customer = customers.find((c) => c.name === DEMO_CUSTOMERS[0].name) ?? null;
+    const plan: {
+      type: OrderType;
+      status: OrderStatus;
+      phone?: string;
+      address?: string;
+      note?: string;
+    }[] = [
+      { type: OrderType.Takeaway, status: OrderStatus.Accepted },
+      { type: OrderType.Takeaway, status: OrderStatus.Cooking, phone: '+998935556677' },
+      {
+        type: OrderType.Delivery,
+        status: OrderStatus.Accepted,
+        phone: dest.phone,
+        address: dest.address,
+        note: 'Eshik oldida qo‘ng‘iroq qiling',
+      },
+    ];
+    for (let i = 0; i < plan.length; i++) {
+      const p = plan[i];
+      const itemStatus =
+        p.status === OrderStatus.Cooking ? OrderItemStatus.Cooking : OrderItemStatus.Pending;
+      const items = sample(menu, 2 + Math.floor(Math.random() * 2)).map((mi) =>
+        manager.create(OrderItemEntity, {
+          menuItemId: mi.id,
+          menuItemName: mi.name,
+          price: Number(mi.price),
+          quantity: 1 + Math.floor(Math.random() * 2),
+          note: null,
+          status: itemStatus,
+          exciseRequired: mi.exciseRequired,
+          exciseCode: null,
+        }),
+      );
+      const isDelivery = p.type === OrderType.Delivery;
+      await orders.save(
+        orders.create({
+          type: p.type,
+          tableId: null,
+          waiterId: staff.cashier.id,
+          status: p.status,
+          queueNumber: i + 1,
+          businessDate: today,
+          phone: p.phone ?? null,
+          address: p.address ?? null,
+          note: p.note ?? null,
+          customerId: isDelivery ? customer?.id ?? null : null,
+          customerName: isDelivery ? customer?.name ?? null : null,
+          items,
+        }),
+      );
+    }
+    this.logger.log('Faol: 2 ta olib ketish + 1 ta yetkazish buyurtmasi');
   }
 
   // ---- Faol buyurtmalar (KDS/kassa demo uchun) ----
@@ -458,7 +650,15 @@ export class SeedService implements OnModuleInit {
         }),
       );
       await orders.save(
-        orders.create({ tableId: table.id, waiterId: waiter.id, status, items }),
+        orders.create({
+          type: OrderType.DineIn,
+          tableId: table.id,
+          waiterId: waiter.id,
+          status,
+          businessDate: businessDateOf(),
+          servicePercent: DEMO_SERVICE_PERCENT,
+          items,
+        }),
       );
       table.status = TableStatus.Busy;
       await tableRepo.save(table);

@@ -18,7 +18,7 @@ import {
 } from 'fs';
 import { copyFile } from 'fs/promises';
 import { createServer, Server as HttpServer } from 'http';
-import { networkInterfaces } from 'os';
+import { networkInterfaces, release } from 'os';
 import { randomBytes } from 'crypto';
 
 // electron-vite define (real build'da false, mock/demo build'da true)
@@ -77,6 +77,43 @@ process.on('unhandledRejection', (reason) => {
   console.error('[main] unhandledRejection:', reason);
   debugLog('main unhandledRejection: ' + errText(reason));
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Grafik (GPU) rejimi. Eski Windows 10 monobloklardagi videodrayverlar bilan Chromium
+// ekranda qora/eskirgan bo'laklar qoldirishi mumkin (restoranda kuzatildi). POS interfeysiga
+// GPU shart emas, shuning uchun Windows 10 da (build < 22000) dastur videokartasiz — xavfsiz
+// dasturiy chizish rejimida ishlaydi. Windows 11 da GPU yoqiq qoladi.
+// Qo'lda tanlash: userData/gpu-mode.txt faylida "on" yoki "off" (yoki DASTURXON_GPU=on|off).
+// Bu kod app 'ready' hodisasidan OLDIN bajarilishi shart.
+// ─────────────────────────────────────────────────────────────────────────────
+function gpuModeOverride(): 'on' | 'off' | null {
+  const env = String(process.env.DASTURXON_GPU || '').trim().toLowerCase();
+  if (env === 'on' || env === 'off') return env;
+  try {
+    const file = join(app.getPath('userData'), 'gpu-mode.txt');
+    if (existsSync(file)) {
+      const v = readFileSync(file, 'utf8').trim().toLowerCase();
+      if (v === 'on' || v === 'off') return v;
+    }
+  } catch {
+    /* fayl o'qilmasa — avtomatik tanlov */
+  }
+  return null;
+}
+
+function isWindows10(): boolean {
+  if (process.platform !== 'win32') return false;
+  // os.release(): "10.0.19045" (Windows 10) yoki "10.0.22631" (Windows 11)
+  const build = Number(String(release()).split('.')[2]);
+  return Number.isFinite(build) && build < 22000;
+}
+
+{
+  const override = gpuModeOverride();
+  const useGpu = override ? override === 'on' : !isWindows10();
+  if (!useGpu) app.disableHardwareAcceleration();
+  debugLog(`GPU: ${useGpu ? 'yoqiq' : 'o‘chiq (dasturiy chizish)'}${override ? ' — gpu-mode.txt/DASTURXON_GPU' : ' — avtomatik'}`);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Ilova holati
@@ -148,6 +185,20 @@ function createWindow(): void {
     // kattalashtirish/kichraytirish qolib ketmasin.
     win.webContents.on('did-finish-load', () => win.webContents.setZoomFactor(1));
   }
+
+  // Oyna ilovadan boshqa sahifaga o'tib ketmasin: masalan rasm faylini tashlash zonasidan tashqariga
+  // tashlansa Chromium o'sha faylni ochib yuboradi — kassa ekrani yo'qoladi. Ilovaning o'z sahifasi
+  // (dev'da Vite manzili, production'da file://…/index.html) qayta yuklanishiga ruxsat bor.
+  win.webContents.on('will-navigate', (e, url) => {
+    const devUrl = process.env['ELECTRON_RENDERER_URL'];
+    const own = devUrl ? url.startsWith(devUrl) : url.startsWith('file:') && url.includes('/renderer/index.html');
+    if (!own) {
+      e.preventDefault();
+      debugLog('navigatsiya bloklandi: ' + url.slice(0, 200));
+    }
+  });
+  // Yangi oyna ochish (target=_blank, window.open) — taqiqlangan
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   // Dev rejimda Vite serveri, production'da build qilingan HTML
   if (process.env['ELECTRON_RENDERER_URL']) {

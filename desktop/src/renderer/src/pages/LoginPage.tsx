@@ -161,7 +161,7 @@ const DB_PATH = '%APPDATA%\\@hardweb-pos\\desktop\\data\\dasturxon.db';
 // Kirish ekrani — PIN bilan (mock va real bir xil ishlaydi).
 // demoData — server (real rejim) bazasida eski demo ma'lumotlar topilgan: qizil ogohlantirish.
 export function LoginPage({ demoData = false }: { demoData?: boolean }) {
-  const { loginByPin, login, sessionExpired, dismissSessionExpired } = useAuth();
+  const { loginByPin, login, sessionExpired, sessionExpiredReason, dismissSessionExpired } = useAuth();
   const { t } = useI18n();
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
@@ -302,8 +302,8 @@ export function LoginPage({ demoData = false }: { demoData?: boolean }) {
         {/* Sessiya muddati tugagan / xodim bloklangan — bir martalik eslatma */}
         {sessionExpired && (
           <div className="mb-4 flex items-center gap-2 px-4 py-2.5 rounded-lg border border-warning/40 bg-warning/15 text-text text-sm font-semibold animate-pop-in">
-            <span className="text-warning text-base leading-none">⏱</span>
-            <span>Sessiya tugadi — qayta kiring</span>
+            <span className="text-warning text-base leading-none">{sessionExpiredReason ? '⚠' : '⏱'}</span>
+            <span>{sessionExpiredReason || 'Sessiya tugadi — qayta kiring'}</span>
             <button
               onClick={dismissSessionExpired}
               className="ml-1 text-muted hover:text-text leading-none"

@@ -5,7 +5,7 @@ import {
   PrimaryColumn,
   PrimaryGeneratedColumn,
 } from 'typeorm';
-import { OrderStatus, PaymentType, UserRole } from '@hardweb-pos/shared';
+import { OrderStatus, UserRole } from '@hardweb-pos/shared';
 
 // Restoran (tenant) — har biri o'z subdomeni va API kaliti bilan
 @Entity('tenants')
@@ -96,8 +96,9 @@ export class CloudPaymentEntity {
   @Column({ type: 'numeric', precision: 12, scale: 2 })
   amount: number;
 
-  @Column({ type: 'enum', enum: PaymentType })
-  type: PaymentType;
+  // To'lov usuli kaliti (restoran sozlamasidagi usullar: naqd, karta, click, payme, qarz, maxsus…)
+  @Column({ type: 'varchar', length: 32 })
+  type: string;
 
   @Column({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

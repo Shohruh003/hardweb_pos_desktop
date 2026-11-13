@@ -20,28 +20,31 @@ export class MaintenanceService implements OnModuleInit {
     const cutoff = new Date();
     cutoff.setMonth(cutoff.getMonth() - this.RETENTION_MONTHS);
     const iso = cutoff.toISOString();
+    // Eski buyurtmalar — LEKIN qaytarilmagan qarzi ("Qarzga") bor cheklar saqlanadi (B34): aks holda
+    // 2 oydan eski qarz chek bilan birga qarzlar ro'yxatidan jimgina yo'qolardi
+    const oldOrders = `SELECT id FROM orders WHERE opened_at < ? AND id NOT IN (
+      SELECT p.order_id FROM payments p WHERE p.debtor_name IS NOT NULL AND p.debt_repaid_at IS NULL)`;
     try {
       // Bog'liq jadvallardan boshlab, keyin buyurtmalarni o'chiramiz (FK tartibi)
       await this.dataSource.query(
         `DELETE FROM excise_codes WHERE order_item_id IN (
-           SELECT oi.id FROM order_items oi
-           JOIN orders o ON oi.order_id = o.id WHERE o.opened_at < ?)`,
+           SELECT oi.id FROM order_items oi WHERE oi.order_id IN (${oldOrders}))`,
         [iso],
       );
       await this.dataSource.query(
-        `DELETE FROM fiscal_docs WHERE order_id IN (SELECT id FROM orders WHERE opened_at < ?)`,
+        `DELETE FROM fiscal_docs WHERE order_id IN (${oldOrders})`,
         [iso],
       );
       await this.dataSource.query(
-        `DELETE FROM payments WHERE order_id IN (SELECT id FROM orders WHERE opened_at < ?)`,
+        `DELETE FROM payments WHERE order_id IN (${oldOrders})`,
         [iso],
       );
       await this.dataSource.query(
-        `DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE opened_at < ?)`,
+        `DELETE FROM order_items WHERE order_id IN (${oldOrders})`,
         [iso],
       );
       const res = await this.dataSource.query(
-        `DELETE FROM orders WHERE opened_at < ?`,
+        `DELETE FROM orders WHERE id IN (${oldOrders})`,
         [iso],
       );
       const count = Array.isArray(res) ? res.length : res?.affected ?? 0;

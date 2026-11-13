@@ -16,6 +16,8 @@ interface AuthState {
   refreshUser: () => Promise<void>;
   /** Sessiya muddati tugagani (yoki xodim bloklangani) uchun chiqarildimi — login ekranida bir martalik xabar */
   sessionExpired: boolean;
+  /** Chiqarish sababi (masalan B35: "Direktor faqat kassa (server) kompyuteridan kira oladi"); bo'sh — oddiy muddat tugashi */
+  sessionExpiredReason: string;
   dismissSessionExpired: () => void;
 }
 
@@ -60,6 +62,7 @@ function readStoredUser(): User | null {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUserState] = useState<User | null>(readStoredUser);
   const [sessionExpired, setSessionExpired] = useState(false);
+  const [sessionExpiredReason, setSessionExpiredReason] = useState('');
   // Hodisa/async callback'lar joriy foydalanuvchini ko'rishi uchun
   const userRef = useRef<User | null>(user);
 
@@ -70,8 +73,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // api.ts 401 olganda (token muddati tugagan, xodim bloklangan/o'chirilgan) — tizimdan chiqaramiz
   useEffect(() => {
-    const onExpired = () => {
-      if (userRef.current) setSessionExpired(true);
+    const onExpired = (e: Event) => {
+      const reason = (e as CustomEvent<unknown>).detail;
+      if (userRef.current) {
+        setSessionExpired(true);
+        setSessionExpiredReason(typeof reason === 'string' ? reason : '');
+      }
       setUser(null);
     };
     window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
@@ -134,8 +141,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const dismissSessionExpired = useCallback(() => setSessionExpired(false), []);
 
   const value = useMemo<AuthState>(
-    () => ({ user, login, loginByPin, logout, updateUser, refreshUser, sessionExpired, dismissSessionExpired }),
-    [user, login, loginByPin, logout, updateUser, refreshUser, sessionExpired, dismissSessionExpired],
+    () => ({
+      user,
+      login,
+      loginByPin,
+      logout,
+      updateUser,
+      refreshUser,
+      sessionExpired,
+      sessionExpiredReason,
+      dismissSessionExpired,
+    }),
+    [user, login, loginByPin, logout, updateUser, refreshUser, sessionExpired, sessionExpiredReason, dismissSessionExpired],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

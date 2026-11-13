@@ -1,6 +1,7 @@
 // Navbat ekrani (mijozlar uchun tablo) — TZ 7-bo'lim.
-// Mustaqil web-sahifa: istalgan TV/brauzerda http://<server>:3000/queue da ochiladi.
+// Mustaqil web-sahifa: istalgan TV/brauzerda http://<kassa-IP>:3100/queue da ochiladi.
 // socket.io klienti serverning o'zidan (/socket.io/socket.io.js) yuklanadi — CDN/internet kerak emas.
+// Kartochka: olib ketish / yetkazish — "Olib ketish" / "Yetkazish" + "#12", stolga — "Stol" + "5".
 
 export const QUEUE_HTML = /* html */ `<!doctype html>
 <html lang="uz">
@@ -82,11 +83,20 @@ export const QUEUE_HTML = /* html */ `<!doctype html>
       document.getElementById('ready-empty').style.display = ready.length ? 'none' : 'block';
     }
 
+    // Kartochka yozuvi: olib ketish / yetkazish — kunlik raqam "#12", stolga — stol raqami
+    function cardOf(o) {
+      if (o.type === 'olib_ketish' || o.type === 'yetkazish') {
+        var label = o.type === 'olib_ketish' ? 'Olib ketish' : 'Yetkazish';
+        return { label: label, num: o.queueNumber != null ? '#' + o.queueNumber : '#?' };
+      }
+      return { label: 'Stol', num: o.tableNumber != null ? String(o.tableNumber) : '—' };
+    }
+
     function fill(id, arr) {
       arr.sort(function (a, b) { return (a.openedAt || '').localeCompare(b.openedAt || ''); });
       var html = arr.map(function (o) {
-        var n = o.queueNumber || o.tableNumber || '—';
-        return '<div class="card"><div class="label">Stol</div><div class="num">' + n + '</div></div>';
+        var c = cardOf(o);
+        return '<div class="card"><div class="label">' + c.label + '</div><div class="num">' + c.num + '</div></div>';
       }).join('');
       document.getElementById(id).innerHTML = html;
     }
@@ -94,16 +104,26 @@ export const QUEUE_HTML = /* html */ `<!doctype html>
     function upsert(o) { if (o) { orders[o.id] = o; render(); } }
     function remove(o) { if (o && orders[o.id]) { delete orders[o.id]; render(); } }
 
-    // Boshlang'ich ma'lumot
-    fetch('/queue/data').then(function (r) { return r.json(); }).then(function (data) {
-      data.forEach(function (o) { orders[o.id] = o; });
-      render();
-    }).catch(function () {});
+    // To'liq ro'yxat (boshida va har qayta ulanishda — aloqa uzilgan paytdagi o'zgarishlar yo'qolmasin)
+    function load() {
+      fetch('/queue/data').then(function (r) { return r.json(); }).then(function (data) {
+        var next = {};
+        (data || []).forEach(function (o) { next[o.id] = o; });
+        orders = next;
+        render();
+      }).catch(function () {});
+    }
+    load();
 
     // Real-time
     var socket = io();
     var conn = document.getElementById('conn');
-    socket.on('connect', function () { conn.textContent = 'Ulangan ✓'; });
+    var connectedOnce = false;
+    socket.on('connect', function () {
+      conn.textContent = 'Ulangan ✓';
+      if (connectedOnce) load();
+      connectedOnce = true;
+    });
     socket.on('disconnect', function () { conn.textContent = 'Aloqa uzildi...'; });
     socket.on('order:created', function (p) { upsert(p.order); });
     socket.on('order:updated', function (p) { upsert(p.order); });

@@ -8,6 +8,8 @@ export const MOCK = import.meta.env.VITE_MOCK === '1';
 /** Token muddati tugadi / foydalanuvchi o'chirildi — AuthProvider shu hodisani tinglaydi */
 export const SESSION_EXPIRED_EVENT = 'auth:expired';
 export const SESSION_EXPIRED_MESSAGE = 'Sessiya tugadi — qayta kiring';
+/** B35: server direktor tokenini tashqi kompyuterdan qabul qilmaydi — login ekranida aynan shu matn */
+export const DIRECTOR_LOCAL_ONLY_MESSAGE = 'Direktor faqat kassa (server) kompyuteridan kira oladi';
 export const TIMEOUT_MESSAGE = 'Server javob bermadi';
 export const NETWORK_MESSAGE = 'Serverga ulanib bo‘lmadi — tarmoqni tekshiring';
 
@@ -60,14 +62,26 @@ export function getToken() {
   return token;
 }
 
+/**
+ * Server qaytargan nisbiy fayl manzili ('/api/menu/items/<id>/image?v=3') -> to'liq URL
+ * (telefon/terminal serverga boshqa hostdan murojaat qiladi). data:/blob:/http(s): manzillar
+ * o'zgarmaydi (demo rejimida rasm data URL bo'lib keladi). Bo'sh qiymat -> undefined.
+ */
+export function assetUrl(path: string | null | undefined): string | undefined {
+  if (!path) return undefined;
+  if (/^(data:|blob:|https?:)/i.test(path)) return path;
+  return `${getServerUrl()}${path.startsWith('/') ? '' : '/'}${path}`;
+}
+
 // Kirish so'rovlarining 401 javobi — "login/PIN noto'g'ri" degani, sessiya tugashi emas
 function isLoginPath(path: string): boolean {
   const p = path.split('?')[0];
   return p === '/auth/login' || p === '/auth/login-pin';
 }
 
-/** Sessiyani tozalash (token + user) va ilovaga xabar berish — login ekrani ochiladi */
-function expireSession(): void {
+/** Sessiyani tozalash (token + user) va ilovaga xabar berish — login ekrani ochiladi.
+ * reason — login ekranida ko'rsatiladigan sabab (CustomEvent.detail; bo'sh — "Sessiya tugadi") */
+function expireSession(reason?: string): void {
   setToken(null);
   try {
     localStorage.removeItem('user');
@@ -75,7 +89,7 @@ function expireSession(): void {
     /* e'tiborsiz */
   }
   try {
-    window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+    window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT, { detail: reason || '' }));
   } catch {
     /* e'tiborsiz */
   }
@@ -168,8 +182,9 @@ async function request<T>(method: string, path: string, body?: unknown, opts?: R
   } catch (e) {
     if (e instanceof ApiError && e.status === 401 && !isLoginPath(path)) {
       // Eski tokenli so'rovning kech kelgan 401 javobi yangi kirgan sessiyani o'chirmasin
-      if (token === usedToken) expireSession();
-      throw new ApiError(SESSION_EXPIRED_MESSAGE, 401);
+      const reason = e.message === DIRECTOR_LOCAL_ONLY_MESSAGE ? e.message : '';
+      if (token === usedToken) expireSession(reason);
+      throw new ApiError(reason || SESSION_EXPIRED_MESSAGE, 401);
     }
     throw e;
   }

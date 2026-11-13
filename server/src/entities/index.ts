@@ -17,3 +17,6 @@ export * from './excise-code.entity';
 export * from './expense.entity';
 export * from './settings.entity';
 export * from './terminal.entity';
+export * from './print-job.entity';
+export * from './void-log.entity';
+export * from './daily-counter.entity';

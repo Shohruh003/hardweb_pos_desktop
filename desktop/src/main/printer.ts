@@ -7,7 +7,12 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { Order, Receipt } from '@hardweb-pos/shared';
-import { buildBillBuffer, buildKitchenTicketBuffer, buildReceiptBuffer } from './escpos';
+import {
+  type BillOrder,
+  buildBillBuffer,
+  buildKitchenTicketBuffer,
+  buildReceiptBuffer,
+} from './escpos';
 
 // Oshxona printeri (LAN) — bir nechta bo'lishi mumkin (2-3 ta)
 export interface KitchenPrinter {
@@ -25,6 +30,9 @@ export interface PrinterConfig {
   printerName: string; // USB rejimida Windows printer nomi
   autoCut: boolean; // qog'ozni avtomatik qirqish (cutter muammo qilsa o'chiriladi)
   kitchen: KitchenPrinter[]; // oshxona LAN printerlari
+  // Chek sarlavhasidagi restoran nomi (server sozlamasidan — oxirgi chop etilgan chekdan eslab
+  // qolinadi). Schot (Order) ichida nom kelmasa shu ishlatiladi. Foydalanuvchi kiritmaydi.
+  restaurantName?: string;
 }
 
 const DEFAULT_CONFIG: PrinterConfig = {
@@ -57,6 +65,21 @@ export function setConfig(cfg: Partial<PrinterConfig>): PrinterConfig {
   const merged = { ...getConfig(), ...cfg };
   writeFileSync(configPath(), JSON.stringify(merged, null, 2), 'utf-8');
   return merged;
+}
+
+/**
+ * Restoran nomini eslab qolish (to'lov chekida server yuborgan nom). Schot (hisob) buyurtma
+ * ma'lumotidan chop etiladi — unda nom bo'lmasa oxirgi eslab qolingan nom ishlatiladi.
+ * Faqat nom o'zgarganda faylga yoziladi; xato chop etishni to'xtatmaydi.
+ */
+function rememberRestaurantName(name: string | null | undefined): void {
+  const n = String(name ?? '').trim();
+  if (!n) return;
+  try {
+    if (getConfig().restaurantName !== n) setConfig({ restaurantName: n });
+  } catch {
+    /* ignore */
+  }
 }
 
 // Bayt buferini tarmoq printerga yuborish
@@ -188,7 +211,9 @@ async function sendBuffer(cfg: PrinterConfig, buffer: Buffer): Promise<void> {
   return sendToNetwork(cfg.host, cfg.port, buffer);
 }
 
+// Mijoz cheki (to'lovdan keyin): buyurtma turi bo'yicha sarlavha, summalar, har bir to'lov usuli
 export async function printReceipt(receipt: Receipt): Promise<PrintResult> {
+  rememberRestaurantName(receipt?.restaurantName);
   const cfg = getConfig();
   if (cfg.type === 'none') {
     return { ok: false, message: 'Printer sozlanmagan (Administrator → Qurilmalar)' };
@@ -224,7 +249,7 @@ export async function printKitchen(order: Order): Promise<PrintResult> {
   };
 }
 
-// Bo'lim (sex) chekи — tanlangan taomlarni bo'limning LAN printeriga chiqaradi.
+// Bo'lim (sex) cheki — tanlangan taomlarni bo'limning LAN printeriga chiqaradi.
 // host bo'sh bo'lsa hech narsa qilinmaydi (printer yo'q — chek chiqmaydi).
 export async function printStationTicket(
   order: Order,
@@ -238,21 +263,25 @@ export async function printStationTicket(
     const cfg = getConfig();
     const buffer = buildKitchenTicketBuffer(order, width || 48, cfg.autoCut, title);
     await sendToNetwork(host, port || 9100, buffer);
-    return { ok: true, message: `${title} chekи chop etildi` };
+    return { ok: true, message: `${title} cheki chop etildi` };
   } catch (e) {
     return { ok: false, message: `Printer xatosi: ${(e as Error).message}` };
   }
 }
 
 // Hisob (SCHOT) — to'lovdan oldin mijozga beriladigan hisob (fiskal emas).
-// Ofitsiant yoki kassa "Schot" tugmasini bosганda kassa printeridan chiqadi.
-export async function printBill(order: Order): Promise<PrintResult> {
+// Ofitsiant yoki kassa "Chek" (schot) tugmasini bosganda kassa printeridan chiqadi.
+// Renderer restoran nomini ham qo'shib yuborishi mumkin ({...order, restaurantName}); yo'q bo'lsa —
+// oxirgi to'lov chekidan eslab qolingan nom.
+export async function printBill(order: BillOrder): Promise<PrintResult> {
+  if (order?.restaurantName) rememberRestaurantName(order.restaurantName);
   const cfg = getConfig();
   if (cfg.type === 'none') {
     return { ok: false, message: 'Printer sozlanmagan (Administrator → Qurilmalar)' };
   }
   try {
-    const buffer = buildBillBuffer(order, cfg.width, cfg.autoCut);
+    const named: BillOrder = { ...order, restaurantName: order?.restaurantName || cfg.restaurantName || null };
+    const buffer = buildBillBuffer(named, cfg.width, cfg.autoCut);
     await sendBuffer(cfg, buffer);
     return { ok: true, message: 'Hisob (schot) chop etildi' };
   } catch (e) {
@@ -275,13 +304,16 @@ export async function printOrderTicket(order: Order): Promise<PrintResult> {
   }
 }
 
-// Sinov cheki (Admin sozlamalarini tekshirish uchun)
+// Sinov cheki (Admin sozlamalarini tekshirish uchun) — haqiqiy chek ko'rinishida
 export async function testPrint(): Promise<PrintResult> {
   const demo: Receipt = {
     orderId: 'test',
-    tableNumber: 0,
+    orderType: 'stol' as Receipt['orderType'],
+    tableNumber: 1,
+    hall: 'Sinov',
     waiterName: 'Sinov',
     cashierName: 'Sinov',
+    restaurantName: getConfig().restaurantName,
     lines: [{ name: 'Sinov taom', quantity: 1, price: 10000, sum: 10000 }],
     subtotal: 10000,
     discountPercent: 0,
@@ -290,6 +322,8 @@ export async function testPrint(): Promise<PrintResult> {
     serviceFeeAmount: 0,
     total: 10000,
     paymentType: 'naqd' as Receipt['paymentType'],
+    payments: [{ type: 'naqd' as Receipt['paymentType'], amount: 10000, label: 'Naqd' }],
+    note: 'Sinov cheki — printer to‘g‘ri sozlangan',
     createdAt: new Date().toISOString(),
     fiscalQrPlaceholder: true,
   };

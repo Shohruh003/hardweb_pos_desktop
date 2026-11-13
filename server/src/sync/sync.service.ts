@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { orderTotalsOf } from '../orders/order-rules';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, MoreThan, Repository } from 'typeorm';
@@ -13,9 +14,11 @@ import {
 } from '../entities';
 import {
   OrderStatus,
+  OrderType,
   SyncOrder,
   SyncPayment,
   SyncPayload,
+  orderTypeOf,
 } from '@hardweb-pos/shared';
 
 // Lokal server -> Bulut bir tomonlama, davriy sinxron (TZ 2.3 "Bir tomonlama sinxronlash").
@@ -98,11 +101,17 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     });
     if (closed.length === 0) return { sent: 0 };
 
-    // Stol raqami va ofitsiant ismlarini to'plab olish
-    const tableIds = [...new Set(closed.map((o) => o.tableId))];
+    // Stol raqami (faqat stolga buyurtmalar — olib ketish/yetkazishda stol yo'q) va ofitsiant ismlari
+    const tableIds = [
+      ...new Set(
+        closed
+          .filter((o) => orderTypeOf(o) === OrderType.DineIn && o.tableId)
+          .map((o) => o.tableId as string),
+      ),
+    ];
     const waiterIds = [...new Set(closed.map((o) => o.waiterId))];
     const [tables, waiters, pays] = await Promise.all([
-      this.tables.find({ where: { id: In(tableIds) } }),
+      tableIds.length ? this.tables.find({ where: { id: In(tableIds) } }) : Promise.resolve([]),
       this.users.find({ where: { id: In(waiterIds) } }),
       this.payments.find({ where: { orderId: In(closed.map((o) => o.id)) } }),
     ]);
@@ -111,13 +120,11 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
 
     const orders: SyncOrder[] = closed.map((o) => ({
       id: o.id,
-      tableNumber: tableNo.get(o.tableId) ?? null,
+      tableNumber: o.tableId ? tableNo.get(o.tableId) ?? null : null,
       waiterName: waiterName.get(o.waiterId) ?? null,
       status: o.status,
-      total: (o.items || []).reduce(
-        (s, it) => s + Number(it.price) * it.quantity,
-        0,
-      ),
+      // To'lanadigan yakuniy summa (chegirma/xizmat bilan, butun so'm) — chekdagi summa
+      total: orderTotalsOf(o).total,
       openedAt: o.openedAt.toISOString(),
       closedAt: o.closedAt ? o.closedAt.toISOString() : null,
       items: (o.items || []).map((it) => ({
