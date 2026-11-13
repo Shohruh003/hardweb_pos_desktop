@@ -1213,7 +1213,7 @@ export class OrdersService {
     const targetDto = await this.fullDto(tgtEntity, { table });
     this.gateway.emitOrderUpdated(sourceDto);
     if (target) this.gateway.emitOrderUpdated(targetDto);
-    else this.gateway.emitOrderCreated(targetDto);
+    else this.gateway.emitOrderCreated(targetDto, 'split'); // yangi taom yo'q — kassa cheki chiqmaydi
     this.logger.log(
       `Hisob bo‘lindi: ${orderDisplayName(sourceDto)} -> ${orderDisplayName(targetDto)} ` +
         `(${whole.length + parts.length} ta qator)`,

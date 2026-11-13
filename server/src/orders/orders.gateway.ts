@@ -8,6 +8,7 @@ import type { EventEmitter } from 'events';
 import {
   SOCKET_EVENTS,
   Order,
+  OrderCreatedPayload,
   OrderVoidedPayload,
   PrintFailedPayload,
   PrintRecoveredPayload,
@@ -52,8 +53,10 @@ export class OrdersGateway implements OnModuleInit {
     }
   }
 
-  emitOrderCreated(order: Order) {
-    this.emit(SOCKET_EVENTS.ORDER_CREATED, { order });
+  /** source 'split' — hisob bo'lishdan paydo bo'lgan yangi hisob (yangi taom yo'q, kassa cheki chiqmaydi) */
+  emitOrderCreated(order: Order, source?: OrderCreatedPayload['source']) {
+    const payload: OrderCreatedPayload = source ? { order, source } : { order };
+    this.emit(SOCKET_EVENTS.ORDER_CREATED, payload);
   }
 
   emitOrderUpdated(order: Order) {

@@ -591,7 +591,9 @@ function emit(ev: string, payload: unknown): void {
   setTimeout(() => mockEmit(ev, data), 0);
 }
 // Real server OrdersGateway yuklari bilan bir xil
-const emitCreated = (o: Order) => emit(SOCKET_EVENTS.ORDER_CREATED, { order: o });
+// source 'split' — hisob bo'lishdan paydo bo'lgan yangi hisob (kassa "zakas cheki" chiqmaydi)
+const emitCreated = (o: Order, source?: 'split') =>
+  emit(SOCKET_EVENTS.ORDER_CREATED, source ? { order: o, source } : { order: o });
 const emitUpdated = (o: Order) => emit(SOCKET_EVENTS.ORDER_UPDATED, { orderId: o.id, status: o.status, order: o });
 const emitClosed = (o: Order) => emit(SOCKET_EVENTS.ORDER_CLOSED, { order: o });
 
@@ -2048,7 +2050,7 @@ function splitOrder(id: string, body: any): SplitOrderResult {
   const targetDto = toDto(tgt);
   emitUpdated(sourceDto);
   if (target) emitUpdated(targetDto);
-  else emitCreated(targetDto);
+  else emitCreated(targetDto, 'split');
   return { source: sourceDto, target: targetDto };
 }
 

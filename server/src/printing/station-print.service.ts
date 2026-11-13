@@ -131,6 +131,12 @@ const WORKER_BATCH = 200;
 const HOST_BACKOFF_MS = 8_000;
 /** Shundan eski chiqmagan chek avtomatik urinishdan chiqariladi (muddati o'tdi) */
 const JOB_EXPIRE_MS = 3 * 60 * 60_000;
+/**
+ * Chiqqan / bekor qilingan chek xotirada shuncha saqlanadi: ishchi o'tishi oldindan yuklab olgan eski
+ * nusxa (yoki bazaga yozilmay qolgan "printed" holati) uni qayta chiqarmasin. Muddatdan uzoqroq —
+ * undan eski chekni ishchi baribir chiqarmaydi (muddati o'tgan deb belgilaydi).
+ */
+const SETTLED_KEEP_MS = JOB_EXPIRE_MS + 60 * 60_000;
 /** Kuniga bir marta: 7 kundan eski chiqqan/bekor/muddati o'tgan cheklar o'chiriladi */
 const HOUSEKEEPING_EVERY_MS = 24 * 60 * 60_000;
 const HOUSEKEEPING_KEEP_MS = 7 * 24 * 60 * 60_000;
@@ -161,12 +167,25 @@ interface ResolvedItem {
 
 type SendOutcome = { ok: true } | { ok: false; message: string };
 
+/** Chek yakunlangan: chiqdi yoki kassada bekor qilindi — qayta chop etilmaydi */
+type SettledStatus = 'printed' | 'cancelled';
+
 /**
  * Navbatdagi chekni yuborish natijasi. retryable: false — chekni hech qachon chop etib bo'lmaydi
  * (yozuvdagi ma'lumot buzilgan): u darhol navbatdan chiqariladi va shu printerning keyingi
- * cheklarini to'sib qo'ymaydi.
+ * cheklarini to'sib qo'ymaydi. skipped — printer navbati kelganda chek allaqachon chiqqan yoki
+ * bekor qilingan edi: hech narsa yuborilmadi va bazaga hech narsa yozilmaydi.
  */
-type JobOutcome = { ok: true } | { ok: false; message: string; retryable: boolean };
+type JobOutcome =
+  | { ok: true }
+  | { ok: false; message: string; retryable: boolean; skipped?: SettledStatus };
+
+const skippedOutcome = (status: SettledStatus): JobOutcome => ({
+  ok: false,
+  retryable: false,
+  skipped: status,
+  message: status === 'printed' ? 'Bu chek allaqachon chiqarilgan' : 'Bekor qilingan chek',
+});
 
 /** Chek qaysi printerga ketadi: bo'limning HOZIRGI manzili (admin IP'ni tuzatsa — navbatdagilar ham o'sha yerga) */
 interface JobTarget {
@@ -246,6 +265,12 @@ export class StationPrintService implements OnModuleInit, OnModuleDestroy {
   private readonly queue = new PrinterQueue();
   /** Hozir chop etilayotgan (yoki navbatga qo'yilgan) cheklar — ishchi ularni ikkinchi marta olmaydi */
   private readonly inFlight = new Set<string>();
+  /**
+   * Chiqqan / bekor qilingan cheklar (id -> holat, vaqt). Printer navbati ichida, chek yuborilgan
+   * zahoti (bazaga yozilishidan OLDIN) belgilanadi — shu printer navbatidagi keyingi nusxa (ishchi
+   * o'tishining eski qatori, kassadagi "Chiqarish") uni qayta chiqarmaydi. Qo'shilish tartibida.
+   */
+  private readonly settled = new Map<string, { status: SettledStatus; at: number }>();
   private readonly hosts = new Map<string, HostHealth>();
 
   private destroyed = false;
@@ -412,6 +437,11 @@ export class StationPrintService implements OnModuleInit, OnModuleDestroy {
           );
           return { ...base, ok: true, message: `Chek printerga yuborildi (${where})` };
         }
+        if (out.skipped) {
+          // Printer navbati kelguncha kassada bekor qilindi (yoki boshqa yo'l bilan chiqdi) — xato emas
+          this.logger.log(`${job.stationName}: chek yuborilmadi — ${out.message} (${orderName})`);
+          return { ...base, ok: out.skipped === 'printed', message: out.message };
+        }
         this.logger.warn(
           `${job.stationName}: chek chiqmadi (${orderName}) — ${out.message}` +
             (persisted ? ' — navbatda, printer tiklanishi bilan chiqadi' : ''),
@@ -560,6 +590,10 @@ export class StationPrintService implements OnModuleInit, OnModuleDestroy {
         const out = await this.deliverJob(job, target, ORDER_TICKET_ATTEMPTS, 'first', persisted);
         if (out.ok) {
           this.logger.log(`${job.stationName}: OTKAZ cheki chiqdi (${formatAddress(target.addr)}) — ${orderName}`);
+          return;
+        }
+        if (out.skipped) {
+          this.logger.log(`${job.stationName}: OTKAZ cheki yuborilmadi — ${out.message} (${orderName})`);
           return;
         }
         this.logger.warn(`${job.stationName}: OTKAZ cheki chiqmadi (${orderName}) — ${out.message}`);
@@ -767,6 +801,10 @@ export class StationPrintService implements OnModuleInit, OnModuleDestroy {
       } else {
         outcome = await this.queue
           .run(key, async (): Promise<JobOutcome> => {
+            // Printer endi shu chekniki — chek hali chiqarilishi kerakmi? Ishchi o'tishi qatorlarni
+            // oldindan yuklaydi: shu orada kassa uni "Chiqarish" bilan chiqargan yoki bekor qilgan bo'lishi mumkin.
+            const settled = await this.settledStatusOf(job.id, persisted);
+            if (settled) return skippedOutcome(settled);
             const data = renderJobTicket(job, target.width, new Date());
             if (!data) {
               tries = 1;
@@ -775,6 +813,8 @@ export class StationPrintService implements OnModuleInit, OnModuleDestroy {
             const r = await this.sendWithRetry(job.stationName, target.addr, data, attempts);
             tries = r.tries;
             this.noteHost(key, r.outcome);
+            // Bazaga yozilishini (recordOutcome — navbatdan keyin) kutmasdan: navbatdagi keyingi nusxa ko'radi
+            if (r.outcome.ok) this.markSettled(job.id, 'printed');
             return r.outcome.ok ? r.outcome : { ...r.outcome, retryable: true };
           })
           .catch((e): JobOutcome => {
@@ -786,10 +826,45 @@ export class StationPrintService implements OnModuleInit, OnModuleDestroy {
             };
           });
       }
-      if (persisted) await this.recordOutcome(job, target, outcome, tries, mode);
+      // O'tkazib yuborilgan chek (allaqachon chiqqan / bekor qilingan) — bazadagi holatiga tegilmaydi
+      const skipped = !outcome.ok && !!outcome.skipped;
+      if (persisted && !skipped) await this.recordOutcome(job, target, outcome, tries, mode);
       return outcome;
     } finally {
       this.inFlight.delete(job.id);
+    }
+  }
+
+  /** Chek yakunlandi (chiqdi / bekor qilindi) — xotiraga; SETTLED_KEEP_MS dan eskilari tozalanadi */
+  private markSettled(id: string, status: SettledStatus): void {
+    const now = Date.now();
+    this.settled.delete(id); // oxiriga (eng yangi) o'tsin — tozalash tartibi buzilmasin
+    this.settled.set(id, { status, at: now });
+    for (const [key, v] of this.settled) {
+      if (now - v.at <= SETTLED_KEEP_MS) break;
+      this.settled.delete(key);
+    }
+  }
+
+  /**
+   * Chek yakunlanganmi (printer navbati ichida, yuborishdan oldin chaqiriladi): avval xotira, keyin
+   * baza. null — chop etilsin. Bazani o'qib bo'lmasa ham chop etiladi (chekni yo'qotgandan ko'ra).
+   * persisted=false — chek navbatga yozilmagan (baza xatosi), bazada qatori yo'q.
+   */
+  private async settledStatusOf(id: string, persisted: boolean): Promise<SettledStatus | null> {
+    const mem = this.settled.get(id);
+    if (mem) return mem.status;
+    if (!persisted) return null;
+    try {
+      const row = await this.jobs.findOne({ where: { id }, select: { id: true, status: true } });
+      if (!row) {
+        this.logger.warn(`Navbat: chek ${id} bazada topilmadi — chop etilmaydi`);
+        return 'cancelled';
+      }
+      return row.status === 'printed' || row.status === 'cancelled' ? row.status : null;
+    } catch (e) {
+      this.logger.warn(`Chek holatini tekshirib bo‘lmadi (${id}): ${errorText(e)} — baribir chop etiladi`);
+      return null;
     }
   }
 
@@ -1017,6 +1092,11 @@ export class StationPrintService implements OnModuleInit, OnModuleDestroy {
       if (this.destroyed) return;
       if (this.inFlight.has(job.id)) continue;
       const out = await this.deliverJob(job, target, 1, 'retry');
+      if (!out.ok && out.skipped) {
+        // O'tish boshida yuklangan qator eskirgan: shu orada kassada chiqarilgan yoki bekor qilingan
+        this.logger.log(`Navbat: ${job.stationName} — ${job.orderName ?? 'chek'}: ${out.message} — o‘tkazib yuborildi`);
+        continue;
+      }
       // Printer javob bermadi — shu o'tishda unga boshqa urinilmaydi. Buzilgan yozuv esa
       // (retryable: false) navbatdan chiqarildi — keyingi cheklar davom etadi.
       if (!out.ok && out.retryable) return;
@@ -1129,6 +1209,8 @@ export class StationPrintService implements OnModuleInit, OnModuleDestroy {
       this.scheduleWorker(WORKER_KICK_DELAY_MS); // printer ishlayapti — qolgan cheklari ham chiqsin
       return { ok: true, message: `Chek chiqarildi (${formatAddress(target.addr)})` };
     }
+    // Navbat kelguncha ishchi uni chiqarib bo'ldi (ok) yoki kassada bekor qilindi — qayta chiqarilmadi
+    if (out.skipped) return { ok: out.skipped === 'printed', message: out.message };
     return { ok: false, message: out.message };
   }
 
@@ -1141,7 +1223,14 @@ export class StationPrintService implements OnModuleInit, OnModuleDestroy {
     if (!job) throw new NotFoundException(JOB_NOT_FOUND_MESSAGE);
     if (job.status === 'printed') throw new BadRequestException('Bu chek allaqachon chiqarilgan');
     if (job.status !== 'cancelled') {
-      await this.jobs.update({ id, status: In(['pending', 'expired']) }, { status: 'cancelled' });
+      const res = await this.jobs.update({ id, status: In(['pending', 'expired']) }, { status: 'cancelled' });
+      if (res.affected) {
+        // Ishchi o'tishi oldindan yuklagan eski nusxa ham bu chekni chiqarmasin
+        this.markSettled(id, 'cancelled');
+      } else if (this.settled.get(id)?.status === 'printed') {
+        // Shu payt printerga chiqib bo'ldi (holati hali yozilmagan bo'lishi mumkin)
+        throw new BadRequestException('Bu chek allaqachon chiqarilgan');
+      }
       this.logger.log(`Navbat: ${job.stationName} — ${job.orderName ?? 'chek'} bekor qilindi (kassa)`);
       this.refreshStatusSoon();
     }

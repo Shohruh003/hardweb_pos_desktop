@@ -43,7 +43,7 @@ import { ReceiptsTab } from './admin/ReceiptsTab';
 import { BackButton } from '../components/BackButton';
 import { api } from '../lib/api';
 import { getSocket } from '../lib/socket';
-import { sortHalls, usePosSettings, loadPosSettings } from '../lib/posSettings';
+import { sortHalls, usePosSettings } from '../lib/posSettings';
 import { useI18n } from '../state/i18n';
 import { useAuth } from '../state/auth';
 import { useAppNav } from '../state/appNav';
@@ -244,40 +244,10 @@ export function CashierPage() {
     refreshStopCount();
     const socket = getSocket();
     let menuTimer: number | undefined;
+    // Kassa printeri ishlari (zakas cheki, relay schot / to'lov cheki) bu yerda EMAS — ular
+    // components/PrintRelayHost.tsx'da (App darajasida, kassir qaysi ekranda bo'lmasin ishlaydi).
+    // Bu yerda qayta qo'shilsa — har chek ikki marta chiqadi.
     const onChange = () => scheduleRefresh();
-    // Yangi zakas kelganda — kassa printeridan avtomatik chek (#11).
-    // Printer sozlanmagan bo'lsa hech narsa chiqmaydi (best-effort).
-    const onCreated = (payload: { order?: Order }) => {
-      scheduleRefresh();
-      const order = payload?.order;
-      if (order) {
-        window.hardweb?.printer?.printOrderTicket?.(order).catch(() => undefined);
-      }
-    };
-    // Faqat printeri sozlangan terminal (kassa) relay cheklarini chop etadi
-    const printIfHost = async (fn: () => Promise<unknown> | undefined) => {
-      try {
-        const cfg = await window.hardweb?.printer?.getConfig?.();
-        if (cfg && cfg.type !== 'none') await fn();
-      } catch {
-        /* ignore */
-      }
-    };
-    // Boshqa terminal Schot bossa — kassa printeridan hisob chiqadi (relay)
-    const onPrintBill = (payload: { order?: Order }) => {
-      if (payload?.order) {
-        const order = payload.order;
-        // Restoran nomi schot sarlavhasi uchun (sozlamadan; o'qib bo'lmasa Electron oxirgi ma'lum nomni oladi)
-        printIfHost(async () => {
-          const { restaurantName } = await loadPosSettings().catch(() => ({ restaurantName: '' }));
-          return window.hardweb?.printer?.printBill?.({ ...order, restaurantName });
-        });
-      }
-    };
-    // Boshqa terminal to'lov qilsa — kassa printeridan chek chiqadi (relay)
-    const onPrintReceipt = (payload: { receipt?: Receipt }) => {
-      if (payload?.receipt) printIfHost(() => window.hardweb?.printer?.printReceipt?.(payload.receipt!));
-    };
     // Menyu o'zgardi (stop list) — tugagan taomlar soni
     const onMenu = () => {
       window.clearTimeout(menuTimer);
@@ -287,22 +257,18 @@ export function CashierPage() {
       scheduleRefresh();
       refreshStopCount();
     };
-    socket.on(SOCKET_EVENTS.ORDER_CREATED, onCreated);
+    socket.on(SOCKET_EVENTS.ORDER_CREATED, onChange);
     socket.on(SOCKET_EVENTS.ORDER_UPDATED, onChange);
     socket.on(SOCKET_EVENTS.ORDER_CLOSED, onChange);
-    socket.on(SOCKET_EVENTS.PRINT_BILL, onPrintBill);
-    socket.on(SOCKET_EVENTS.PRINT_RECEIPT, onPrintReceipt);
     socket.on(SOCKET_EVENTS.MENU_CHANGED, onMenu);
     // Aloqa uzilib qayta ulanganda — o'tkazib yuborilgan o'zgarishlarni olamiz
     socket.on('connect', onConnect);
     return () => {
       window.clearTimeout(refreshTimer.current);
       window.clearTimeout(menuTimer);
-      socket.off(SOCKET_EVENTS.ORDER_CREATED, onCreated);
+      socket.off(SOCKET_EVENTS.ORDER_CREATED, onChange);
       socket.off(SOCKET_EVENTS.ORDER_UPDATED, onChange);
       socket.off(SOCKET_EVENTS.ORDER_CLOSED, onChange);
-      socket.off(SOCKET_EVENTS.PRINT_BILL, onPrintBill);
-      socket.off(SOCKET_EVENTS.PRINT_RECEIPT, onPrintReceipt);
       socket.off(SOCKET_EVENTS.MENU_CHANGED, onMenu);
       socket.off('connect', onConnect);
     };

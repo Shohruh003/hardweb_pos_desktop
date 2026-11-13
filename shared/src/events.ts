@@ -76,6 +76,12 @@ export interface PrintRecoveredPayload {
 
 export interface OrderCreatedPayload {
   order: Order;
+  /**
+   * 'split' — yangi hisob "Hisobni bo'lish"dan paydo bo'ldi: unda YANGI taom yo'q (taomlar boshqa
+   * hisobdan ko'chdi va oshxonaga avval yuborilgan) — kassa "zakas cheki"ni qayta chiqarmaydi.
+   * Oddiy yangi buyurtmada yo'q.
+   */
+  source?: 'split';
 }
 
 export interface OrderUpdatedPayload {

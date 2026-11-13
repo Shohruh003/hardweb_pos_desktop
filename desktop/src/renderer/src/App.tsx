@@ -7,6 +7,7 @@ import { MOCK } from './lib/api';
 import { consumeSkipSplash, fetchLicenseStatus, getServerUrl } from './lib/config';
 import { SplashScreen } from './components/SplashScreen';
 import ChangePasswordModal from './components/ChangePasswordModal';
+import { PrintRelayHost } from './components/PrintRelayHost';
 import { ActivationScreen } from './pages/ActivationScreen';
 import { LoginPage, ServerAddressForm } from './pages/LoginPage';
 import { LauncherPage } from './pages/LauncherPage';
@@ -17,8 +18,21 @@ import { AdminPage } from './pages/AdminPage';
 import { DirectorPage } from './pages/DirectorPage';
 import { QueueScreen } from './pages/QueueScreen';
 
-// Kirgandan keyin bosh sahifa (Launcher), undan ruxsat berilgan modul ochiladi.
+// Kassa printeri relay xizmati (PrintRelayHost) ekranlar almashinuvidan TASHQARIDA, kirgan har qanday
+// xodim uchun bitta: kassir POS (Ofitsiant), Kassa yoki Boshqaruv ekranida bo'lsa ham boshqa
+// terminallardan kelgan schot / to'lov cheki / zakas cheki shu terminal printeridan chiqadi.
 export function App() {
+  const { user } = useAuth();
+  return (
+    <>
+      {user && <PrintRelayHost />}
+      <AppScreens />
+    </>
+  );
+}
+
+// Kirgandan keyin bosh sahifa (Launcher), undan ruxsat berilgan modul ochiladi.
+function AppScreens() {
   const { user, logout, updateUser, refreshUser } = useAuth();
   const { queue } = useDemoNav();
   const { module, goHome } = useAppNav();
