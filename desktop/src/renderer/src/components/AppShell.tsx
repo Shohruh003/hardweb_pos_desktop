@@ -4,6 +4,8 @@ import { useAuth } from '../state/auth';
 import { useConnectivity } from '../state/connectivity';
 import { ThemeLangControls } from './ThemeLangControls';
 import { useI18n } from '../state/i18n';
+import ChangePasswordModal from './ChangePasswordModal';
+import { PendingOrdersModal, usePendingOrders } from './PendingOrdersModal';
 
 // Barcha ekranlar uchun umumiy ramka: yuqori panel + kontent
 export function AppShell({
@@ -22,11 +24,17 @@ export function AppShell({
   mobileDrawer?: (close: () => void) => React.ReactNode;
   mobileDrawerTitle?: string;
 }) {
-  const { user, logout } = useAuth();
-  const { online, pending } = useConnectivity();
+  const { user, logout, updateUser } = useAuth();
+  const { online } = useConnectivity();
   const { t } = useI18n();
   const [menuOpen, setMenuOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Yuborilmagan (oflayn) buyurtmalar: son + server rad etganlari (qizil belgi)
+  const pendingList = usePendingOrders();
+  const pending = pendingList.length;
+  const rejected = pendingList.filter((p) => p.failed).length;
+  const [pendingOpen, setPendingOpen] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ top: 0, right: 0 });
@@ -77,9 +85,21 @@ export function AppShell({
               {online ? t('common.online') : t('common.offline')}
             </span>
             {pending > 0 && (
-              <span className="px-2 py-0.5 rounded-md bg-warning/20 text-warning text-xs font-semibold">
+              // Bosilsa — ro'yxat: qaysi stol, nima, nega yuborilmadi (qayta yuborish / o'chirish)
+              <button
+                onClick={() => setPendingOpen(true)}
+                title="Yuborilmagan buyurtmalar — ko‘rish"
+                aria-label={`Yuborilmagan buyurtmalar: ${pending}`}
+                className={`h-8 px-2.5 rounded-lg text-sm font-bold flex items-center gap-1 border transition-colors ${
+                  rejected > 0
+                    ? 'bg-danger/15 text-danger border-danger/50 hover:bg-danger/25'
+                    : 'bg-warning/20 text-warning border-warning/40 hover:bg-warning/30'
+                }`}
+              >
+                <span aria-hidden>📤</span>
                 {pending}
-              </span>
+                {rejected > 0 && <span aria-hidden>!</span>}
+              </button>
             )}
           </div>
           <div className={`items-center gap-2 sm:gap-3 ${hideMobileControls ? 'hidden md:flex' : 'flex'}`}>
@@ -115,6 +135,19 @@ export function AppShell({
                     <div className="font-semibold truncate">{user?.name}</div>
                     <div className="text-xs text-muted">{t(`role.${user?.role ?? ''}`, user?.role)}</div>
                   </div>
+                  {/* Faqat login/parol bilan kiradigan xodim (PIN'li xodimda parol yo'q) */}
+                  {user?.hasPassword && (
+                    <button
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setPasswordOpen(true);
+                      }}
+                      className="w-full flex items-center gap-2 px-4 py-3 text-text font-semibold hover:bg-surface-hover transition-colors border-b border-border"
+                    >
+                      <span className="text-lg leading-none">🔑</span>
+                      Parolni o‘zgartirish
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       setMenuOpen(false);
@@ -166,6 +199,20 @@ export function AppShell({
           </div>
         </div>
       )}
+
+      {/* Modallar body'ga portal orqali chiqadi: header'dagi backdrop-filter (glass) ichida
+          "fixed" element ekranga emas, header'ga nisbatan joylashib qolardi */}
+      {pendingOpen && createPortal(<PendingOrdersModal onClose={() => setPendingOpen(false)} />, document.body)}
+      {passwordOpen &&
+        createPortal(
+          <ChangePasswordModal
+            onClose={() => setPasswordOpen(false)}
+            onChanged={(changed) => {
+              if (user) updateUser({ ...user, ...changed });
+            }}
+          />,
+          document.body,
+        )}
     </div>
   );
 }

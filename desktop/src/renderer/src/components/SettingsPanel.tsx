@@ -83,8 +83,9 @@ export function SettingsPanel({
   async function sendReport() {
     setMsg('Hisobot yuborilmoqda...');
     try {
-      await api.post('/settings/telegram-report');
-      setMsg('Kunlik hisobot yuborildi ✓');
+      const r = await api.post<{ ok?: boolean }>('/settings/telegram-report');
+      // Server ok:false qaytarsa — hisobot hech kimga yetmadi (token/chat id yoki internet)
+      setMsg(r?.ok === false ? 'Yuborilmadi — token/chat id yoki internetni tekshiring' : 'Kunlik hisobot yuborildi ✓');
     } catch (e) {
       setMsg((e as Error).message);
     }

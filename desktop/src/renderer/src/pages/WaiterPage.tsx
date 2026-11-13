@@ -5,11 +5,12 @@ import {
   MenuItem,
   MenuUnit,
   Order,
+  PrintFailedPayload,
   SOCKET_EVENTS,
-  Station,
   Table,
   TableStatus,
   User,
+  lineSum,
 } from '@hardweb-pos/shared';
 import { AppShell } from '../components/AppShell';
 import { Button, formatSum } from '../components/ui';
@@ -19,7 +20,9 @@ import { FeedbackModal, FeedbackVariant } from '../components/FeedbackModal';
 import { MyOrdersView } from '../components/MyOrdersView';
 import { WaiterMobileNav, WaiterProfileView } from '../components/WaiterMobileNav';
 import { BackButton } from '../components/BackButton';
-import { api } from '../lib/api';
+import { PrintFailedToasts, usePrintFailedToasts } from '../components/PrintFailedToasts';
+import { cleanDecimalInput, cleanDigitsInput, formatQty } from '../components/numeric';
+import { api, ApiError } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { enqueue } from '../lib/offlineQueue';
 import { useConnectivity } from '../state/connectivity';
@@ -42,16 +45,39 @@ interface CartItem {
   note?: string;
 }
 
+/** Shu sahifadan yaqinda yuborilgan buyurtma — "print:failed" xabari shunga tegishlimi? */
+interface RecentSend {
+  orderId?: string; // yangi buyurtmada javob kelgach ma'lum bo'ladi
+  tableNumber: number;
+  at: number;
+}
+/** Bo'lim printeri natijasi shu vaqt ichida keladi (server 1 marta qayta urinadi) */
+const PRINT_WATCH_MS = 3 * 60_000;
+
+// Faqat POST /orders'ning o'zi tarmoq xatosi bilan tugaganda (api.ts: TypeError) buyurtma
+// oflayn navbatga olinadi. "Server javob bermadi" (ApiError, status 0) — tarmoq xatosi EMAS:
+// server buyurtmani yaratib ulgurgan bo'lishi mumkin, qayta yuborilsa ikki marta tushadi.
 function isNetworkError(e: unknown): boolean {
-  if (e instanceof TypeError) return true;
-  const msg = (e as Error)?.message?.toLowerCase() ?? '';
-  return msg.includes('fetch') || msg.includes('network') || !navigator.onLine;
+  return e instanceof TypeError;
+}
+function isTimeout(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 0;
 }
 
 // Miqdorni birlik bilan ko'rsatish (dona -> "2", kg -> "1.5 kg")
 function qtyLabel(quantity: number, unit: MenuUnit): string {
-  if (unit === MenuUnit.Weight) return `${quantity} kg`;
-  return String(quantity);
+  if (unit === MenuUnit.Weight) return `${formatQty(quantity)} kg`;
+  return formatQty(quantity);
+}
+
+/** Savatdagi taomlar -> POST /orders qatorlari */
+function orderLines(cart: CartItem[]) {
+  return cart.map((c) => ({ menuItemId: c.menuItemId, quantity: c.quantity, note: c.note }));
+}
+// Oflayn navbatga — taom nomi bilan (navbat ro'yxatida ko'rsatish uchun; server ortiqcha
+// maydonni e'tiborsiz qoldiradi)
+function queuedLines(cart: CartItem[]) {
+  return cart.map((c) => ({ menuItemId: c.menuItemId, quantity: c.quantity, note: c.note, name: c.name }));
 }
 
 // Kategoriya ranglari (ko'k emas) — chap yon menu uchun. Statik sinflar (Tailwind JIT).
@@ -81,8 +107,6 @@ export function WaiterPage() {
   const [activeOrders, setActiveOrders] = useState<Order[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [menu, setMenu] = useState<MenuItem[]>([]);
-  // Bo'limlar (sexlar) — chekни printerlarга yo'naltirish uchun
-  const [stations, setStations] = useState<Station[]>([]);
   const [activeCat, setActiveCat] = useState<string | null>(null);
   const [selectedHall, setSelectedHall] = useState<string | null>(null);
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
@@ -128,35 +152,40 @@ export function WaiterPage() {
   useEffect(() => {
     loadTables().catch(() => {});
     loadActive();
-    api.get<Category[]>('/menu/categories').then((c) => {
-      setCategories(c);
-      setActiveCat(c[0]?.id ?? null);
-    });
-    api.get<MenuItem[]>('/menu/items').then(setMenu);
-    api.get<Station[]>('/stations').then(setStations).catch(() => {});
+    api
+      .get<Category[]>('/menu/categories')
+      .then((c) => {
+        setCategories(c);
+        setActiveCat(c[0]?.id ?? null);
+      })
+      .catch(() => {});
+    api.get<MenuItem[]>('/menu/items').then(setMenu).catch(() => {});
   }, []);
 
-  // Buyurtma taomlarini bo'lim (sex) printerlariga yo'naltirish.
-  // Bo'lim printeri sozlanmagan bo'lsa — o'sha bo'lim chekи chiqmaydi.
-  async function printToStations(order: Order) {
-    const items = order.items || [];
-    for (const st of stations) {
-      if (!st.printerHost) continue;
-      const sub = items.filter((it) => it.stationId === st.id);
-      if (sub.length === 0) continue;
-      try {
-        await window.hardweb?.printer?.printStation?.(
-          { ...order, items: sub },
-          st.printerHost,
-          st.printerPort,
-          st.printerWidth,
-          st.name,
-        );
-      } catch {
-        /* bo'lim printeri majburiy emas */
-      }
-    }
+  // Bo'lim (oshxona/bar...) cheklarini endi SERVER o'zi chop etadi — faqat yangi qo'shilgan
+  // taomlarni, har bir bo'lim printeriga (telefon, terminal va oflayn navbat buyurtmalari ham).
+  // Chek chiqmasa server "print:failed" yuboradi — shu sahifadan yaqinda yuborilgan buyurtma
+  // bo'lsa, ofitsiantga ekranni to'smaydigan ogohlantirish ko'rsatamiz.
+  const recentSends = useRef<RecentSend[]>([]);
+  function trackSend(tableNumber: number): RecentSend {
+    const now = Date.now();
+    const entry: RecentSend = { tableNumber, at: now };
+    recentSends.current = [...recentSends.current.filter((s) => now - s.at < PRINT_WATCH_MS), entry];
+    return entry;
   }
+  const printFails = usePrintFailedToasts({
+    max: 3,
+    autoDismissMs: 20_000,
+    filter: (p: PrintFailedPayload) => {
+      const now = Date.now();
+      return recentSends.current.some((s) => {
+        if (now - s.at > PRINT_WATCH_MS) return false;
+        // Ikkala tomonda id bo'lsa — faqat id bo'yicha; aks holda (javob hali kelmagan) stol raqami bo'yicha
+        if (s.orderId && p.orderId) return s.orderId === p.orderId;
+        return p.tableNumber != null && p.tableNumber === s.tableNumber;
+      });
+    },
+  });
 
   // Stol holatlarini real-time yangilash (boshqa terminalда to'lov/zakaz bo'lса)
   const selectedTableRef = useRef<Table | null>(null);
@@ -229,12 +258,13 @@ export function WaiterPage() {
   }, [menu, activeCat, menuSearch]);
   const hasFavorites = useMemo(() => menu.some((m) => m.favorite), [menu]);
 
-  const cartTotal = cart.reduce((s, c) => s + c.price * c.quantity, 0);
-  const existingTotal = existingOrder?.total ?? 0;
+  // Summalar — har qator alohida butun so'mga (shared lineSum): server, kassa va chek bilan bir xil
+  const cartTotal = cart.reduce((s, c) => s + lineSum(c.price, c.quantity), 0);
+  const existingTotal = (existingOrder?.items ?? []).reduce((s, it) => s + lineSum(it.price ?? 0, it.quantity), 0);
   // Olib tashlash uchun belgilangan taomlar summasi
   const removedSum = (existingOrder?.items ?? [])
     .filter((it) => removeIds.includes(it.id))
-    .reduce((s, it) => s + Number(it.price) * it.quantity, 0);
+    .reduce((s, it) => s + lineSum(it.price ?? 0, it.quantity), 0);
   const grandTotal = existingTotal - removedSum + cartTotal;
 
   function toggleRemove(itemId: string) {
@@ -288,21 +318,23 @@ export function WaiterPage() {
   // --- Kilo taomni tahrirlash (kg <-> so'm) ---
   function openEdit(ci: CartItem) {
     setEditItem(ci);
-    setEditKg(String(ci.quantity));
-    setEditSum(String(Math.round(ci.quantity * ci.price)));
+    setEditKg(formatQty(ci.quantity));
+    setEditSum(String(lineSum(ci.price, ci.quantity)));
   }
+  // Og'irlik: vergul ham kasr ajratgichi ("1,5" = 1.5 kg, hech qachon 15 emas), ko'pi bilan 3 xona (gramm)
   function onEditKg(v: string) {
-    const clean = v.replace(/[^0-9.]/g, '');
+    const clean = cleanDecimalInput(v, 3);
     setEditKg(clean);
     const kg = Number(clean);
-    setEditSum(kg > 0 ? String(Math.round(kg * (editItem?.price ?? 0))) : '');
+    setEditSum(kg > 0 ? String(lineSum(editItem?.price ?? 0, kg)) : '');
   }
+  // Summa: butun so'm — bo'shliq/vergul minglik ajratgich sifatida olib tashlanadi
   function onEditSum(v: string) {
-    const clean = v.replace(/[^0-9]/g, '');
+    const clean = cleanDigitsInput(v);
     setEditSum(clean);
     const sum = Number(clean);
     const price = editItem?.price ?? 0;
-    setEditKg(sum > 0 && price > 0 ? String(Math.round((sum / price) * 1000) / 1000) : '');
+    setEditKg(sum > 0 && price > 0 ? formatQty(sum / price) : '');
   }
   function saveEdit() {
     if (!editItem) return;
@@ -328,24 +360,134 @@ export function WaiterPage() {
     setFeedback(fb);
   }
 
+  // Stollar va faol buyurtmalarni yangilash. Xato bo'lsa jim: amal allaqachon bajarilgan,
+  // ro'yxat esa keyingi socket hodisasida baribir yangilanadi.
+  function refreshLists() {
+    loadTables().catch(() => {});
+    void loadActive();
+  }
+
+  // Shu stolning ochiq buyurtmasini qayta o'qish — qisman saqlangan o'zgarish ekranda ko'rinsin
+  async function reloadExistingOrder(tableId: string) {
+    try {
+      const active = await api.get<Order[]>('/orders');
+      setActiveOrders(active);
+      if (selectedTableRef.current?.id === tableId) {
+        setExistingOrder(active.find((o) => o.tableId === tableId) ?? null);
+      }
+    } catch {
+      /* keyingi socket hodisasida yangilanadi */
+    }
+  }
+
+  // "Server javob bermadi" — buyurtma serverga yetib borgan bo'lishi mumkin, shuning uchun
+  // navbatga OLINMAYDI (ikki marta tushmasin); ofitsiant stoldagi holatni ko'rib qaror qiladi.
+  function showTimeout(table: Table) {
+    setFeedback({
+      variant: 'warning',
+      title: 'Server javob bermadi',
+      subtitle: `Stol №${table.number}: buyurtma yetib borgan bo‘lishi mumkin. «Yuborilgan buyurtma»ni tekshiring — taomlar u yerda bo‘lmasa, qayta yuboring.`,
+    });
+    void reloadExistingOrder(table.id);
+  }
+
+  type SendResult = { ok: true } | { ok: false; queued: true } | { ok: false; queued: false; error: unknown };
+
+  /**
+   * Savatdagi taomlarni yuborish (yangi buyurtma yoki ochiq buyurtmaga qo'shimcha).
+   * Faqat POST /orders'ning O'ZI tarmoq xatosi bilan tugasa — oflayn navbatga olinadi.
+   * Bo'lim cheklarini server chop etadi (faqat yangi taomlar); bu yerda chop etilmaydi.
+   */
+  async function postCart(table: Table): Promise<SendResult> {
+    // Javob kelguncha stol raqami bo'yicha kuzatamiz (print:failed javobdan oldin kelishi mumkin)
+    const track = trackSend(table.number);
+    try {
+      const created = await api.post<Order>('/orders', {
+        tableId: table.id,
+        waiterId: selectedWaiter.id,
+        items: orderLines(cart),
+      });
+      if (created?.id) track.orderId = created.id;
+      return { ok: true };
+    } catch (e) {
+      if (isNetworkError(e)) {
+        enqueue({ tableId: table.id, tableNumber: table.number, waiterId: selectedWaiter.id, items: queuedLines(cart) });
+        return { ok: false, queued: true };
+      }
+      return { ok: false, queued: false, error: e };
+    }
+  }
+
   // Yuborilgan buyurtmadan belgilangan taomlarни olib tashlash (+ yangi taomlar bo'lsa yuborish)
   async function confirmChanges() {
-    if (!selectedTable || !existingOrder) return;
+    if (!selectedTable || !existingOrder || sending) return;
+    const table = selectedTable;
+    const order = existingOrder;
+    const removing = removeIds;
+    // Hamma taom olib tashlansa — server buyurtmani bekor qiladi (stol bo'shaydi)
+    const removingAll = removing.length > 0 && order.items.every((it) => removing.includes(it.id));
     setSending(true);
     try {
-      if (removeIds.length > 0) {
-        await api.post(`/orders/${existingOrder.id}/remove-items`, { itemIds: removeIds });
+      if (removing.length > 0) {
+        try {
+          await api.post(`/orders/${order.id}/remove-items`, { itemIds: removing });
+        } catch (e) {
+          setFeedback({
+            variant: 'warning',
+            title: 'O‘zgarish saqlanmadi',
+            subtitle: (e as Error)?.message || 'Taomlar olib tashlanmadi',
+          });
+          if (isTimeout(e)) {
+            // Olib tashlash bajarilgan bo'lishi mumkin — serverdagi holatni ko'rsatamiz
+            setRemoveIds([]);
+            void reloadExistingOrder(table.id);
+          }
+          return;
+        }
       }
       if (cart.length > 0) {
-        const items = cart.map((c) => ({ menuItemId: c.menuItemId, quantity: c.quantity, note: c.note }));
-        const created = await api.post<Order>('/orders', { tableId: selectedTable.id, waiterId: selectedWaiter.id, items });
-        // Yangi qo'shilgan taomlarni bo'lim printerlariga yuboramiz
-        await printToStations(created);
+        const res = await postCart(table);
+        if (!res.ok) {
+          if (res.queued) {
+            refreshLists();
+            finishSend({
+              variant: 'info',
+              title: 'Aloqa yo‘q',
+              subtitle:
+                removing.length > 0
+                  ? 'Olib tashlash saqlandi; yangi taomlar oflayn saqlandi — aloqa tiklanganda yuboriladi'
+                  : 'Oflayn saqlandi, keyin yuboriladi',
+            });
+            return;
+          }
+          // Olib tashlash (bo'lsa) allaqachon saqlangan — ekranda serverdagi holat ko'rinsin
+          if (removing.length > 0) {
+            setRemoveIds([]);
+            void reloadExistingOrder(table.id);
+          }
+          if (isTimeout(res.error)) showTimeout(table);
+          else
+            setFeedback({
+              variant: 'warning',
+              title: removing.length > 0 ? 'Olib tashlandi, lekin yangi taomlar yuborilmadi' : 'Xatolik',
+              subtitle: (res.error as Error)?.message || 'Buyurtma yuborilmadi',
+            });
+          return;
+        }
       }
-      await loadTables();
-      finishSend({ variant: 'success', title: 'O‘zgarish saqlandi', subtitle: `Stol №${selectedTable.number} — buyurtma yangilandi` });
-    } catch (e) {
-      setFeedback({ variant: 'warning', title: 'Xatolik', subtitle: (e as Error).message });
+      refreshLists();
+      if (removingAll && cart.length === 0) {
+        finishSend({ variant: 'success', title: 'Buyurtma bekor qilindi', subtitle: `Stol №${table.number} bo‘shatildi` });
+      } else {
+        finishSend({
+          variant: 'success',
+          title: 'O‘zgarish saqlandi',
+          subtitle:
+            cart.length > 0
+              ? `Stol №${table.number} — yangi taomlar bo‘limlarga uzatildi`
+              : `Stol №${table.number} — buyurtma yangilandi`,
+        });
+      }
     } finally {
       setSending(false);
     }
@@ -362,7 +504,7 @@ export function WaiterPage() {
     setSending(true);
     try {
       await api.post(`/orders/${existingOrder.id}/move-table`, { tableId });
-      await loadTables();
+      refreshLists();
       const nt = tables.find((t) => t.id === tableId);
       finishSend({ variant: 'success', title: 'Stol o‘zgartirildi', subtitle: `Buyurtma Stol №${nt?.number} ga ko‘chirildi` });
     } catch (e) {
@@ -409,8 +551,9 @@ export function WaiterPage() {
     if (!ok) return;
     setSending(true);
     try {
+      // To'lovi bor hisobni server bekor qilmaydi (avval kassada to'lovlar o'chiriladi) — xabar ko'rsatiladi
       await api.post(`/orders/${existingOrder.id}/cancel`, {});
-      await loadTables();
+      refreshLists();
       finishSend({ variant: 'success', title: 'Schot bekor qilindi', subtitle: `Stol №${selectedTable.number} bo‘shatildi` });
     } catch (e) {
       setFeedback({ variant: 'warning', title: 'Xatolik', subtitle: (e as Error).message });
@@ -461,32 +604,32 @@ export function WaiterPage() {
   }
 
   async function sendOrder() {
-    if (!selectedTable || !selectedWaiter || cart.length === 0) return;
-    const tableNo = selectedTable.number;
-    const items = cart.map((c) => ({ menuItemId: c.menuItemId, quantity: c.quantity, note: c.note }));
+    if (!selectedTable || !selectedWaiter || cart.length === 0 || sending) return;
+    const table = selectedTable;
 
     if (!online) {
-      enqueue({ tableId: selectedTable.id, tableNumber: selectedTable.number, waiterId: selectedWaiter.id, items });
+      enqueue({ tableId: table.id, tableNumber: table.number, waiterId: selectedWaiter.id, items: queuedLines(cart) });
       finishSend({ variant: 'info', title: 'Oflayn saqlandi', subtitle: 'Ulanish tiklanganda avtomatik yuboriladi' });
       return;
     }
     setSending(true);
+    let res: SendResult;
     try {
-      const created = await api.post<Order>('/orders', { tableId: selectedTable.id, waiterId: selectedWaiter.id, items });
-      await loadTables();
-      loadActive();
-      // Taomlarni bo'lim (sex) printerlariga yo'naltiramiz (oshxona/bar/somsaxona...)
-      await printToStations(created);
-      finishSend({ variant: 'success', title: 'Buyurtma yuborildi!', subtitle: `Stol №${tableNo} — bo‘limlarga uzatildi` });
-    } catch (e) {
-      if (isNetworkError(e)) {
-        enqueue({ tableId: selectedTable.id, tableNumber: selectedTable.number, waiterId: selectedWaiter.id, items });
-        finishSend({ variant: 'info', title: 'Aloqa yo‘q', subtitle: 'Oflayn saqlandi, keyin yuboriladi' });
-      } else {
-        setFeedback({ variant: 'warning', title: 'Xatolik', subtitle: (e as Error).message });
-      }
+      res = await postCart(table);
     } finally {
       setSending(false);
+    }
+    if (res.ok) {
+      // Ro'yxatlar fonda yangilanadi — ularning xatosi buyurtmani qayta navbatga OLMAYDI
+      refreshLists();
+      // Bo'lim cheklarini server chop etadi; chiqmasa — "print:failed" ogohlantirishi keladi
+      finishSend({ variant: 'success', title: 'Buyurtma yuborildi!', subtitle: `Stol №${table.number} — bo‘limlarga uzatildi` });
+    } else if (res.queued) {
+      finishSend({ variant: 'info', title: 'Aloqa yo‘q', subtitle: 'Oflayn saqlandi, keyin yuboriladi' });
+    } else if (isTimeout(res.error)) {
+      showTimeout(table);
+    } else {
+      setFeedback({ variant: 'warning', title: 'Xatolik', subtitle: (res.error as Error)?.message || 'Buyurtma yuborilmadi' });
     }
   }
 
@@ -543,6 +686,8 @@ export function WaiterPage() {
       onClose={() => setFeedback(null)}
     />
   );
+  // Bo'lim printeriga chek chiqmadi (faqat shu sahifadan yuborilgan buyurtmalar) — ekranni to'smaydi
+  const printToasts = <PrintFailedToasts toasts={printFails.toasts} onDismiss={printFails.dismiss} compact />;
 
   // Kilo taomni tahrirlash modali (kg yoki so'm bo'yicha)
   const editModal = editItem && (
@@ -576,7 +721,7 @@ export function WaiterPage() {
       <div className="mt-3 text-center text-sm">
         {Number(editKg) > 0 ? (
           <span className="text-primary font-semibold">
-            {editKg} kg = {formatSum(Math.round(Number(editKg) * editItem.price))}
+            {editKg} kg = {formatSum(lineSum(editItem.price, Number(editKg)))}
           </span>
         ) : (
           <span className="text-muted">Og‘irlik yoki summani kiriting</span>
@@ -630,6 +775,7 @@ export function WaiterPage() {
     return (
       <AppShell title={`Ofitsiant — ${selectedWaiter.name}`} hideMobileControls>
         {feedbackModal}
+        {printToasts}
         <div className="h-full pb-16 md:pb-0">
           <MyOrdersView
             waiterId={selectedWaiter.id}
@@ -653,6 +799,7 @@ export function WaiterPage() {
     return (
       <AppShell title="Profil" hideMobileControls>
         {feedbackModal}
+        {printToasts}
         <WaiterProfileView onHistory={goHistory} />
         <WaiterMobileNav active="profile" onTables={goTables} onMyOrders={goMyOrders} onProfile={goProfile} />
       </AppShell>
@@ -691,6 +838,7 @@ export function WaiterPage() {
         )}
       >
         {feedbackModal}
+        {printToasts}
         <div className="h-full overflow-auto p-3 sm:p-6 pb-24 md:pb-6">
           <div className="mb-3">
             <div className="text-xs text-muted font-semibold">Mening buyurtmalarim</div>
@@ -759,6 +907,7 @@ export function WaiterPage() {
         )}
       >
         {feedbackModal}
+        {printToasts}
         <div className="h-full overflow-auto p-3 sm:p-6 pb-24 md:pb-6">
           {/* Mobil: joriy zal nomi (almashtirish — o'ng yuqoridagi ☰) */}
           <div className="md:hidden mb-3">
@@ -878,6 +1027,7 @@ export function WaiterPage() {
       )}
     >
       {feedbackModal}
+      {printToasts}
       {editModal}
 
       {/* Stolni o'zgartirish — bo'sh stollardan tanlash */}
@@ -1123,7 +1273,7 @@ export function WaiterPage() {
                   <div className="relative ml-auto">
                     <button
                       onClick={() => setMoreOpen((v) => !v)}
-                      aria-label="Ko'proq"
+                      aria-label="Ko‘proq"
                       className="w-7 h-7 rounded-lg hover:bg-bg flex items-center justify-center text-muted hover:text-text text-lg leading-none"
                     >
                       ⋮
@@ -1196,7 +1346,7 @@ export function WaiterPage() {
                         </span>
                         <span className="flex items-center gap-2 shrink-0">
                           <span className={marked ? 'text-danger/60 line-through' : 'text-muted'}>
-                            {formatSum(Number(it.price) * it.quantity)}
+                            {formatSum(lineSum(it.price ?? 0, it.quantity))}
                           </span>
                           <button
                             onClick={() => toggleRemove(it.id)}
@@ -1241,7 +1391,7 @@ export function WaiterPage() {
                     {c.unit === MenuUnit.Weight ? (
                       // Kilo taom — tahrirlash (kg/so'm) va o'chirish
                       <div className="flex items-center gap-2 ml-2">
-                        <span className="font-extrabold text-lg text-primary">{formatSum(c.price * c.quantity)}</span>
+                        <span className="font-extrabold text-lg text-primary">{formatSum(lineSum(c.price, c.quantity))}</span>
                         <button
                           onClick={() => openEdit(c)}
                           aria-label="Tahrirlash"
@@ -1251,7 +1401,7 @@ export function WaiterPage() {
                         </button>
                         <button
                           onClick={() => removeItem(c.menuItemId)}
-                          aria-label="O'chirish"
+                          aria-label="O‘chirish"
                           className="w-11 h-11 rounded-xl bg-surface border border-border flex items-center justify-center hover:border-danger hover:text-danger active:scale-90 transition-all text-lg"
                         >
                           🗑️
@@ -1272,7 +1422,7 @@ export function WaiterPage() {
                         <span className="w-9 text-center text-2xl font-extrabold">{c.quantity}</span>
                         <button
                           onClick={() => changeQty(c.menuItemId, 1)}
-                          aria-label="Ko'paytirish"
+                          aria-label="Ko‘paytirish"
                           className="w-12 h-12 rounded-xl bg-primary text-white flex items-center justify-center active:scale-90 hover:brightness-110 transition-all"
                         >
                           <svg width="22" height="22" viewBox="0 0 24 24" fill="none">

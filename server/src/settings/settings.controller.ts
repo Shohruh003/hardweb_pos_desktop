@@ -56,7 +56,8 @@ export class SettingsController {
   // Kunlik hisobotni hoziroq yuborish (sinov)
   @Post('telegram-report')
   async sendReport() {
-    await this.telegram.sendDailyReport();
-    return { ok: true };
+    // ok:false — token/chat id noto'g'ri yoki Telegram javob bermadi (sabab server logida)
+    const ok = await this.telegram.sendDailyReport();
+    return { ok };
   }
 }

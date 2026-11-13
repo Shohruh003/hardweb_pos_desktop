@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -26,11 +27,23 @@ import {
   Receipt,
   TableStatus,
   MenuUnit,
+  SETTABLE_ORDER_STATUSES,
+  calcOrderTotals,
+  canChangeOrderStatus,
+  clampPercent,
+  lineSum,
+  remainingAmount,
+  roundSum,
+  sumPayments,
 } from '@hardweb-pos/shared';
 import { CreateOrderDto, PayOrderDto, UpdateOrderStatusDto } from './dto';
 import { OrdersGateway } from './orders.gateway';
 import { TelegramService } from '../telegram/telegram.service';
 import { InventoryService } from '../inventory/inventory.service';
+import {
+  PrintNewItemsParams,
+  StationPrintService,
+} from '../printing/station-print.service';
 
 // Tarix uchun filtr/pagination parametrlari
 export interface HistoryQuery {
@@ -53,8 +66,75 @@ export interface PaginatedOrders {
   hasMore: boolean;
 }
 
+/** To'lovi bor hisobni bekor qilib (bo'shatib) bo'lmaydi — aks holda olingan pul hisobotdan yo'qoladi */
+const HAS_PAYMENTS_MESSAGE = 'Bu hisobda to‘lov bor — avval to‘lovlarni o‘chiring';
+
+/** Tarix sahifasi raqamining yuqori chegarasi (juda katta qiymat SQL'ni buzmasin) */
+const MAX_HISTORY_PAGE = 100_000;
+
+/** So'rov parametri -> musbat butun son; noto'g'ri bo'lsa — fallback, katta bo'lsa — max */
+function positiveInt(value: unknown, fallback: number, max: number): number {
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n) || n < 1) return fallback;
+  return Math.min(n, max);
+}
+
+/** So'rov parametri -> satr (parametr takrorlangan bo'lsa — birinchisi); bo'sh -> undefined */
+function queryStr(value: unknown): string | undefined {
+  const v = Array.isArray(value) ? value[0] : value;
+  if (v == null) return undefined;
+  const s = String(v);
+  return s === '' ? undefined : s;
+}
+
+/**
+ * Sana filtri -> bazadagi format. opened_at SQLite'da UTC matn "YYYY-MM-DD HH:MM:SS"
+ * ko'rinishida saqlanadi, mijoz esa ISO ("2026-11-12T19:00:00.000Z") yuboradi — ularni
+ * matn sifatida solishtirsak, tun yarmidan keyin ochilgan buyurtmalar "Bugun"dan tushib
+ * qoladi. Shuning uchun qiymatni bir xil formatga keltiramiz. Noto'g'ri sana — filtr yo'q.
+ * withMillis: "gacha" chegarasi uchun .SSS qo'shiladi (oxirgi soniyadagi yozuvlar ham kirsin).
+ */
+function toDbDateTime(value: string | undefined, withMillis: boolean): string | null {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, withMillis ? 23 : 19).replace('T', ' ');
+}
+
+/** Date (yoki bazadan kelgan satr) -> ISO satr */
+function isoOf(value: Date | string | null | undefined): string {
+  if (value instanceof Date) return value.toISOString();
+  return value == null ? '' : String(value);
+}
+
+/**
+ * Tarix qatoridagi to'lov turi. Tur bo'yicha filtr qo'yilgan bo'lsa — o'sha tur
+ * ("Karta" filtrida qator "Naqd" bo'lib chiqmasin). Aks holda eng ko'p summa to'langan
+ * tur; teng bo'lsa — birinchi to'lov turi (bo'lib to'lashda natija barqaror).
+ */
+function mainPaymentType(pays: PaymentEntity[], preferred?: string): PaymentType {
+  if (preferred && pays.some((p) => p.type === preferred)) {
+    return preferred as PaymentType;
+  }
+  const byType = new Map<PaymentType, number>();
+  for (const p of pays) {
+    byType.set(p.type, (byType.get(p.type) ?? 0) + roundSum(p.amount));
+  }
+  let best = pays[0].type;
+  let bestSum = -Infinity;
+  for (const [type, sum] of byType) {
+    if (sum > bestSum) {
+      best = type;
+      bestSum = sum;
+    }
+  }
+  return best;
+}
+
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     @InjectRepository(OrderEntity)
     private readonly orders: Repository<OrderEntity>,
@@ -76,6 +156,7 @@ export class OrdersService {
     private readonly gateway: OrdersGateway,
     private readonly telegram: TelegramService,
     private readonly inventory: InventoryService,
+    private readonly stationPrint: StationPrintService,
   ) {}
 
   // Faol (yopilmagan) buyurtmalar — KDS va kassa uchun (zal bilan)
@@ -109,39 +190,48 @@ export class OrdersService {
     return this.toDto(order, table?.number);
   }
 
-  // Buyurtmalar tarixi — pagination + filtrlar bilan (cheklar/shikoyatlar uchun).
+  // Buyurtmalar tarixi — pagination + filtrlar bilan (Cheklar tarixi, KDS "Tarix",
+  // ofitsiantning "Mening buyurtmalarim"). Har qator taomlari va summasi bilan qaytadi.
   // Katta hajmda ham tez ishlashi uchun sahifalab (20 tadan) qaytaramiz.
   async history(query: HistoryQuery): Promise<PaginatedOrders> {
-    const page = Math.max(1, Number(query.page) || 1);
-    const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
+    const page = positiveInt(query.page, 1, MAX_HISTORY_PAGE);
+    const limit = positiveInt(query.limit, 20, 100);
+
+    const waiterId = queryStr(query.waiterId);
+    const status = queryStr(query.status);
+    const hall = queryStr(query.hall);
+    const search = queryStr(query.search);
+    const paymentType = queryStr(query.paymentType);
+    const dateFrom = toDbDateTime(queryStr(query.dateFrom), false);
+    const dateTo = toDbDateTime(queryStr(query.dateTo), true);
 
     const qb = this.orders
       .createQueryBuilder('o')
       // stol ma'lumoti — filtr (zal/raqam) uchun join
       .leftJoin(TableEntity, 't', 't.id = o.tableId');
 
-    if (query.waiterId) {
-      qb.andWhere('o.waiterId = :waiterId', { waiterId: query.waiterId });
+    if (waiterId) {
+      qb.andWhere('o.waiterId = :waiterId', { waiterId });
     }
-    if (query.status) {
-      qb.andWhere('o.status = :status', { status: query.status });
+    if (status) {
+      qb.andWhere('o.status = :status', { status });
     }
-    if (query.hall) {
-      qb.andWhere('t.hall = :hall', { hall: query.hall });
+    if (hall) {
+      qb.andWhere('t.hall = :hall', { hall });
     }
-    if (query.dateFrom) {
-      qb.andWhere('o.openedAt >= :dateFrom', { dateFrom: query.dateFrom });
+    if (dateFrom) {
+      qb.andWhere('o.openedAt >= :dateFrom', { dateFrom });
     }
-    if (query.dateTo) {
-      qb.andWhere('o.openedAt <= :dateTo', { dateTo: query.dateTo });
+    if (dateTo) {
+      qb.andWhere('o.openedAt <= :dateTo', { dateTo });
     }
-    if (query.search) {
+    if (search) {
       // stol raqami bo'yicha qidiruv
       qb.andWhere('CAST(t.number AS TEXT) LIKE :search', {
-        search: `%${query.search}%`,
+        search: `%${search}%`,
       });
     }
-    if (query.paymentType) {
+    if (paymentType) {
       qb.andWhere(
         `o.id IN ${qb
           .subQuery()
@@ -149,22 +239,34 @@ export class OrdersService {
           .from(PaymentEntity, 'p')
           .where('p.type = :pt')
           .getQuery()}`,
-      ).setParameter('pt', query.paymentType);
+      ).setParameter('pt', paymentType);
     }
 
+    // Jami soni — taomlarsiz (yengil) so'rov bilan
     const total = await qb.getCount();
+
+    // Sahifa — taomlari bilan. QueryBuilder'ning getMany() eager relation'ni o'zi yuklamaydi,
+    // shuning uchun items aniq join qilinadi. skip/take join bilan ishlaganda TypeORM avval
+    // sahifadagi buyurtma id'larini (DISTINCT) tanlaydi — sahifa taom qatorlari bo'yicha emas,
+    // buyurtmalar bo'yicha bo'ladi. Bir soniyada ochilgan buyurtmalar sahifalar orasida
+    // takrorlanmasin/yo'qolmasin — id bo'yicha ham saralaymiz.
     const list = await qb
+      .leftJoinAndSelect('o.items', 'i')
       .orderBy('o.openedAt', 'DESC')
+      .addOrderBy('o.id', 'DESC')
       .skip((page - 1) * limit)
       .take(limit)
       .getMany();
 
-    const items = list.length ? await this.enrichHistory(list) : [];
+    const items = list.length ? await this.enrichHistory(list, paymentType) : [];
     return { items, total, page, limit, hasMore: page * limit < total };
   }
 
   // Sahifadagi buyurtmalarni stol/ofitsiant/to'lov ma'lumoti bilan boyitamiz
-  private async enrichHistory(list: OrderEntity[]): Promise<Order[]> {
+  private async enrichHistory(
+    list: OrderEntity[],
+    preferredPaymentType?: string,
+  ): Promise<Order[]> {
     const tableRows = await this.tables.find({
       where: { id: In([...new Set(list.map((o) => o.tableId))]) },
     });
@@ -173,30 +275,34 @@ export class OrdersService {
     });
     const pays = await this.payments.find({
       where: { orderId: In(list.map((o) => o.id)) },
+      order: { createdAt: 'ASC' },
     });
     const tableNo = new Map(tableRows.map((t) => [t.id, t.number]));
     const tableHall = new Map(tableRows.map((t) => [t.id, t.hall]));
     const waiterName = new Map(users.map((u) => [u.id, u.name]));
-    const payByOrder = new Map(pays.map((p) => [p.orderId, p]));
+    const paysByOrder = new Map<string, PaymentEntity[]>();
+    for (const p of pays) {
+      const arr = paysByOrder.get(p.orderId);
+      if (arr) arr.push(p);
+      else paysByOrder.set(p.orderId, [p]);
+    }
 
     return list.map((o) => {
       const dto = this.toDto(o, tableNo.get(o.tableId));
       dto.hall = tableHall.get(o.tableId) ?? null;
       dto.waiterName = waiterName.get(o.waiterId) ?? null;
-      const p = payByOrder.get(o.id);
-      if (p) dto.paymentType = p.type;
+      const orderPays = paysByOrder.get(o.id);
+      if (orderPays?.length) {
+        dto.paidAmount = sumPayments(orderPays);
+        dto.paymentType = mainPaymentType(orderPays, preferredPaymentType);
+      }
       return dto;
     });
   }
 
-  // stol id -> stol raqami xaritasi (KDS/kassada ko'rsatish uchun)
-  private async tableNumberMap(ids: string[]): Promise<Map<string, number>> {
-    if (ids.length === 0) return new Map();
-    const tables = await this.tables.find({ where: { id: In(ids) } });
-    return new Map(tables.map((t) => [t.id, t.number]));
-  }
-
-  // Yangi buyurtma — ofitsiant yuboradi (TZ F-1.7), KDS/navbatga real-time uzatiladi
+  // Yangi buyurtma — ofitsiant yuboradi (TZ F-1.7), KDS/navbatga real-time uzatiladi.
+  // Bo'lim (oshxona/bar) cheklarini SERVER chop etadi — faqat shu so'rovda qo'shilgan
+  // taomlar, buyurtma qayerdan kelganidan qat'i nazar (terminal, telefon, oflayn navbat).
   async create(dto: CreateOrderDto, waiterId: string): Promise<Order> {
     if (!dto.items?.length) {
       throw new BadRequestException('Buyurtma bo‘sh bo‘lishi mumkin emas');
@@ -239,13 +345,15 @@ export class OrdersService {
       : [];
     const stationNameById = new Map(stationRows.map((s) => [s.id, s.name]));
 
-    const buildItems = (manager: typeof this.dataSource.manager) =>
+    // orderId — mavjud buyurtmaga qo'shilganda aniq bog'laymiz (javobdagi qatorlarda ham bo'lsin)
+    const buildItems = (manager: typeof this.dataSource.manager, orderId?: string) =>
       dto.items.map((i) => {
         const mi = menuById.get(i.menuItemId);
         if (!mi) {
           throw new BadRequestException(`Taom topilmadi: ${i.menuItemId}`);
         }
         return manager.create(OrderItemEntity, {
+          ...(orderId ? { orderId } : {}),
           menuItemId: mi.id,
           menuItemName: mi.name,
           price: mi.price,
@@ -260,6 +368,9 @@ export class OrdersService {
         });
       });
 
+    // Bo'lim chekidagi ofitsiant — shu taomlarni yuborgan xodim (terminalda tanlangan yoki kirgan)
+    const senderName = await this.userName(waiterId);
+
     // Agar shu stolda ochiq (yopilmagan) buyurtma bo'lsa — yangi taomlarni
     // o'sha buyurtmaga qo'shamiz (mijoz keyinroq qo'shimcha buyursa).
     const existing = await this.orders.findOne({
@@ -267,7 +378,7 @@ export class OrdersService {
       order: { openedAt: 'DESC' },
     });
     if (existing) {
-      const newItems = buildItems(this.dataSource.manager);
+      const newItems = buildItems(this.dataSource.manager, existing.id);
       existing.items = [...(existing.items || []), ...newItems];
       if (dto.note !== undefined) existing.note = dto.note?.trim() || null;
       if (customer) {
@@ -280,7 +391,25 @@ export class OrdersService {
       }
       const savedExisting = await this.orders.save(existing);
       const dtoOut = this.toDto(savedExisting, table.number);
+      dtoOut.hall = table.hall ?? null;
+      // Buyurtma egasi (ofitsiant) o'zgarmaydi — birinchi yuborgan xodim
+      dtoOut.waiterName =
+        savedExisting.waiterId === waiterId
+          ? senderName
+          : await this.userName(savedExisting.waiterId);
       this.gateway.emitOrderUpdated(dtoOut); // -> KDS yangi taomlarni ko'radi
+
+      // Oshxonaga FAQAT hozir qo'shilgan qatorlar ketadi ("QO'SHIMCHA" chek) — avvalgi
+      // taomlar qayta chiqmaydi. save() yangi qatorlarga id beradi.
+      const newIds = new Set(newItems.map((it) => it.id));
+      this.printStationTickets({
+        order: dtoOut,
+        items: dtoOut.items.filter((it) => newIds.has(it.id)),
+        append: true,
+        tableNumber: table.number,
+        hall: table.hall ?? null,
+        waiterName: senderName,
+      });
       return dtoOut;
     }
 
@@ -304,7 +433,19 @@ export class OrdersService {
     });
 
     const dtoOut = this.toDto(saved, table.number);
+    dtoOut.hall = table.hall ?? null;
+    dtoOut.waiterName = senderName;
     this.gateway.emitOrderCreated(dtoOut); // -> KDS / navbat
+
+    // Yangi buyurtma — barcha taomlar o'z bo'limi printeriga (tranzaksiya yakunlangandan keyin)
+    this.printStationTickets({
+      order: dtoOut,
+      items: dtoOut.items,
+      append: false,
+      tableNumber: table.number,
+      hall: table.hall ?? null,
+      waiterName: senderName,
+    });
     return dtoOut;
   }
 
@@ -374,6 +515,8 @@ export class OrdersService {
 
   // Buyurtmadan ayrim taomlarni olib tashlash (qaytarish). Hamma taom olib
   // tashlansa — butun buyurtma bekor qilinadi (stol bo'shaydi).
+  // To'lovi bor hisobda: bo'shatib bo'lmaydi va qolgan summa to'langandan kam bo'lmasligi
+  // kerak — aks holda olingan pul hisobotdan yo'qoladi yoki hisobni yopib bo'lmay qoladi.
   async removeItems(id: string, itemIds: string[]): Promise<Order> {
     const order = await this.orders.findOne({ where: { id } });
     if (!order) throw new NotFoundException('Buyurtma topilmadi');
@@ -387,10 +530,27 @@ export class OrdersService {
       const table = await this.tables.findOne({ where: { id: order.tableId } });
       return this.toDto(order, table?.number);
     }
-    // Hamma taom olib tashlandi — buyurtmani butunlay bekor qilamiz
+
+    const payments = await this.payments.find({ where: { orderId: id } });
+    // Hamma taom olib tashlandi — buyurtmani butunlay bekor qilamiz (to'lov bo'lsa — mumkin emas)
     if (remaining.length === 0) {
+      if (payments.length > 0) {
+        throw new BadRequestException(HAS_PAYMENTS_MESSAGE);
+      }
       return this.cancel(id);
     }
+    // Qolgan taomlarning yakuniy summasi (saqlangan chegirma/xizmat foizi bilan)
+    // to'langan summadan kam bo'lib qolmasin
+    const paid = sumPayments(payments);
+    const newTotal = calcOrderTotals(
+      remaining,
+      order.discountPercent,
+      order.servicePercent,
+    ).total;
+    if (newTotal < paid) {
+      throw new BadRequestException('Qolgan summa to‘langan summadan kam bo‘lib qoladi');
+    }
+
     await this.dataSource.manager.delete(
       OrderItemEntity,
       toRemove.map((it) => it.id),
@@ -412,6 +572,12 @@ export class OrdersService {
       throw new BadRequestException(
         'To‘langan chekni bekor qilib bo‘lmaydi (vozvrat qiling)',
       );
+    }
+    // Qisman to'langan hisob o'chirilsa, olingan pul hisobotlardan yo'qolib qoladi —
+    // avval kassada to'lovlar o'chirilishi kerak
+    const paymentCount = await this.payments.count({ where: { orderId: id } });
+    if (paymentCount > 0) {
+      throw new BadRequestException(HAS_PAYMENTS_MESSAGE);
     }
     const table = await this.tables.findOne({ where: { id: order.tableId } });
     const dto = this.toDto(order, table?.number);
@@ -480,10 +646,18 @@ export class OrdersService {
     return dto;
   }
 
-  // Buyurtma holatini o'zgartirish (TZ F-2.3): qabul -> tayyorlanmoqda -> tayyor
+  // Buyurtma holatini o'zgartirish (TZ F-2.3): qabul -> tayyorlanmoqda -> tayyor (KDS).
+  // "yopildi" faqat to'liq to'lov orqali qo'yiladi; yopilgan (to'langan) buyurtma qayta ochilmaydi.
   async updateStatus(id: string, dto: UpdateOrderStatusDto): Promise<Order> {
     const order = await this.orders.findOne({ where: { id } });
     if (!order) throw new NotFoundException('Buyurtma topilmadi');
+    // DTO ham tekshiradi — servis boshqa joydan chaqirilsa ham himoya bo'lsin
+    if (!(SETTABLE_ORDER_STATUSES as string[]).includes(dto.status)) {
+      throw new BadRequestException('Noto‘g‘ri buyurtma holati');
+    }
+    if (!canChangeOrderStatus(order.status, dto.status)) {
+      throw new BadRequestException('Yopilgan buyurtma holatini o‘zgartirib bo‘lmaydi');
+    }
 
     order.status = dto.status;
     if (dto.status === OrderStatus.Ready) {
@@ -529,32 +703,32 @@ export class OrdersService {
     }
 
     // Chegirma/xizmat foizini buyurtmaga saqlaymiz — bo'lib to'lashda total barqaror qoladi
-    if (dto.discountPercent != null) order.discountPercent = dto.discountPercent;
-    if (dto.serviceFeePercent != null) order.servicePercent = dto.serviceFeePercent;
+    if (dto.discountPercent != null) order.discountPercent = clampPercent(dto.discountPercent);
+    if (dto.serviceFeePercent != null) order.servicePercent = clampPercent(dto.serviceFeePercent);
 
-    const subtotal = (order.items || []).reduce(
-      (s, it) => s + Number(it.price) * Number(it.quantity),
-      0,
+    // Summalar — yagona manba shared/money: har qator butun so'mga yaxlitlanadi, chegirma va
+    // xizmat haqi subtotal'dan. Shu sababli kg taomlarda ham "Qoldi 0" bo'lib hisob yopilmay
+    // qolmaydi (2.2 kg × 55 000 = 121 000, 121000.00000000001 emas).
+    const totals = calcOrderTotals(
+      order.items || [],
+      order.discountPercent,
+      order.servicePercent,
     );
-    const discountPercent = Number(order.discountPercent) || 0;
-    const serviceFeePercent = Number(order.servicePercent) || 0;
-    const discountAmount = Math.round((subtotal * discountPercent) / 100);
-    const serviceFeeAmount = Math.round((subtotal * serviceFeePercent) / 100);
-    const total = subtotal - discountAmount + serviceFeeAmount;
+    const total = totals.total;
 
     // Oldingi to'lovlar (bo'lib to'lash) — qolgan summani hisoblaymiz
     const priorPayments = await this.payments.find({
       where: { orderId: order.id },
       order: { createdAt: 'ASC' },
     });
-    const priorPaid = priorPayments.reduce((s, p) => s + Number(p.amount), 0);
-    const remaining = Math.max(0, total - priorPaid);
+    const priorPaid = sumPayments(priorPayments);
+    const remaining = remainingAmount(total, priorPaid);
     if (remaining <= 0) {
       throw new BadRequestException('Hisob allaqachon to‘langan');
     }
-    // To'lov summasi: berilmasa — qolgan summa; berilsa — qolgandan oshmaydi
+    // To'lov summasi (butun so'm): berilmasa — qolgan summa; berilsa — qolgandan oshmaydi
     const payAmount =
-      dto.amount != null ? Math.min(Math.round(dto.amount), remaining) : remaining;
+      dto.amount != null ? Math.min(roundSum(dto.amount), remaining) : remaining;
     if (payAmount <= 0) {
       throw new BadRequestException('To‘lov summasi noto‘g‘ri');
     }
@@ -569,18 +743,20 @@ export class OrdersService {
     let fiscalNumber: string | undefined;
     let fiscalQr: string | undefined;
     let newPaymentId = '';
+    let newPaymentAt = '';
     const fiscalEnabled = process.env.FISCAL_ENABLED !== 'false';
 
     await this.dataSource.transaction(async (manager) => {
       const savedPayment = await manager.save(
         manager.create(PaymentEntity, {
           orderId: order.id,
-          amount: payAmount,
+          amount: payAmount, // butun so'm
           type: dto.type,
           cashierId,
         }),
       );
       newPaymentId = savedPayment.id;
+      newPaymentAt = isoOf(savedPayment.createdAt);
       // chegirma/xizmat persistini saqlaymiz
       await manager.save(order);
 
@@ -624,16 +800,25 @@ export class OrdersService {
       ...priorPayments.map((p) => ({
         id: p.id,
         type: p.type,
-        amount: Number(p.amount),
-        createdAt: p.createdAt?.toISOString?.() ?? String(p.createdAt),
+        amount: roundSum(p.amount),
+        createdAt: isoOf(p.createdAt),
       })),
-      { id: newPaymentId, type: dto.type, amount: payAmount, createdAt: new Date().toISOString() },
+      {
+        id: newPaymentId,
+        type: dto.type,
+        amount: payAmount,
+        createdAt: newPaymentAt || new Date().toISOString(),
+      },
     ];
 
+    // To'lov javobida order.total — YAKUNIY summa (chegirma/xizmat bilan), qolgan joylarda
+    // DTO total = subtotal (qatorlar yig'indisi)
     const dtoOut = this.toDto(order, table?.number);
-    dtoOut.subtotal = subtotal;
-    dtoOut.discountPercent = discountPercent;
-    dtoOut.servicePercent = serviceFeePercent;
+    dtoOut.subtotal = totals.subtotal;
+    dtoOut.discountPercent = totals.discountPercent;
+    dtoOut.discountAmount = totals.discountAmount;
+    dtoOut.servicePercent = totals.servicePercent;
+    dtoOut.serviceAmount = totals.serviceAmount;
     dtoOut.total = total;
     dtoOut.paidAmount = newPaid;
 
@@ -649,18 +834,19 @@ export class OrdersService {
       hall: table?.hall ?? null,
       waiterName: waiter?.name,
       cashierName: cashier?.name,
+      // Chek qatorlari yig'indisi = subtotal (har qator lineSum bilan yaxlitlangan)
       lines: (order.items || []).map((it) => ({
         name: it.menuItemName,
         quantity: Number(it.quantity),
         price: Number(it.price),
-        sum: Number(it.price) * Number(it.quantity),
+        sum: lineSum(it.price, it.quantity),
         unit: it.unit ?? MenuUnit.Piece,
       })),
-      subtotal,
-      discountPercent,
-      discountAmount,
-      serviceFeePercent,
-      serviceFeeAmount,
+      subtotal: totals.subtotal,
+      discountPercent: totals.discountPercent,
+      discountAmount: totals.discountAmount,
+      serviceFeePercent: totals.servicePercent,
+      serviceFeeAmount: totals.serviceAmount,
       total,
       paymentType: dto.type,
       payments: allPayments.map((p) => ({ type: p.type, amount: p.amount })),
@@ -684,28 +870,27 @@ export class OrdersService {
       throw new BadRequestException('Yopilgan chek to‘lovini o‘chirib bo‘lmaydi');
     }
     await this.payments.delete({ id: paymentId, orderId });
-    const remaining = await this.payments.find({ where: { orderId }, order: { createdAt: 'ASC' } });
-    const paidAmount = remaining.reduce((s, p) => s + Number(p.amount), 0);
+    const rest = await this.payments.find({ where: { orderId } });
     const table = await this.tables.findOne({ where: { id: order.tableId } });
     const dtoOut = this.toDto(order, table?.number);
-    dtoOut.paidAmount = paidAmount;
+    dtoOut.paidAmount = sumPayments(rest);
     this.gateway.emitOrderUpdated(dtoOut);
     return dtoOut;
   }
 
-  // Buyurtma to'lovlari ro'yxati (bo'lib to'lash uchun)
+  // Buyurtma to'lovlari ro'yxati (bo'lib to'lash uchun) — summalar butun so'mda
   async getPayments(orderId: string) {
     const rows = await this.payments.find({ where: { orderId }, order: { createdAt: 'ASC' } });
     return rows.map((p) => ({
       id: p.id,
       type: p.type,
-      amount: Number(p.amount),
-      createdAt: p.createdAt?.toISOString?.() ?? String(p.createdAt),
+      amount: roundSum(p.amount),
+      createdAt: isoOf(p.createdAt),
     }));
   }
 
-  // Vozvrat — to'langan (yopilgan) chekni qaytarish. Faqat Direktor/Administrator
-  // (ruxsat controllerda RolesGuard bilan tekshiriladi). Sabab jurnalga yoziladi.
+  // Vozvrat — to'langan (yopilgan) chekni qaytarish. Faqat 'refund' ruxsati bor xodim
+  // (controllerda tekshiriladi; Direktor/SuperAdmin avtomatik ega). Sabab jurnalga yoziladi.
   async refund(
     id: string,
     reason: string,
@@ -744,11 +929,11 @@ export class OrdersService {
     return dto;
   }
 
+  // Entity -> shared Order. Bu DTO'da total = subtotal = qatorlar yig'indisi (Σ lineSum,
+  // chegirma/xizmatsiz) — kassa ekrani foizlarni o'zi qo'shadi. Yakuniy summa
+  // (chegirma/xizmat bilan) faqat to'lov javobi va chekda qaytadi.
   private toDto(o: OrderEntity, tableNumber?: number): Order {
-    const total = (o.items || []).reduce(
-      (sum, it) => sum + Number(it.price) * Number(it.quantity),
-      0,
-    );
+    const subtotal = calcOrderTotals(o.items || []).subtotal;
     return {
       id: o.id,
       tableId: o.tableId,
@@ -763,7 +948,8 @@ export class OrdersService {
       discountPercent: Number(o.discountPercent) || 0,
       servicePercent: Number(o.servicePercent) || 0,
       tableNumber,
-      total,
+      subtotal,
+      total: subtotal,
       refunded: o.refunded ?? false,
       refundReason: o.refundReason ?? null,
       refundedAt: o.refundedAt ? o.refundedAt.toISOString() : null,
@@ -783,6 +969,44 @@ export class OrdersService {
         exciseCode: it.exciseCode,
       })),
     };
+  }
+
+  // Xodim ismi (bo'lim cheki / DTO uchun). id bo'sh bo'lsa — null
+  // (TypeORM where:{id: undefined} birinchi foydalanuvchini qaytarib yuboradi).
+  private async userName(id: string | null | undefined): Promise<string | null> {
+    if (!id) return null;
+    const user = await this.users.findOne({ where: { id } });
+    return user?.name ?? null;
+  }
+
+  // Bo'lim (oshxona/bar...) printerlariga yangi taomlar cheki — FONDA ishlaydi: HTTP javobni
+  // kutdirmaydi va hech qachon xato tashlamaydi. Chiqmagan har bir bo'lim cheki uchun
+  // 'print:failed' hodisasi hammaga yuboriladi (kassa ogohlantirish ko'rsatadi).
+  private printStationTickets(params: PrintNewItemsParams): void {
+    if (params.items.length === 0) return;
+    // setImmediate — javob avval jo'natilsin, chop etish undan keyin boshlansin
+    setImmediate(() => {
+      Promise.resolve()
+        .then(() => this.stationPrint.printNewItems(params))
+        .then((results) => {
+          // Xatolar StationPrintService'ning o'zida jurnalga yoziladi — bu yerda faqat xabar beramiz
+          for (const r of results ?? []) {
+            if (r.ok) continue;
+            this.gateway.emitPrintFailed({
+              orderId: params.order.id,
+              tableNumber: params.tableNumber,
+              station: r.station,
+              host: r.host,
+              message: r.message,
+            });
+          }
+        })
+        .catch((e) => {
+          this.logger.error(
+            `Bo‘lim cheklarini chop etishda kutilmagan xato: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        });
+    });
   }
 
   // Aksiz kodlarini saqlash (TZ F-8.6/8.8) — kassa skaner orqali kiritadi

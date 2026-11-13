@@ -1,6 +1,16 @@
 import { useState } from 'react';
 import { getServerUrl } from '../lib/config';
+import { api, ApiError } from '../lib/api';
 import logo from '../assets/logo.png';
+
+/** Server aktivatsiyani bulut (litsenziya serveri) orqali tekshiradi (~8 s) — biz biroz ko'proq kutamiz */
+const ACTIVATE_TIMEOUT_MS = 20_000;
+
+interface ActivateResponse {
+  ok?: boolean;
+  status?: string;
+  message?: string;
+}
 
 const MESSAGES: Record<string, { title: string; text: string; canActivate: boolean }> = {
   not_activated: {
@@ -37,28 +47,35 @@ export function ActivationScreen({ status, onActivated }: { status: string; onAc
   const [error, setError] = useState('');
 
   async function activate() {
+    if (busy) return;
     setBusy(true);
     setError('');
     try {
-      const r = await fetch(getServerUrl() + '/license/activate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: key.trim() }),
-      });
-      const data = await r.json();
-      if (data.ok || data.status === 'active') {
+      // POST <server>/api/license/activate (ochiq marshrut) — umumiy API klienti orqali (timeout bilan)
+      const data = await api.post<ActivateResponse>(
+        '/license/activate',
+        { key: key.trim() },
+        { timeoutMs: ACTIVATE_TIMEOUT_MS },
+      );
+      if (data?.ok || data?.status === 'active') {
         onActivated();
       } else {
         setError(
-          data.status === 'conflict'
+          data?.status === 'conflict'
             ? 'Bu kalit boshqa qurilmada faollashtirilgan.'
-            : data.status === 'suspended'
+            : data?.status === 'suspended'
               ? 'Litsenziya bloklangan.'
-              : data.message || 'Kalit noto‘g‘ri.',
+              : data?.message || 'Kalit noto‘g‘ri.',
         );
       }
-    } catch {
-      setError('Serverga ulanib bo‘lmadi. Internet/serverni tekshiring.');
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 0) {
+        setError('Server javob bermadi — internetni tekshirib, qayta urinib ko‘ring.');
+      } else if (e instanceof ApiError) {
+        setError(e.message || 'Faollashtirib bo‘lmadi.');
+      } else {
+        setError('Serverga ulanib bo‘lmadi. Kassa kompyuteri va tarmoqni tekshiring.');
+      }
     } finally {
       setBusy(false);
     }

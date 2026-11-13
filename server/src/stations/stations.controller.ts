@@ -3,6 +3,8 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
@@ -20,6 +22,10 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { UserRole } from '@hardweb-pos/shared';
+import {
+  StationPrintResult,
+  StationPrintService,
+} from '../printing/station-print.service';
 
 class StationDto {
   @IsString() name: string;
@@ -44,6 +50,7 @@ export class StationsController {
   constructor(
     @InjectRepository(StationEntity)
     private readonly stations: Repository<StationEntity>,
+    private readonly stationPrint: StationPrintService,
   ) {}
 
   // O'qish — har qanday tizimga kirgan foydalanuvchi (ofitsiant chek yo'naltirishi uchun)
@@ -58,6 +65,16 @@ export class StationsController {
   @Post()
   create(@Body() dto: StationDto) {
     return this.stations.save(this.stations.create(dto));
+  }
+
+  // Bo'lim printerini sinash — "SINOV CHEKI" chiqaradi va natijani qaytaradi.
+  // Natija doim 200: printer ishlamasa ham (ok:false + sabab), bo'lim topilmasa ham.
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.Admin, UserRole.Director, UserRole.SuperAdmin)
+  @Post(':id/test-print')
+  @HttpCode(HttpStatus.OK)
+  testPrint(@Param('id') id: string): Promise<StationPrintResult> {
+    return this.stationPrint.testPrint(id);
   }
 
   @UseGuards(RolesGuard)

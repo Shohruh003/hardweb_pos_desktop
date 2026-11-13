@@ -1,34 +1,9 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import {
-  CategoryEntity,
-  MenuItemEntity,
-  OrderEntity,
-  OrderItemEntity,
-  PaymentEntity,
-  ProductEntity,
-  RecipeItemEntity,
-  StationEntity,
-  TableEntity,
-  UserEntity,
-} from '../entities';
 import { SeedService } from './seed.service';
 
+// SeedService faqat DataSource (global) bilan ishlaydi: barcha yozuvlar bitta tranzaksiyada
+// tranzaksiya menejeri orqali bajariladi, shuning uchun forFeature repozitoriylari kerak emas.
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([
-      UserEntity,
-      TableEntity,
-      CategoryEntity,
-      MenuItemEntity,
-      OrderEntity,
-      OrderItemEntity,
-      PaymentEntity,
-      ProductEntity,
-      RecipeItemEntity,
-      StationEntity,
-    ]),
-  ],
   providers: [SeedService],
 })
 export class SeedModule {}

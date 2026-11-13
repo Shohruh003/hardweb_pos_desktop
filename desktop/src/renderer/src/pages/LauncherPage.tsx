@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { hasCapability } from '@hardweb-pos/shared';
 import { useAuth } from '../state/auth';
 import { useAppNav } from '../state/appNav';
@@ -6,15 +7,17 @@ import { useI18n } from '../state/i18n';
 import { Button } from '../components/ui';
 import { ThemeLangControls } from '../components/ThemeLangControls';
 import { WaiterQrModal } from '../components/WaiterQrModal';
+import ChangePasswordModal from '../components/ChangePasswordModal';
 
 const MANAGE_CAPS = ['history', 'menu', 'tables', 'staff', 'devices', 'settings'];
 
 // Kirgandan keyingi bosh sahifa — faqat ruxsat berilgan modullar plitka bo'lib chiqadi.
 export function LauncherPage() {
-  const { user, logout } = useAuth();
+  const { user, logout, updateUser } = useAuth();
   const { open } = useAppNav();
   const { t } = useI18n();
   const [qrOpen, setQrOpen] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
   const [webAvailable, setWebAvailable] = useState(false);
 
   useEffect(() => {
@@ -48,6 +51,21 @@ export function LauncherPage() {
             <div className="text-sm font-semibold">{user?.name}</div>
             <div className="text-xs text-muted">{t(`role.${user?.role ?? ''}`, user?.role)}</div>
           </div>
+          {/* Faqat login/parol bilan kiradigan xodim (PIN'li xodimda parol yo'q) */}
+          {user?.hasPassword && (
+            <Button
+              variant="ghost"
+              onClick={() => setPasswordOpen(true)}
+              title="Parolni o‘zgartirish"
+              aria-label="Parolni o‘zgartirish"
+              className="px-2 sm:px-3 flex items-center gap-1.5"
+            >
+              <span className="text-lg leading-none" aria-hidden>
+                🔑
+              </span>
+              <span className="hidden md:inline">Parol</span>
+            </Button>
+          )}
           <Button variant="ghost" onClick={logout} className="px-2 sm:px-4">
             <span className="hidden sm:inline">{t('common.logout')}</span>
             <span className="sm:hidden text-lg">⎋</span>
@@ -90,6 +108,17 @@ export function LauncherPage() {
       </div>
 
       {qrOpen && <WaiterQrModal onClose={() => setQrOpen(false)} />}
+      {/* body'ga portal: header'dagi glass (backdrop-filter) "fixed" oynani ekranga emas, o'ziga bog'lab qo'yadi */}
+      {passwordOpen &&
+        createPortal(
+          <ChangePasswordModal
+            onClose={() => setPasswordOpen(false)}
+            onChanged={(changed) => {
+              if (user) updateUser({ ...user, ...changed });
+            }}
+          />,
+          document.body,
+        )}
     </div>
   );
 }

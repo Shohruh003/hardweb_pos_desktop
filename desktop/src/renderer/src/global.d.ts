@@ -21,10 +21,11 @@ export interface PrintResult {
   message: string;
 }
 
-// preload (contextBridge) orqali ochilgan API
+// preload (contextBridge) orqali ochilgan API. Faqat Electron oynasida bor — telefon/brauzerda
+// (http://<kassa-IP>:8080) yo'q, shuning uchun ixtiyoriy: har chaqiriq `window.hardweb?.` bilan.
 declare global {
   interface Window {
-    hardweb: {
+    hardweb?: {
       platform: string;
       version: string;
       showKeyboard: () => Promise<{ ok: boolean }>;

@@ -1,0 +1,2 @@
+# Windows .bat skriptlari doim CRLF bilan chiqsin (LF bilan cmd.exe ularni buzib o‘qishi mumkin)
+*.bat text eol=crlf

@@ -1,6 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 
 import {
@@ -25,72 +24,111 @@ import {
   UserRole,
 } from '@hardweb-pos/shared';
 
-// Dev rejimda boshlang'ich ma'lumotlar (SEED_ON_START=true bo'lsa).
-// Prezentatsiya uchun "to'la" ko'rinishi kerak — ko'p menyu, stollar,
-// bir necha ofitsiant va ~80 ta tarixiy buyurtma generatsiya qilinadi.
+/** Real rejimdagi yagona boshlang'ich foydalanuvchi (parol vaqtinchalik — birinchi kirishda almashtiriladi) */
+const REAL_DIRECTOR = { name: 'Direktor', login: 'direktor', password: '1234' };
+/** Demo xodimlarning umumiy paroli */
+const DEMO_PASSWORD = '1234';
+const BCRYPT_COST = 10;
+
+/** SEED_DEMO=false — real restoran (toza baza); boshqa har qanday qiymat yoki yo'q — demo */
+function isRealMode(): boolean {
+  return (process.env.SEED_DEMO ?? '').trim().toLowerCase() === 'false';
+}
+
+// Boshlang'ich ma'lumotlar (SEED_ON_START=true bo'lsa, faqat bo'sh bazada).
+//  • Real rejim (SEED_DEMO=false): FAQAT Direktor (login: direktor, vaqtinchalik parol: 1234,
+//    birinchi kirishda almashtiriladi). Stol, bo'lim, menyu, sklad, buyurtma — yo'q: restoran
+//    o'zinikini kiritadi.
+//  • Demo rejim: prezentatsiya uchun "to'la" ko'rinish — ko'p menyu, stollar, bir necha
+//    ofitsiant, sklad + retseptlar, ~80 ta tarixiy va 6 ta faol buyurtma.
+// Hammasi BITTA tranzaksiyada: yarim yo'lda xato bo'lsa hech narsa yozilmaydi va keyingi
+// ishga tushishda seed qaytadan toza bajariladi.
 @Injectable()
 export class SeedService implements OnModuleInit {
   private readonly logger = new Logger('Seed');
 
-  constructor(
-    @InjectRepository(UserEntity)
-    private readonly users: Repository<UserEntity>,
-    @InjectRepository(TableEntity)
-    private readonly tables: Repository<TableEntity>,
-    @InjectRepository(CategoryEntity)
-    private readonly categories: Repository<CategoryEntity>,
-    @InjectRepository(MenuItemEntity)
-    private readonly menuItems: Repository<MenuItemEntity>,
-    @InjectRepository(OrderEntity)
-    private readonly orders: Repository<OrderEntity>,
-    @InjectRepository(PaymentEntity)
-    private readonly payments: Repository<PaymentEntity>,
-    @InjectRepository(ProductEntity)
-    private readonly products: Repository<ProductEntity>,
-    @InjectRepository(RecipeItemEntity)
-    private readonly recipeItems: Repository<RecipeItemEntity>,
-    @InjectRepository(StationEntity)
-    private readonly stations: Repository<StationEntity>,
-    private readonly dataSource: DataSource,
-  ) {}
+  constructor(private readonly dataSource: DataSource) {}
 
   async onModuleInit() {
     if (process.env.SEED_ON_START !== 'true') return;
+    const real = isRealMode();
 
-    const userCount = await this.users.count();
-    if (userCount > 0) {
+    const seeded = await this.dataSource.transaction(async (manager) => {
+      // Idempotent: kamida bitta foydalanuvchi bo'lsa — baza ishlatilmoqda, tegmaymiz
+      if ((await manager.count(UserEntity)) > 0) return false;
+      if (real) await this.seedReal(manager);
+      else await this.seedDemo(manager);
+      return true;
+    });
+
+    if (!seeded) {
       this.logger.log('Ma’lumotlar mavjud — seed o‘tkazib yuborildi');
+      if (real) await this.warnIfDemoData();
       return;
     }
 
-    this.logger.log('Boshlang‘ich ma’lumotlar yuklanmoqda...');
-
-    const staff = await this.seedUsers();
-    const tables = await this.seedTables();
-    const stations = await this.seedStations();
-    const menu = await this.seedMenu(stations);
-    await this.seedInventory(menu);
-    // Demo buyurtmalar/tarix — faqat demo rejimda (real restoranda toza start + tez).
-    if (process.env.SEED_DEMO !== 'false') {
-      await this.seedHistory(staff, tables, menu);
-      await this.seedActiveOrders(staff, tables, menu);
+    if (real) {
+      this.logger.log(
+        `Real rejim: faqat Direktor yaratildi (login: ${REAL_DIRECTOR.login}, vaqtinchalik parol: ${REAL_DIRECTOR.password} — birinchi kirishda almashtiriladi)`,
+      );
+    } else {
+      this.logger.log(
+        `Seed tayyor. Login: ofitsiant/oshpaz/kassir/admin/direktor — parol: ${DEMO_PASSWORD}`,
+      );
     }
+  }
 
-    this.logger.log(
-      'Seed tayyor. Login: ofitsiant/oshpaz/kassir/admin/direktor — parol: 1234',
+  // ---- Real rejim: faqat Direktor ----
+  private async seedReal(manager: EntityManager) {
+    const passwordHash = await bcrypt.hash(REAL_DIRECTOR.password, BCRYPT_COST);
+    await manager.save(
+      manager.create(UserEntity, {
+        name: REAL_DIRECTOR.name,
+        role: UserRole.Director,
+        login: REAL_DIRECTOR.login,
+        pin: null,
+        passwordHash,
+        active: true,
+        permissions: null,
+        mustChangePassword: true,
+      }),
     );
   }
 
+  // Real rejimda eski demo baza qolib ketgan bo'lsa (oldingi o'rnatishdan) — logda ogohlantiramiz
+  private async warnIfDemoData() {
+    const demoVendor = await this.dataSource
+      .getRepository(UserEntity)
+      .findOne({ where: { login: 'superadmin', name: 'Super Admin (vendor)' } });
+    if (demoVendor) {
+      this.logger.warn(
+        'Diqqat: bazada demo ma’lumotlar topildi (demo xodimlar, menyu, buyurtmalar). Real ish uchun toza baza bilan boshlang.',
+      );
+    }
+  }
+
+  // ---- Demo rejim: to'liq prezentatsiya ma'lumotlari ----
+  private async seedDemo(manager: EntityManager) {
+    this.logger.log('Boshlang‘ich (demo) ma’lumotlar yuklanmoqda...');
+    const staff = await this.seedUsers(manager);
+    const tables = await this.seedTables(manager);
+    const stations = await this.seedStations(manager);
+    const menu = await this.seedMenu(manager, stations);
+    await this.seedInventory(manager, menu);
+    await this.seedHistory(manager, staff, tables, menu);
+    await this.seedActiveOrders(manager, staff, tables, menu);
+  }
+
   // ---- Xodimlar (bir nechta ofitsiant — filtrlar chiroyli ko'rinishi uchun) ----
-  private async seedUsers() {
-    const passwordHash = await bcrypt.hash('1234', 10);
+  private async seedUsers(manager: EntityManager) {
+    const passwordHash = await bcrypt.hash(DEMO_PASSWORD, BCRYPT_COST);
     // Har rol uchun standart ruxsatlar (capabilities). Direktor/SuperAdmin — barchasi avtomatik.
     const W = ['waiter'];
     const K = ['kitchen'];
     const C = ['cashier', 'history', 'revenue'];
     const A = ['history', 'reports', 'menu', 'inventory', 'stations', 'tables', 'staff', 'devices', 'terminals', 'settings', 'refund', 'cashier'];
-    // Har bir xodim UNIKAL 4 xonali PIN bilan kiradi
-    const rows = await this.users.save([
+    // Har bir xodim UNIKAL 4 xonali PIN bilan kiradi (demo parollarini almashtirish shart emas)
+    const rows = await manager.getRepository(UserEntity).save([
       { name: 'Aziz Karimov', role: UserRole.Waiter, login: 'ofitsiant', pin: '1111', passwordHash, active: true, permissions: W },
       { name: 'Kamola Yusupova', role: UserRole.Waiter, login: 'kamola', pin: '2222', passwordHash, active: true, permissions: W },
       { name: 'Jasur Rahimov', role: UserRole.Waiter, login: 'jasur', pin: '3333', passwordHash, active: true, permissions: W },
@@ -109,18 +147,18 @@ export class SeedService implements OnModuleInit {
   }
 
   // ---- Stollar (3 zal) ----
-  private async seedTables() {
+  private async seedTables(manager: EntityManager) {
     const rows: Partial<TableEntity>[] = [];
     let n = 1;
     for (; n <= 10; n++) rows.push({ number: n, hall: 'Asosiy zal', capacity: 4, status: TableStatus.Free });
     for (; n <= 16; n++) rows.push({ number: n, hall: 'VIP zal', capacity: 6, status: TableStatus.Free });
     for (; n <= 24; n++) rows.push({ number: n, hall: 'Yozgi terrasa', capacity: 4, status: TableStatus.Free });
-    return this.tables.save(rows);
+    return manager.getRepository(TableEntity).save(rows);
   }
 
   // ---- Bo'limlar (sexlar) ----
-  private async seedStations() {
-    return this.stations.save([
+  private async seedStations(manager: EntityManager) {
+    return manager.getRepository(StationEntity).save([
       { name: 'Oshxona', printerHost: '', printerPort: 9100, printerWidth: 48, sortOrder: 1 },
       { name: 'Bar', printerHost: '', printerPort: 9100, printerWidth: 48, sortOrder: 2 },
       { name: 'Somsaxona', printerHost: '', printerPort: 9100, printerWidth: 48, sortOrder: 3 },
@@ -129,9 +167,9 @@ export class SeedService implements OnModuleInit {
   }
 
   // ---- Menyu (6 kategoriya, ~36 taom) ----
-  private async seedMenu(stations: StationEntity[]) {
+  private async seedMenu(manager: EntityManager, stations: StationEntity[]) {
     const [milliy, issiq, salat, fastfud, shirinlik, ichimlik] =
-      await this.categories.save([
+      await manager.getRepository(CategoryEntity).save([
         { name: 'Milliy taomlar', sortOrder: 1 },
         { name: 'Issiq taomlar', sortOrder: 2 },
         { name: 'Salatlar', sortOrder: 3 },
@@ -187,7 +225,7 @@ export class SeedService implements OnModuleInit {
       // Aksizli — kassada kodi skanerlanishi shart (TZ F-8.5)
       { name: 'Pivo 0.5', price: 22000, categoryId: ichimlik.id, exciseRequired: true },
     ];
-    // Har taomни bo'limga biriktiramiz (ichimlik->Bar, somsa->Somsaxona,
+    // Har taomni bo'limga biriktiramiz (ichimlik->Bar, somsa->Somsaxona,
     // pirog/tort->Novvoyxona, qolgani->Oshxona)
     const stById = (name: string) => stations.find((s) => s.name === name)?.id ?? null;
     const oshxona = stById('Oshxona');
@@ -204,7 +242,7 @@ export class SeedService implements OnModuleInit {
     const favNames = new Set([
       'Osh (palov)', 'Lag‘mon', 'Shashlik (mol)', 'Somsa (tandir)', 'Coca-Cola 0.5', 'Choy',
     ]);
-    return this.menuItems.save(
+    return manager.getRepository(MenuItemEntity).save(
       items.map((i) => ({
         available: true,
         exciseRequired: false,
@@ -216,9 +254,9 @@ export class SeedService implements OnModuleInit {
   }
 
   // ---- Sklad (ombor): mahsulotlar + bir necha taom retsepti ----
-  private async seedInventory(menu: MenuItemEntity[]) {
+  private async seedInventory(manager: EntityManager, menu: MenuItemEntity[]) {
     const P = ProductUnit;
-    const products = await this.products.save([
+    const products = await manager.getRepository(ProductEntity).save([
       { name: 'Guruch', unit: P.Kg, stock: 50, minStock: 10 },
       { name: 'Go‘sht (mol)', unit: P.Kg, stock: 30, minStock: 8 },
       { name: 'Sabzi', unit: P.Kg, stock: 25, minStock: 5 },
@@ -251,18 +289,21 @@ export class SeedService implements OnModuleInit {
         rows.push({ menuItemId: d.id, productId: prod(pname), amount });
       }
     }
-    if (rows.length) await this.recipeItems.save(rows);
+    if (rows.length) await manager.getRepository(RecipeItemEntity).save(rows);
     this.logger.log(`Sklad: ${products.length} mahsulot, ${rows.length} retsept qatori`);
   }
 
   // ---- Tarix: ~80 ta yopilgan buyurtma (oxirgi ~20 kun) ----
   private async seedHistory(
+    manager: EntityManager,
     staff: { waiters: UserEntity[]; cashier: UserEntity },
     tables: TableEntity[],
     menu: MenuItemEntity[],
   ) {
     const COUNT = 80;
     const payTypes = [PaymentType.Cash, PaymentType.Card, PaymentType.QR];
+    const orders = manager.getRepository(OrderEntity);
+    const payments = manager.getRepository(PaymentEntity);
     const timeUpdates: { id: string; opened: Date; closed: Date }[] = [];
 
     for (let i = 0; i < COUNT; i++) {
@@ -272,7 +313,7 @@ export class SeedService implements OnModuleInit {
       const chosen = sample(menu, itemCount);
 
       const items = chosen.map((mi) =>
-        this.dataSource.manager.create(OrderItemEntity, {
+        manager.create(OrderItemEntity, {
           menuItemId: mi.id,
           menuItemName: mi.name,
           price: Number(mi.price),
@@ -292,8 +333,8 @@ export class SeedService implements OnModuleInit {
       opened.setHours(11 + Math.floor(Math.random() * 12), Math.floor(Math.random() * 60), 0, 0);
       const closed = new Date(opened.getTime() + (20 + Math.floor(Math.random() * 70)) * 60000);
 
-      const order = await this.orders.save(
-        this.orders.create({
+      const order = await orders.save(
+        orders.create({
           tableId: table.id,
           waiterId: waiter.id,
           status: OrderStatus.Closed,
@@ -303,8 +344,8 @@ export class SeedService implements OnModuleInit {
       );
       timeUpdates.push({ id: order.id, opened, closed });
 
-      await this.payments.save(
-        this.payments.create({
+      await payments.save(
+        payments.create({
           orderId: order.id,
           amount: total,
           type: pick(payTypes),
@@ -313,23 +354,33 @@ export class SeedService implements OnModuleInit {
       );
     }
 
-    // openedAt @CreateDateColumn bo'lgani uchun insertda "hozir" bo'ladi —
-    // tarix chiroyli taqsimlanishi uchun orqaga suramiz.
+    // openedAt/createdAt @CreateDateColumn bo'lgani uchun insertda "hozir" bo'ladi —
+    // tarix chiroyli taqsimlanishi uchun orqaga suramiz: buyurtma ochilgan/yopilgan vaqt
+    // va to'lov vaqti (= yopilgan vaqt, aks holda "bugungi tushum" sun'iy oshib ketadi).
+    // Format TypeORM bilan bir xil (UTC 'YYYY-MM-DD HH:MM:SS.SSS') — sana filtrlari to'g'ri ishlaydi.
     for (const u of timeUpdates) {
-      await this.orders.query(
-        'UPDATE orders SET opened_at = ?, closed_at = ? WHERE id = ?',
-        [u.opened.toISOString(), u.closed.toISOString(), u.id],
-      );
+      await manager.query('UPDATE orders SET opened_at = ?, closed_at = ? WHERE id = ?', [
+        toDbDatetime(u.opened),
+        toDbDatetime(u.closed),
+        u.id,
+      ]);
+      await manager.query('UPDATE payments SET created_at = ? WHERE order_id = ?', [
+        toDbDatetime(u.closed),
+        u.id,
+      ]);
     }
     this.logger.log(`Tarix: ${COUNT} ta yopilgan buyurtma yaratildi`);
   }
 
   // ---- Faol buyurtmalar (KDS/kassa demo uchun) ----
   private async seedActiveOrders(
+    manager: EntityManager,
     staff: { waiters: UserEntity[]; cashier: UserEntity },
     tables: TableEntity[],
     menu: MenuItemEntity[],
   ) {
+    const orders = manager.getRepository(OrderEntity);
+    const tableRepo = manager.getRepository(TableEntity);
     const statuses = [OrderStatus.Accepted, OrderStatus.Cooking, OrderStatus.Ready];
     const busyTables = sample(tables, 6);
     for (let i = 0; i < busyTables.length; i++) {
@@ -345,7 +396,7 @@ export class SeedService implements OnModuleInit {
             : OrderItemStatus.Pending;
 
       const items = chosen.map((mi) =>
-        this.dataSource.manager.create(OrderItemEntity, {
+        manager.create(OrderItemEntity, {
           menuItemId: mi.id,
           menuItemName: mi.name,
           price: Number(mi.price),
@@ -356,11 +407,11 @@ export class SeedService implements OnModuleInit {
           exciseCode: null,
         }),
       );
-      await this.orders.save(
-        this.orders.create({ tableId: table.id, waiterId: waiter.id, status, items }),
+      await orders.save(
+        orders.create({ tableId: table.id, waiterId: waiter.id, status, items }),
       );
       table.status = TableStatus.Busy;
-      await this.tables.save(table);
+      await tableRepo.save(table);
     }
     this.logger.log(`Faol: ${busyTables.length} ta buyurtma (KDS demo)`);
   }
@@ -382,4 +433,8 @@ function randomExcise(): string {
   let s = '';
   for (let i = 0; i < 16; i++) s += Math.floor(Math.random() * 10);
   return s;
+}
+// TypeORM (better-sqlite3) Date'ni shu formatda yozadi: UTC 'YYYY-MM-DD HH:MM:SS.SSS'
+function toDbDatetime(d: Date): string {
+  return d.toISOString().replace('T', ' ').replace('Z', '');
 }

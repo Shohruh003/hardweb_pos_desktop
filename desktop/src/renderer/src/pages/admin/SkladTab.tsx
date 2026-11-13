@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
-import { Product, ProductUnit, Purchase } from '@hardweb-pos/shared';
+import { useEffect, useRef, useState } from 'react';
+import { Product, ProductUnit, Purchase, roundSum } from '@hardweb-pos/shared';
 import { Button, formatSum } from '../../components/ui';
 import { Select } from '../../components/Select';
 import { Modal } from '../../components/Modal';
+import { FeedbackModal } from '../../components/FeedbackModal';
+import { cleanDecimalInput, cleanDigitsInput, formatQty, parseDecimal } from '../../components/numeric';
 import { api } from '../../lib/api';
 import { useConfirm } from '../../state/confirm';
 
@@ -19,12 +21,18 @@ function num(n: number): string {
   return Number(n).toLocaleString('uz-UZ', { maximumFractionDigits: 3 });
 }
 
+// Kiritish maydonlari: miqdor — kasr (vergul ham nuqta deb o'qiladi: "1,5" = 1.5, hech qachon 15 emas),
+// pul — butun so'm (bo'shliq/vergul minglik ajratgich sifatida olib tashlanadi)
+const qtyInput = (v: string) => cleanDecimalInput(v, 3);
+const moneyInput = (v: string) => cleanDigitsInput(v);
+
 interface ProductForm {
   id?: string;
   name: string;
   unit: ProductUnit;
   stock: string;
   minStock: string;
+  origStock?: string; // tahrirlashda ochilgan paytdagi qoldiq (o'zgartirilganini aniqlash uchun)
 }
 
 // Sklad (ombor) — mahsulotlar, kirim (ta'minot) va qoldiq.
@@ -67,6 +75,26 @@ export function SkladTab() {
   const [prodOutQty, setProdOutQty] = useState('');
   const [prodIn, setProdIn] = useState<{ productId: string; qty: string }[]>([]);
   const [savingProd, setSavingProd] = useState(false);
+  // Amal xatosi (400/403/tarmoq) — jim qolmaymiz; bir vaqtda bitta amal (ikki marta bosish = ikki kirim emas)
+  const [notice, setNotice] = useState<{ title: string; subtitle?: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+
+  async function run(failTitle: string, fn: () => Promise<void>): Promise<boolean> {
+    if (busyRef.current) return false;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      await fn();
+      return true;
+    } catch (e) {
+      setNotice({ title: failTitle, subtitle: (e as Error)?.message || 'Xato' });
+      return false;
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
 
   async function load() {
     setProducts(await api.get<Product[]>('/inventory/products'));
@@ -85,27 +113,35 @@ export function SkladTab() {
     setForm({ name: '', unit: ProductUnit.Kg, stock: '', minStock: '' });
   }
   function openEdit(p: Product) {
-    setForm({ id: p.id, name: p.name, unit: p.unit, stock: String(p.stock), minStock: String(p.minStock) });
+    const stock = formatQty(p.stock);
+    setForm({ id: p.id, name: p.name, unit: p.unit, stock, minStock: formatQty(p.minStock), origStock: stock });
   }
 
   async function save() {
     if (!form || !form.name.trim()) return;
-    const body = {
-      name: form.name.trim(),
-      unit: form.unit,
-      stock: Number(form.stock) || 0,
-      minStock: Number(form.minStock) || 0,
-    };
-    if (form.id) await api.patch(`/inventory/products/${form.id}`, body);
-    else await api.post('/inventory/products', body);
-    setForm(null);
-    await load();
+    const f = form;
+    await run('Mahsulot saqlanmadi', async () => {
+      const body: Record<string, unknown> = {
+        name: f.name.trim(),
+        unit: f.unit,
+        minStock: parseDecimal(f.minStock),
+      };
+      // Tahrirlashda qoldiq faqat qo'lda o'zgartirilgan bo'lsa yuboriladi — aks holda oyna ochilgandan
+      // beri bo'lgan sotuv/kirimlar eski raqam bilan ustidan yozilib ketardi
+      if (!f.id || f.stock !== f.origStock) body.stock = parseDecimal(f.stock);
+      if (f.id) await api.patch(`/inventory/products/${f.id}`, body);
+      else await api.post('/inventory/products', body);
+      setForm(null);
+      await load();
+    });
   }
 
   async function remove(p: Product) {
     if (!(await confirm({ title: 'Mahsulotni o‘chirish', message: `"${p.name}" o‘chirilsinmi? Unga bog‘liq retseptlar ham o‘chadi.`, danger: true }))) return;
-    await api.del(`/inventory/products/${p.id}`);
-    await load();
+    await run('O‘chirilmadi', async () => {
+      await api.del(`/inventory/products/${p.id}`);
+    });
+    await load().catch(() => {});
   }
 
   // --- Kirim (ta'minot) ---
@@ -116,30 +152,37 @@ export function SkladTab() {
     setPurPrice('');
     setPurNote('');
   }
-  const purTotal = (Number(purQty) || 0) * (Number(purPrice) || 0);
+  const purTotal = parseDecimal(purQty) * (Number(purPrice) || 0);
   async function savePurchase() {
     if (!purchaseFor) return;
-    if (!(Number(purQty) > 0)) return;
-    await api.post('/inventory/purchases', {
-      productId: purchaseFor.id,
-      supplier: supplier.trim(),
-      quantity: Number(purQty),
-      unitPrice: Number(purPrice) || 0,
-      note: purNote.trim() || undefined,
+    const quantity = parseDecimal(purQty);
+    if (!(quantity > 0)) return;
+    const product = purchaseFor;
+    await run('Kirim saqlanmadi', async () => {
+      await api.post('/inventory/purchases', {
+        productId: product.id,
+        supplier: supplier.trim(),
+        quantity,
+        unitPrice: Number(purPrice) || 0,
+        note: purNote.trim() || undefined,
+      });
+      setPurchaseFor(null);
+      await load();
     });
-    setPurchaseFor(null);
-    await load();
   }
 
   // --- Chiqim (hisobdan chiqarish) ---
   async function saveWriteOff() {
     if (!writeOff) return;
-    const qty = Number(woQty);
+    const qty = parseDecimal(woQty);
     if (!(qty > 0)) return;
-    await api.post(`/inventory/products/${writeOff.id}/adjust`, { delta: -qty });
-    setWriteOff(null);
-    setWoQty('');
-    await load();
+    const product = writeOff;
+    await run('Chiqim saqlanmadi', async () => {
+      await api.post(`/inventory/products/${product.id}/adjust`, { delta: -qty });
+      setWriteOff(null);
+      setWoQty('');
+      await load();
+    });
   }
 
   async function openPurchaseHistory() {
@@ -166,11 +209,14 @@ export function SkladTab() {
     if (!payFor) return;
     const amount = Number(supPayAmount);
     if (!amount || amount <= 0) return;
-    await api.post('/inventory/supplier-payments', { supplier: payFor, amount, note: supPayNote.trim() || undefined });
-    setPayFor(null);
-    setSupPayAmount('');
-    setSupPayNote('');
-    loadSupBalances();
+    const supplierName = payFor;
+    await run('To‘lov saqlanmadi', async () => {
+      await api.post('/inventory/supplier-payments', { supplier: supplierName, amount, note: supPayNote.trim() || undefined });
+      setPayFor(null);
+      setSupPayAmount('');
+      setSupPayNote('');
+      await loadSupBalances();
+    });
   }
 
   // Sklad qoldig'ini Excel (CSV) sifatida saqlash — Excel bemalol ochadi (BOM + ; ajratgich)
@@ -191,13 +237,13 @@ export function SkladTab() {
 
   // Inventarizatsiya — kiritilgan haqiqiy qoldiqqa moslab qoldiqni to'g'rilaydi
   async function saveInventory() {
+    if (savingInv) return;
     setSavingInv(true);
     try {
       for (const p of products) {
         const raw = counts[p.id];
         if (raw === undefined || raw === '') continue;
-        const actual = Number(raw);
-        if (isNaN(actual)) continue;
+        const actual = parseDecimal(raw);
         const delta = actual - Number(p.stock);
         if (Math.abs(delta) < 0.0001) continue;
         await api.post(`/inventory/products/${p.id}/adjust`, { delta });
@@ -205,6 +251,14 @@ export function SkladTab() {
       await load();
       setInventoryMode(false);
       setCounts({});
+    } catch (e) {
+      // Bir qismi saqlangan bo'lishi mumkin — qoldiqlarni serverdan qayta olamiz. Sanoq ro'yxati
+      // saqlanadi: qayta bosilganda farq YANGI qoldiqdan hisoblanadi (ikki marta qo'shilmaydi).
+      await load().catch(() => {});
+      setNotice({
+        title: 'Inventarizatsiya to‘liq saqlanmadi',
+        subtitle: `${(e as Error)?.message || 'Xato'}. Qoldiqlar yangilandi — «To‘g‘rilash»ni qayta bosing.`,
+      });
     } finally {
       setSavingInv(false);
     }
@@ -218,17 +272,20 @@ export function SkladTab() {
   }
   async function saveReturn() {
     if (!returnFor) return;
-    const quantity = Number(retQty);
+    const quantity = parseDecimal(retQty);
     const unitPrice = Number(retPrice);
     if (!quantity || quantity <= 0) return;
-    await api.post('/inventory/returns', {
-      productId: returnFor.id,
-      supplier: retSupplier.trim(),
-      quantity,
-      unitPrice: unitPrice || 0,
+    const product = returnFor;
+    await run('Qaytarish saqlanmadi', async () => {
+      await api.post('/inventory/returns', {
+        productId: product.id,
+        supplier: retSupplier.trim(),
+        quantity,
+        unitPrice: unitPrice || 0,
+      });
+      setReturnFor(null);
+      await load();
     });
-    setReturnFor(null);
-    load();
   }
 
   function openProduction() {
@@ -239,21 +296,35 @@ export function SkladTab() {
   }
   // Ishlab chiqarish — ketgan mahsulotlar chiqim (-), tayyor mahsulot kirim (+)
   async function saveProduction() {
-    const outQty = Number(prodOutQty);
+    if (savingProd) return;
+    const outQty = parseDecimal(prodOutQty);
     if (!prodOutId || !outQty || outQty <= 0) return;
-    const ins = prodIn.filter((r) => r.productId && Number(r.qty) > 0);
+    const ins = prodIn.filter((r) => r.productId && parseDecimal(r.qty) > 0);
     setSavingProd(true);
     try {
       for (const r of ins) {
-        await api.post(`/inventory/products/${r.productId}/adjust`, { delta: -Number(r.qty) });
+        await api.post(`/inventory/products/${r.productId}/adjust`, { delta: -parseDecimal(r.qty) });
       }
       await api.post(`/inventory/products/${prodOutId}/adjust`, { delta: outQty });
       await load();
       setProdOpen(false);
+    } catch (e) {
+      // Bir qismi bajarilgan bo'lishi mumkin — qayta bosilsa ikki marta ayirilardi. Oynani yopib,
+      // qoldiqlarni yangilaymiz va tekshirishni so'raymiz.
+      setProdOpen(false);
+      await load().catch(() => {});
+      setNotice({
+        title: 'Ishlab chiqarish to‘liq bajarilmadi',
+        subtitle: `${(e as Error)?.message || 'Xato'}. Qoldiqlarni tekshiring, kerak bo‘lsa «Chiqim»/«Kirim» bilan to‘g‘rilang.`,
+      });
     } finally {
       setSavingProd(false);
     }
   }
+
+  const noticeModal = notice && (
+    <FeedbackModal variant="warning" title={notice.title} subtitle={notice.subtitle} onClose={() => setNotice(null)} />
+  );
 
   const s = search.trim().toLowerCase();
   const filtered = products.filter((p) => !s || p.name.toLowerCase().includes(s));
@@ -278,6 +349,7 @@ export function SkladTab() {
   if (inventoryMode) {
     return (
       <div className="w-full">
+        {noticeModal}
         <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
           <div className="text-lg font-bold">📋 Inventarizatsiya</div>
           <div className="flex gap-2 shrink-0">
@@ -302,8 +374,8 @@ export function SkladTab() {
         <div className="bg-surface border border-border rounded-2xl divide-y divide-border">
           {filtered.map((p) => {
             const raw = counts[p.id];
-            const actual = raw === undefined || raw === '' ? null : Number(raw);
-            const diff = actual === null || isNaN(actual) ? null : actual - Number(p.stock);
+            const actual = raw === undefined || raw === '' ? null : parseDecimal(raw);
+            const diff = actual === null ? null : actual - Number(p.stock);
             return (
               <div key={p.id} className="flex items-center justify-between px-4 py-3 gap-3">
                 <div className="min-w-0 flex-1">
@@ -317,9 +389,9 @@ export function SkladTab() {
                     </span>
                   )}
                   <input
-                    type="number"
+                    inputMode="decimal"
                     value={raw ?? ''}
-                    onChange={(e) => setCounts({ ...counts, [p.id]: e.target.value })}
+                    onChange={(e) => setCounts({ ...counts, [p.id]: qtyInput(e.target.value) })}
                     placeholder={num(p.stock)}
                     className="w-24 px-2.5 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary text-center"
                   />
@@ -338,6 +410,7 @@ export function SkladTab() {
     const totalDebt = supBalances.reduce((s, b) => s + b.debt, 0);
     return (
       <div className="w-full">
+        {noticeModal}
         <div className="flex items-center justify-between mb-4 gap-2">
           <div className="text-lg font-bold">🧑‍🌾 Ta'minotchilar</div>
           <button
@@ -385,9 +458,9 @@ export function SkladTab() {
           <Modal title={`To‘lov — ${payFor}`} onClose={() => setPayFor(null)}>
             <label className="block text-sm text-muted mb-1">Summa (so‘m)</label>
             <input
-              type="number"
+              inputMode="numeric"
               value={supPayAmount}
-              onChange={(e) => setSupPayAmount(e.target.value)}
+              onChange={(e) => setSupPayAmount(moneyInput(e.target.value))}
               autoFocus
               className="w-full mb-3 px-3 py-2.5 rounded-lg bg-bg border border-border outline-none focus:border-primary"
             />
@@ -400,7 +473,9 @@ export function SkladTab() {
             />
             <div className="flex gap-2">
               <Button variant="ghost" className="flex-1" onClick={() => setPayFor(null)}>Bekor</Button>
-              <Button className="flex-1" onClick={saveSupplierPayment}>To‘lash</Button>
+              <Button className="flex-1" disabled={busy || !(Number(supPayAmount) > 0)} onClick={saveSupplierPayment}>
+                {busy ? 'Saqlanmoqda…' : 'To‘lash'}
+              </Button>
             </div>
           </Modal>
         )}
@@ -412,6 +487,7 @@ export function SkladTab() {
   if (showPurchases) {
     return (
       <div className="w-full">
+        {noticeModal}
         <div className="flex items-center justify-between mb-4 gap-2">
           <div className="text-lg font-bold">🧾 Kirimlar tarixi (ta'minot)</div>
           <button
@@ -451,6 +527,7 @@ export function SkladTab() {
 
   return (
     <div className="w-full">
+      {noticeModal}
       {/* Tepa panel: qidiruv + amallar (mobilda o'raladi) */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <input
@@ -541,9 +618,9 @@ export function SkladTab() {
             <div>
               <label className="block text-sm text-muted mb-1">Boshlang‘ich qoldiq</label>
               <input
-                type="number"
+                inputMode="decimal"
                 value={form.stock}
-                onChange={(e) => setForm({ ...form, stock: e.target.value })}
+                onChange={(e) => setForm({ ...form, stock: qtyInput(e.target.value) })}
                 placeholder="0"
                 className="w-full px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary"
               />
@@ -551,9 +628,9 @@ export function SkladTab() {
             <div>
               <label className="block text-sm text-muted mb-1">Minimal qoldiq</label>
               <input
-                type="number"
+                inputMode="decimal"
                 value={form.minStock}
-                onChange={(e) => setForm({ ...form, minStock: e.target.value })}
+                onChange={(e) => setForm({ ...form, minStock: qtyInput(e.target.value) })}
                 placeholder="0"
                 className="w-full px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary"
               />
@@ -561,7 +638,9 @@ export function SkladTab() {
           </div>
           <div className="flex gap-2 mt-4">
             <Button variant="ghost" className="flex-1" onClick={() => setForm(null)}>Bekor</Button>
-            <Button className="flex-1" onClick={save}>{form.id ? 'Saqlash' : 'Qo‘shish'}</Button>
+            <Button className="flex-1" disabled={busy} onClick={save}>
+              {busy ? 'Saqlanmoqda…' : form.id ? 'Saqlash' : 'Qo‘shish'}
+            </Button>
           </div>
         </Modal>
       )}
@@ -586,7 +665,7 @@ export function SkladTab() {
                 autoFocus
                 inputMode="decimal"
                 value={purQty}
-                onChange={(e) => setPurQty(e.target.value.replace(/[^0-9.]/g, ''))}
+                onChange={(e) => setPurQty(qtyInput(e.target.value))}
                 placeholder="Masalan: 20"
                 className="w-full px-3 py-2.5 rounded-lg bg-bg border border-border outline-none focus:border-primary text-lg font-bold"
               />
@@ -596,7 +675,7 @@ export function SkladTab() {
               <input
                 inputMode="numeric"
                 value={purPrice}
-                onChange={(e) => setPurPrice(e.target.value.replace(/[^0-9]/g, ''))}
+                onChange={(e) => setPurPrice(moneyInput(e.target.value))}
                 placeholder="Masalan: 8000"
                 className="w-full px-3 py-2.5 rounded-lg bg-bg border border-border outline-none focus:border-primary text-lg font-bold"
               />
@@ -610,19 +689,21 @@ export function SkladTab() {
           />
           <div className="mt-3 flex justify-between text-sm">
             <span className="text-muted">Umumiy summa</span>
-            <span className="font-bold text-primary">{formatSum(purTotal)}</span>
+            <span className="font-bold text-primary">{formatSum(roundSum(purTotal))}</span>
           </div>
-          {Number(purQty) > 0 && (
+          {parseDecimal(purQty) > 0 && (
             <div className="text-sm mt-1">
               Yangi qoldiq:{' '}
               <span className="font-bold text-success">
-                {num(purchaseFor.stock + Number(purQty))} {purchaseFor.unit}
+                {num(Number(purchaseFor.stock) + parseDecimal(purQty))} {purchaseFor.unit}
               </span>
             </div>
           )}
           <div className="flex gap-2 mt-4">
             <Button variant="ghost" className="flex-1" onClick={() => setPurchaseFor(null)}>Bekor</Button>
-            <Button className="flex-1" disabled={!(Number(purQty) > 0)} onClick={savePurchase}>Kirim qilish</Button>
+            <Button className="flex-1" disabled={busy || !(parseDecimal(purQty) > 0)} onClick={savePurchase}>
+              {busy ? 'Saqlanmoqda…' : 'Kirim qilish'}
+            </Button>
           </div>
         </Modal>
       )}
@@ -638,22 +719,24 @@ export function SkladTab() {
             autoFocus
             inputMode="decimal"
             value={woQty}
-            onChange={(e) => setWoQty(e.target.value.replace(/[^0-9.]/g, ''))}
+            onChange={(e) => setWoQty(qtyInput(e.target.value))}
             onKeyDown={(e) => e.key === 'Enter' && saveWriteOff()}
             placeholder="Masalan: 2"
             className="w-full mb-1 px-3 py-2.5 rounded-lg bg-bg border border-border outline-none focus:border-primary text-lg font-bold"
           />
-          {Number(woQty) > 0 && (
+          {parseDecimal(woQty) > 0 && (
             <div className="text-sm mb-2">
               Yangi qoldiq:{' '}
               <span className="font-bold text-danger">
-                {num(writeOff.stock - Number(woQty))} {writeOff.unit}
+                {num(Number(writeOff.stock) - parseDecimal(woQty))} {writeOff.unit}
               </span>
             </div>
           )}
           <div className="flex gap-2 mt-4">
             <Button variant="ghost" className="flex-1" onClick={() => setWriteOff(null)}>Bekor</Button>
-            <Button className="flex-1" onClick={saveWriteOff}>Chiqim qilish</Button>
+            <Button className="flex-1" disabled={busy || !(parseDecimal(woQty) > 0)} onClick={saveWriteOff}>
+              {busy ? 'Saqlanmoqda…' : 'Chiqim qilish'}
+            </Button>
           </div>
         </Modal>
       )}
@@ -678,9 +761,9 @@ export function SkladTab() {
                     />
                   </div>
                   <input
-                    type="number"
+                    inputMode="decimal"
                     value={row.qty}
-                    onChange={(e) => setProdIn(prodIn.map((r, j) => (j === i ? { ...r, qty: e.target.value } : r)))}
+                    onChange={(e) => setProdIn(prodIn.map((r, j) => (j === i ? { ...r, qty: qtyInput(e.target.value) } : r)))}
                     placeholder="miqdor"
                     className="w-24 px-2.5 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary text-sm"
                   />
@@ -714,9 +797,9 @@ export function SkladTab() {
                 />
               </div>
               <input
-                type="number"
+                inputMode="decimal"
                 value={prodOutQty}
-                onChange={(e) => setProdOutQty(e.target.value)}
+                onChange={(e) => setProdOutQty(qtyInput(e.target.value))}
                 placeholder="miqdor"
                 className="w-24 px-2.5 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary text-sm"
               />
@@ -725,7 +808,7 @@ export function SkladTab() {
 
           <div className="flex gap-2">
             <Button variant="ghost" className="flex-1" onClick={() => setProdOpen(false)}>Bekor</Button>
-            <Button className="flex-1" onClick={saveProduction} disabled={savingProd || !prodOutId || !(Number(prodOutQty) > 0)}>
+            <Button className="flex-1" onClick={saveProduction} disabled={savingProd || !prodOutId || !(parseDecimal(prodOutQty) > 0)}>
               {savingProd ? 'Tayyorlanmoqda...' : '✔ Tayyorlash'}
             </Button>
           </div>
@@ -753,18 +836,20 @@ export function SkladTab() {
           <div className="grid grid-cols-2 gap-3 mb-4">
             <div>
               <label className="block text-sm text-muted mb-1">Miqdor ({returnFor.unit})</label>
-              <input type="number" value={retQty} onChange={(e) => setRetQty(e.target.value)} placeholder="0"
+              <input inputMode="decimal" value={retQty} onChange={(e) => setRetQty(qtyInput(e.target.value))} placeholder="0"
                 className="w-full px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
             </div>
             <div>
               <label className="block text-sm text-muted mb-1">Birlik narxi</label>
-              <input type="number" value={retPrice} onChange={(e) => setRetPrice(e.target.value)} placeholder="0"
+              <input inputMode="numeric" value={retPrice} onChange={(e) => setRetPrice(moneyInput(e.target.value))} placeholder="0"
                 className="w-full px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary" />
             </div>
           </div>
           <div className="flex gap-2">
             <Button variant="ghost" className="flex-1" onClick={() => setReturnFor(null)}>Bekor</Button>
-            <Button className="flex-1" onClick={saveReturn} disabled={!(Number(retQty) > 0)}>Qaytarish</Button>
+            <Button className="flex-1" onClick={saveReturn} disabled={busy || !(parseDecimal(retQty) > 0)}>
+              {busy ? 'Saqlanmoqda…' : 'Qaytarish'}
+            </Button>
           </div>
         </Modal>
       )}

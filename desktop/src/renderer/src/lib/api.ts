@@ -1,56 +1,184 @@
 import { getServerUrl } from './config';
-import { mockRequest } from './mock';
 
-// Prezentatsiya rejimi: VITE_MOCK=1 bo'lsa serverga emas, soxta ma'lumotlarga yo'naltiriladi
+// Prezentatsiya rejimi: VITE_MOCK=1 bo'lsa serverga emas, soxta ma'lumotlarga yo'naltiriladi.
+// Qiymat build vaqtida qo'yiladi: real buildda `false` bo'lib, mock kodi (lib/mock.ts) bundlega
+// kirmaydi ham, bajarilmaydi ham (u faqat MOCK bo'lganda dinamik import qilinadi).
 export const MOCK = import.meta.env.VITE_MOCK === '1';
 
-let token: string | null = localStorage.getItem('token');
+/** Token muddati tugadi / foydalanuvchi o'chirildi — AuthProvider shu hodisani tinglaydi */
+export const SESSION_EXPIRED_EVENT = 'auth:expired';
+export const SESSION_EXPIRED_MESSAGE = 'Sessiya tugadi — qayta kiring';
+export const TIMEOUT_MESSAGE = 'Server javob bermadi';
+export const NETWORK_MESSAGE = 'Serverga ulanib bo‘lmadi — tarmoqni tekshiring';
+
+/** Odatiy so'rov kutish vaqti */
+const DEFAULT_TIMEOUT_MS = 10_000;
+/** Server tashqi xizmatga (Telegram) yoki LAN printerga murojaat qiladigan so'rovlar uzoqroq kutiladi */
+const SLOW_TIMEOUT_MS = 30_000;
+const SLOW_PATHS = [/^\/settings\/telegram-/, /^\/stations\/[^/]+\/test-print$/];
+
+/**
+ * Server xatosi — HTTP holat kodi bilan (masalan 400/401/403/429).
+ * status = 0 — javob kelmadi (timeout). Tarmoq uzilishi esa TypeError bo'lib qoladi:
+ * oflayn navbat (WaiterPage) aynan TypeError'ni "aloqa yo'q" deb taniydi.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+export interface RequestOptions {
+  /** Kutish vaqti (ms). Standart: 10 s (Telegram so'rovlari 30 s) */
+  timeoutMs?: number;
+}
+
+function readStoredToken(): string | null {
+  try {
+    return localStorage.getItem('token');
+  } catch {
+    return null;
+  }
+}
+
+let token: string | null = readStoredToken();
 
 export function setToken(t: string | null) {
   token = t;
-  if (t) localStorage.setItem('token', t);
-  else localStorage.removeItem('token');
+  try {
+    if (t) localStorage.setItem('token', t);
+    else localStorage.removeItem('token');
+  } catch {
+    /* localStorage yopiq — token faqat xotirada qoladi */
+  }
 }
 
 export function getToken() {
   return token;
 }
 
-async function request<T>(
+// Kirish so'rovlarining 401 javobi — "login/PIN noto'g'ri" degani, sessiya tugashi emas
+function isLoginPath(path: string): boolean {
+  const p = path.split('?')[0];
+  return p === '/auth/login' || p === '/auth/login-pin';
+}
+
+/** Sessiyani tozalash (token + user) va ilovaga xabar berish — login ekrani ochiladi */
+function expireSession(): void {
+  setToken(null);
+  try {
+    localStorage.removeItem('user');
+  } catch {
+    /* e'tiborsiz */
+  }
+  try {
+    window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+  } catch {
+    /* e'tiborsiz */
+  }
+}
+
+function errorMessage(data: unknown, status: number): string {
+  const msg = (data as { message?: unknown } | null)?.message;
+  // Validatsiya xatolari massiv bo'lib keladi; bitta maydonning bir nechta sharti bir xil
+  // matn qaytarishi mumkin — takrorlarni olib tashlaymiz
+  if (Array.isArray(msg) && msg.length) return [...new Set(msg.map(String))].join(', ');
+  if (typeof msg === 'string' && msg) return msg;
+  return `Xato (${status})`;
+}
+
+async function httpRequest<T>(
   method: string,
   path: string,
-  body?: unknown,
+  body: unknown,
+  authToken: string | null,
+  opts?: RequestOptions,
 ): Promise<T> {
-  if (MOCK) return mockRequest<T>(method, path, body);
-
-  const res = await fetch(`${getServerUrl()}/api${path}`, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  if (!res.ok) {
-    let message = `Xato (${res.status})`;
+  const timeoutMs =
+    opts?.timeoutMs ?? (SLOW_PATHS.some((re) => re.test(path)) ? SLOW_TIMEOUT_MS : DEFAULT_TIMEOUT_MS);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    let res: Response;
+    let text: string;
     try {
-      const data = await res.json();
-      message = data.message || message;
+      res = await fetch(`${getServerUrl()}/api${path}`, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: ctrl.signal,
+      });
+      // Javob tanasi ham shu vaqt ichida o'qilishi kerak
+      text = await res.text();
     } catch {
-      /* ignore */
+      if (ctrl.signal.aborted) throw new ApiError(TIMEOUT_MESSAGE, 0);
+      // Server/tarmoq mavjud emas — TypeError (oflayn navbat shunga tayanadi)
+      throw new TypeError(NETWORK_MESSAGE);
     }
-    throw new Error(Array.isArray(message) ? message.join(', ') : message);
+
+    let data: unknown = undefined;
+    let parsed = true;
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        parsed = false;
+      }
+    }
+
+    if (!res.ok) {
+      throw new ApiError(parsed ? errorMessage(data, res.status) : `Xato (${res.status})`, res.status);
+    }
+    // 2xx, lekin JSON emas — odatda noto'g'ri port (masalan 8080 dagi HTML sahifa)
+    if (!parsed) throw new ApiError('Server javobi noto‘g‘ri — server manzilini tekshiring', res.status);
+    // 204 (bo'sh javob) holatlar uchun undefined qaytadi
+    return data as T;
+  } finally {
+    clearTimeout(timer);
   }
-  // 204 holatlar uchun
-  const text = await res.text();
-  return text ? (JSON.parse(text) as T) : (undefined as T);
+}
+
+// Demo (mock) server — faqat MOCK buildda yuklanadi va bajariladi
+async function mockCall<T>(method: string, path: string, body: unknown, authToken: string | null): Promise<T> {
+  const { mockRequest } = await import('./mock');
+  try {
+    return await mockRequest<T>(method, path, body, authToken);
+  } catch (e) {
+    const status = (e as { status?: unknown })?.status;
+    throw new ApiError((e as Error)?.message || 'Xato', typeof status === 'number' ? status : 400);
+  }
+}
+
+async function request<T>(method: string, path: string, body?: unknown, opts?: RequestOptions): Promise<T> {
+  const usedToken = token;
+  // Shart ataylab try-blokdan TASHQARIDA: Rollup try ichidagi kodni tree-shake qilmaydi
+  // (tryCatchDeoptimization). Shu yerda bo'lgani uchun real buildda (MOCK=false) mock
+  // tarmog'i va lib/mock.ts bundledan butunlay tushib qoladi.
+  const pending = MOCK
+    ? mockCall<T>(method, path, body, usedToken)
+    : httpRequest<T>(method, path, body, usedToken, opts);
+  try {
+    return await pending;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401 && !isLoginPath(path)) {
+      // Eski tokenli so'rovning kech kelgan 401 javobi yangi kirgan sessiyani o'chirmasin
+      if (token === usedToken) expireSession();
+      throw new ApiError(SESSION_EXPIRED_MESSAGE, 401);
+    }
+    throw e;
+  }
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>('GET', path),
-  post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
-  put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
-  patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
-  del: <T>(path: string) => request<T>('DELETE', path),
+  get: <T>(path: string, opts?: RequestOptions) => request<T>('GET', path, undefined, opts),
+  post: <T>(path: string, body?: unknown, opts?: RequestOptions) => request<T>('POST', path, body, opts),
+  put: <T>(path: string, body?: unknown, opts?: RequestOptions) => request<T>('PUT', path, body, opts),
+  patch: <T>(path: string, body?: unknown, opts?: RequestOptions) => request<T>('PATCH', path, body, opts),
+  del: <T>(path: string, opts?: RequestOptions) => request<T>('DELETE', path, undefined, opts),
 };

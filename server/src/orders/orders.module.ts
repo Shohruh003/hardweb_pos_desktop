@@ -17,6 +17,7 @@ import { OrdersService } from './orders.service';
 import { OrdersGateway } from './orders.gateway';
 import { TelegramModule } from '../telegram/telegram.module';
 import { InventoryModule } from '../inventory/inventory.module';
+import { PrintingModule } from '../printing/printing.module';
 
 @Module({
   imports: [
@@ -34,6 +35,8 @@ import { InventoryModule } from '../inventory/inventory.module';
     ]),
     TelegramModule,
     InventoryModule,
+    // Bo'lim (oshxona/bar) cheklarini server o'zi chop etadi — StationPrintService
+    PrintingModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService, OrdersGateway],

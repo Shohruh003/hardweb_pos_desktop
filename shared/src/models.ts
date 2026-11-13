@@ -23,6 +23,8 @@ export interface User {
   active: boolean; // faol
   permissions?: string[]; // qo'shimcha ruxsatlar (direktor beradi)
   // parol_hash faqat serverda saqlanadi, mijozga yuborilmaydi
+  hasPassword?: boolean; // login/parol bilan kira oladimi (parol o'rnatilgan)
+  mustChangePassword?: boolean; // birinchi kirishda parolni almashtirish shart
 }
 
 /** tables — stollar */

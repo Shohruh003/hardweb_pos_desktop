@@ -11,17 +11,30 @@ import {
   Request,
   UseGuards,
 } from '@nestjs/common';
-import { Receipt } from '@hardweb-pos/shared';
+import { Receipt, hasCapability } from '@hardweb-pos/shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { FORBIDDEN_MESSAGE } from '../auth/user-view';
 import { HistoryQuery, OrdersService } from './orders.service';
 import {
   AddExciseDto,
+  ChangeWaiterDto,
   CreateOrderDto,
+  MoveTableDto,
   PayOrderDto,
+  RefundDto,
+  RemoveItemsDto,
   SetCustomerDto,
   SetNoteDto,
   UpdateOrderStatusDto,
 } from './dto';
+
+// Ruxsat (capability) tekshiruvi. req.user = { id, role, name, permissions } —
+// JwtStrategy uni har so'rovda bazadan o'qiydi; Direktor/SuperAdmin barcha ruxsatga ega.
+function assertCapability(req: any, capability: string): void {
+  if (!hasCapability(req?.user, capability)) {
+    throw new ForbiddenException(FORBIDDEN_MESSAGE);
+  }
+}
 
 @UseGuards(JwtAuthGuard)
 @Controller('orders')
@@ -51,6 +64,7 @@ export class OrdersController {
     return this.orders.create(dto, dto.waiterId || req.user.id);
   }
 
+  // Oshxona holatlari (qabul_qilindi | tayyorlanmoqda | tayyor). "yopildi" — faqat to'lov orqali.
   @Patch(':id/status')
   updateStatus(@Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
     return this.orders.updateStatus(id, dto);
@@ -74,13 +88,15 @@ export class OrdersController {
     return this.orders.setCustomer(id, dto?.customerId);
   }
 
-  // Buyurtmadan ayrim taomlarni olib tashlash (qaytarish)
+  // Buyurtmadan ayrim taomlarni olib tashlash (qaytarish).
+  // To'lovi bor hisob bo'shab qolsa yoki qolgan summa to'langandan kam bo'lsa — 400.
   @Post(':id/remove-items')
-  removeItems(@Param('id') id: string, @Body() dto: { itemIds: string[] }) {
-    return this.orders.removeItems(id, dto?.itemIds ?? []);
+  removeItems(@Param('id') id: string, @Body() dto: RemoveItemsDto) {
+    return this.orders.removeItems(id, dto.itemIds);
   }
 
-  // Schotni bekor qilish (annul) — to'lanmagan buyurtmani o'chirib, stolni bo'shatadi
+  // Schotni bekor qilish (annul) — to'lanmagan buyurtmani o'chirib, stolni bo'shatadi.
+  // Hisobda to'lov bo'lsa — 400 (avval kassada to'lovlar o'chiriladi).
   @Post(':id/cancel')
   cancel(@Param('id') id: string) {
     return this.orders.cancel(id);
@@ -88,14 +104,14 @@ export class OrdersController {
 
   // Buyurtmani boshqa stolga ko'chirish (smenit stol)
   @Post(':id/move-table')
-  moveTable(@Param('id') id: string, @Body() dto: { tableId: string }) {
-    return this.orders.moveTable(id, dto?.tableId);
+  moveTable(@Param('id') id: string, @Body() dto: MoveTableDto) {
+    return this.orders.moveTable(id, dto.tableId);
   }
 
   // Buyurtma ofitsiantини o'zgartirish (smenit ofitsant)
   @Post(':id/change-waiter')
-  changeWaiter(@Param('id') id: string, @Body() dto: { waiterId: string }) {
-    return this.orders.changeWaiter(id, dto?.waiterId);
+  changeWaiter(@Param('id') id: string, @Body() dto: ChangeWaiterDto) {
+    return this.orders.changeWaiter(id, dto.waiterId);
   }
 
   // Hisob chekini kassa (printerli terminal) chop etsin (relay)
@@ -105,7 +121,7 @@ export class OrdersController {
   }
 
   // To'lov chekini kassa (printerli terminal) chop etsin (relay).
-  // Printersiz terminalда to'lov qilinganда chek kassadan chiqadi.
+  // Printersiz terminalда to'lov qilinганда chek kassadan chiqadi.
   @Post('print-receipt')
   printReceipt(@Body() receipt: Receipt) {
     return this.orders.printReceiptRelay(receipt);
@@ -121,23 +137,25 @@ export class OrdersController {
   @Post(':id/refund')
   refund(
     @Param('id') id: string,
-    @Body() dto: { reason?: string },
+    @Body() dto: RefundDto,
     @Request() req: any,
   ) {
     const perms: string[] = req.user?.permissions ?? [];
     if (!perms.includes('refund')) {
       throw new ForbiddenException('Vozvrat qilish ruxsati yo‘q');
     }
-    return this.orders.refund(id, dto.reason ?? '', req.user.id, req.user.name);
+    return this.orders.refund(id, dto?.reason ?? '', req.user.id, req.user.name);
   }
 
   // Kassa: to'lov (bo'lib to'lash — qisman yoki to'liq). To'liq bo'lganda chek chiqadi.
+  // Faqat 'cashier' (kassa) ruxsati bor xodim.
   @Post(':id/pay')
   pay(
     @Param('id') id: string,
     @Body() dto: PayOrderDto,
     @Request() req: any,
   ) {
+    assertCapability(req, 'cashier');
     return this.orders.pay(id, dto, req.user.id);
   }
 
@@ -147,9 +165,14 @@ export class OrdersController {
     return this.orders.getPayments(id);
   }
 
-  // Qisman to'lovni bekor qilish (chek yopilmagan bo'lsa)
+  // Qisman to'lovni bekor qilish (chek yopilmagan bo'lsa) — faqat 'cashier' ruxsati bilan
   @Delete(':id/payments/:paymentId')
-  deletePayment(@Param('id') id: string, @Param('paymentId') paymentId: string) {
+  deletePayment(
+    @Param('id') id: string,
+    @Param('paymentId') paymentId: string,
+    @Request() req: any,
+  ) {
+    assertCapability(req, 'cashier');
     return this.orders.deletePayment(id, paymentId);
   }
 }

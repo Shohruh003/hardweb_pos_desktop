@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '../../components/ui';
 import { Select } from '../../components/Select';
-import { getServerUrl, setServerUrl } from '../../lib/config';
-import type { KitchenPrinter, PrinterConfig } from '../../global';
+import { MOCK } from '../../lib/api';
+import { ServerAddressForm } from '../LoginPage';
+import type { PrinterConfig } from '../../global';
 
-// Qurilmalarni sozlash (TZ F-4.4) — chek printeri + oshxona printerlari (ESC/POS, tarmoq)
+const NO_BRIDGE_MESSAGE = '⚠️ Printer faqat DasturXon ilovasi oynasida ishlaydi (brauzerda emas)';
+
+// Qurilmalarni sozlash (TZ F-4.4) — server manzili + shu kompyuterning chek printeri (ESC/POS)
 export function DevicesTab() {
   const [cfg, setCfg] = useState<PrinterConfig>({
     type: 'none',
@@ -17,60 +20,54 @@ export function DevicesTab() {
   });
   const [msg, setMsg] = useState('');
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [printers, setPrinters] = useState<string[]>([]);
-  const [serverUrl, setServer] = useState(getServerUrl());
+  const msgTimer = useRef<number | undefined>(undefined);
 
-  function saveServer() {
-    setServerUrl(serverUrl.trim());
-    setMsg('Server manzili saqlandi ✓ (qayta ulanish uchun ilovani yangilang)');
-    setTimeout(() => setMsg(''), 4000);
+  // Xabarni ko'rsatish (ms > 0 bo'lsa — shuncha vaqtdan keyin yo'qoladi)
+  function flash(text: string, ms = 4000) {
+    window.clearTimeout(msgTimer.current);
+    setMsg(text);
+    if (ms > 0) msgTimer.current = window.setTimeout(() => setMsg(''), ms);
   }
+  useEffect(() => () => window.clearTimeout(msgTimer.current), []);
 
   useEffect(() => {
-    window.hardweb?.printer.getConfig().then(setCfg).catch(() => {});
-    window.hardweb?.printer.list().then(setPrinters).catch(() => {});
+    window.hardweb?.printer?.getConfig().then(setCfg).catch(() => {});
+    window.hardweb?.printer?.list().then(setPrinters).catch(() => {});
   }, []);
 
   async function save() {
+    const bridge = window.hardweb?.printer;
+    if (!bridge) return flash(NO_BRIDGE_MESSAGE, 5000);
     setSaving(true);
     try {
-      const saved = await window.hardweb.printer.setConfig(cfg);
+      const saved = await bridge.setConfig(cfg);
       setCfg(saved);
-      setMsg('Sozlamalar saqlandi ✓');
+      flash('Sozlamalar saqlandi ✓', 3000);
     } catch (e) {
-      setMsg((e as Error).message);
+      flash(`⚠️ ${(e as Error).message || 'Saqlab bo‘lmadi'}`, 5000);
     } finally {
       setSaving(false);
-      setTimeout(() => setMsg(''), 3000);
     }
   }
 
+  // Sinov cheki ekrandagi (hali saqlanmagan bo'lsa ham) sozlama bilan chiqishi uchun avval saqlaymiz
   async function test() {
-    setMsg('Sinov cheki yuborilmoqda...');
-    const res = await window.hardweb.printer.test();
-    setMsg(res.message);
-    setTimeout(() => setMsg(''), 4000);
-  }
-
-  // --- Oshxona printerlari ---
-  const kitchen = cfg.kitchen ?? [];
-  function addKitchen() {
-    setCfg({
-      ...cfg,
-      kitchen: [
-        ...kitchen,
-        { name: `Oshxona ${kitchen.length + 1}`, host: '192.168.1.60', port: 9100, width: 48 },
-      ],
-    });
-  }
-  function updateKitchen(i: number, patch: Partial<KitchenPrinter>) {
-    setCfg({
-      ...cfg,
-      kitchen: kitchen.map((k, idx) => (idx === i ? { ...k, ...patch } : k)),
-    });
-  }
-  function removeKitchen(i: number) {
-    setCfg({ ...cfg, kitchen: kitchen.filter((_, idx) => idx !== i) });
+    const bridge = window.hardweb?.printer;
+    if (!bridge) return flash(NO_BRIDGE_MESSAGE, 5000);
+    setTesting(true);
+    flash('Sozlama saqlanib, sinov cheki yuborilmoqda...', 0);
+    try {
+      const saved = await bridge.setConfig(cfg);
+      setCfg(saved);
+      const res = await bridge.test();
+      flash(res.ok ? '✓ Sinov cheki chop etildi' : `⚠️ ${res.message || 'Printer xatosi'}`, 6000);
+    } catch (e) {
+      flash(`⚠️ ${(e as Error).message || 'Sinov cheki yuborilmadi'}`, 6000);
+    } finally {
+      setTesting(false);
+    }
   }
 
   // Printer faqat Electron oynasida ishlaydi — brauzerda ochilsa ogohlantiramiz
@@ -89,19 +86,18 @@ export function DevicesTab() {
       {/* Server manzili — bu terminal qaysi serverga ulanadi (boshqa PC'da o'zgartiriladi) */}
       <div className="bg-surface border border-border rounded-xl p-5 mb-4">
         <div className="font-bold mb-1">Server manzili (bu terminal)</div>
-        <div className="text-sm text-muted mb-3">
-          Bir nechta terminal bo'lsa — bu yerga server o'rnatilgan kompyuterning IP'sini yozing
-          (masalan <span className="font-mono">http://192.168.1.10:3100</span>).
-        </div>
-        <div className="flex gap-2">
-          <input
-            value={serverUrl}
-            onChange={(e) => setServer(e.target.value)}
-            placeholder="http://127.0.0.1:3100"
-            className="flex-1 px-3 py-2 rounded-lg bg-bg border border-border outline-none focus:border-primary font-mono text-sm"
-          />
-          <Button onClick={saveServer}>Saqlash</Button>
-        </div>
+        {MOCK ? (
+          <div className="text-sm text-muted">Demo rejim — server ishlatilmaydi.</div>
+        ) : (
+          <>
+            <div className="text-sm text-muted mb-3">
+              Bir nechta terminal bo‘lsa — bu yerga server o‘rnatilgan (kassa) kompyuterning IP’sini yozing
+              (masalan <span className="font-mono">http://192.168.1.10:3100</span>). Manzil tekshiriladi,
+              saqlangach ilova yangi manzilga qayta ulanadi.
+            </div>
+            <ServerAddressForm />
+          </>
+        )}
       </div>
 
       <div className="bg-surface border border-border rounded-xl p-5">
@@ -141,7 +137,7 @@ export function DevicesTab() {
             )}
             <div className="flex items-center gap-3 mt-1">
               <button
-                onClick={() => window.hardweb?.printer.list().then(setPrinters)}
+                onClick={() => window.hardweb?.printer?.list().then(setPrinters).catch(() => {})}
                 className="text-xs text-muted hover:text-primary"
               >
                 ↻ Ro‘yxatni yangilash
@@ -204,81 +200,31 @@ export function DevicesTab() {
         </label>
 
         <div className="flex gap-2">
-          <Button onClick={save} disabled={saving} className="flex-1">
+          <Button onClick={save} disabled={saving || testing} className="flex-1">
             {saving ? 'Saqlanmoqda...' : 'Saqlash'}
           </Button>
           <Button
             variant="ghost"
             onClick={test}
-            disabled={cfg.type === 'none'}
+            disabled={cfg.type === 'none' || saving || testing}
             className="flex-1"
           >
-            Sinov cheki
+            {testing ? 'Yuborilmoqda...' : 'Sinov cheki'}
           </Button>
         </div>
 
-        {msg && <div className="mt-4 text-sm text-muted text-center">{msg}</div>}
+        {msg && <div className="mt-4 text-sm font-semibold text-text text-center">{msg}</div>}
       </div>
 
-      {/* Oshxona printerlari — buyurtma yuborilganda oshxonaga chek chiqadi */}
+      {/* Oshxona/bar printerlari endi bo'limlar orqali: chekni server o'zi chiqaradi
+          (terminal, telefon va oflayn yuborilgan buyurtmalar uchun ham) */}
       <div className="bg-surface border border-border rounded-xl p-5 mt-4">
-        <div className="flex items-center justify-between mb-1">
-          <div className="font-bold">Oshxona printerlari (LAN)</div>
-          <Button variant="ghost" onClick={addKitchen}>+ Printer qo‘shish</Button>
+        <div className="font-bold mb-1">Oshxona / bar printerlari</div>
+        <div className="text-sm text-muted">
+          Har bir bo‘lim (Oshxona, Bar, …) printerining IP manzili <span className="font-semibold text-text">Boshqaruv → Bo‘limlar</span>{' '}
+          bo‘limida kiritiladi. Buyurtma yuborilganda chekni server o‘zi shu printerlarga chiqaradi —
+          telefon va oflayn yuborilgan buyurtmalar uchun ham. Printer kassa kompyuteri bilan bir tarmoqda (port 9100) bo‘lishi kerak.
         </div>
-        <div className="text-sm text-muted mb-4">
-          Har bir sex uchun alohida printer. Ofitsiant buyurtma yuborganda
-          oshxona cheki avtomatik chiqadi.
-        </div>
-
-        {kitchen.length === 0 ? (
-          <div className="text-sm text-muted">Hali oshxona printeri qo‘shilmagan.</div>
-        ) : (
-          <div className="space-y-3">
-            {kitchen.map((k, i) => (
-              <div key={i} className="grid grid-cols-12 gap-2 items-end bg-bg rounded-lg p-3">
-                <div className="col-span-4">
-                  <label className="block text-xs text-muted mb-1">Nomi</label>
-                  <input
-                    value={k.name}
-                    onChange={(e) => updateKitchen(i, { name: e.target.value })}
-                    placeholder="Issiq sex"
-                    className="w-full px-2.5 py-2 rounded-lg bg-surface border border-border outline-none focus:border-primary text-sm"
-                  />
-                </div>
-                <div className="col-span-4">
-                  <label className="block text-xs text-muted mb-1">IP</label>
-                  <input
-                    value={k.host}
-                    onChange={(e) => updateKitchen(i, { host: e.target.value })}
-                    placeholder="192.168.1.60"
-                    className="w-full px-2.5 py-2 rounded-lg bg-surface border border-border outline-none focus:border-primary text-sm"
-                  />
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-xs text-muted mb-1">Port</label>
-                  <input
-                    type="number"
-                    value={k.port}
-                    onChange={(e) => updateKitchen(i, { port: Number(e.target.value) || 9100 })}
-                    className="w-full px-2.5 py-2 rounded-lg bg-surface border border-border outline-none focus:border-primary text-sm"
-                  />
-                </div>
-                <div className="col-span-2">
-                  <button
-                    onClick={() => removeKitchen(i)}
-                    className="w-full py-2 rounded-lg border border-danger/50 text-danger text-sm font-semibold hover:bg-danger/10"
-                  >
-                    O‘chirish
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-        <Button onClick={save} disabled={saving} className="mt-4">
-          {saving ? 'Saqlanmoqda...' : 'Oshxona printerlarini saqlash'}
-        </Button>
       </div>
 
       <p className="text-sm text-muted mt-4">

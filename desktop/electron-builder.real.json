@@ -8,7 +8,11 @@
   "files": ["out/**/*", "package.json"],
   "extraResources": [
     { "from": ".server-bundle", "to": "server" },
-    { "from": ".runtime", "to": "runtime" }
+    { "from": ".server-bundle/node_modules", "to": "server/node_modules", "filter": ["**/*"] },
+    { "from": ".runtime", "to": "runtime" },
+    { "from": "../scripts/allow-firewall.bat", "to": "allow-firewall.bat" },
+    { "from": "../scripts/find-printers.bat", "to": "find-printers.bat" },
+    { "from": "../scripts/find-printers.ps1", "to": "find-printers.ps1" }
   ],
   "win": {
     "target": "nsis",

@@ -1,6 +1,7 @@
 import {
   IsArray,
   IsEnum,
+  IsIn,
   IsNumber,
   IsOptional,
   IsString,
@@ -10,7 +11,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { OrderStatus, PaymentType } from '@hardweb-pos/shared';
+import { OrderStatus, PaymentType, SETTABLE_ORDER_STATUSES } from '@hardweb-pos/shared';
 
 export class CreateOrderItemDto {
   @IsUUID()
@@ -62,9 +63,37 @@ export class SetCustomerDto {
   customerId?: string;
 }
 
+// Oshxona (KDS) qo'yadigan holatlar: qabul_qilindi | tayyorlanmoqda | tayyor.
+// "yopildi" bu ro'yxatda yo'q — buyurtma faqat to'liq to'lov orqali yopiladi.
 export class UpdateOrderStatusDto {
-  @IsString()
+  @IsIn(SETTABLE_ORDER_STATUSES, { message: 'Noto‘g‘ri buyurtma holati' })
   status: OrderStatus;
+}
+
+// Buyurtmadan olib tashlanadigan taom qatorlari (order_items.id)
+export class RemoveItemsDto {
+  @IsArray({ message: 'Olib tashlanadigan taomlar ro‘yxati noto‘g‘ri' })
+  @IsUUID('all', { each: true, message: 'Taom qatori identifikatori noto‘g‘ri' })
+  itemIds: string[];
+}
+
+// Buyurtmani boshqa stolga ko'chirish (smenit stol)
+export class MoveTableDto {
+  @IsUUID('all', { message: 'Yangi stol tanlanmagan' })
+  tableId: string;
+}
+
+// Buyurtma ofitsiantini almashtirish (smenit ofitsant)
+export class ChangeWaiterDto {
+  @IsUUID('all', { message: 'Ofitsiant tanlanmagan' })
+  waiterId: string;
+}
+
+// Vozvrat (to'langan chekni qaytarish) sababi
+export class RefundDto {
+  @IsOptional()
+  @IsString({ message: 'Vozvrat sababi matn bo‘lishi kerak' })
+  reason?: string;
 }
 
 export class ExciseCodeItemDto {
@@ -87,6 +116,7 @@ export class PayOrderDto {
   type: PaymentType;
 
   // Bo'lib to'lash uchun to'lov summasi. Berilmasa — qolgan summa to'liq to'lanadi.
+  // Server butun so'mga yaxlitlaydi (roundSum).
   @IsOptional()
   @IsNumber()
   @Min(0)

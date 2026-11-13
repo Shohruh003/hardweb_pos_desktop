@@ -16,7 +16,18 @@ export const SOCKET_EVENTS = {
   PRINT_BILL: 'print:bill',
   // Server -> printerli terminal (kassa): to'lov chekini chop et
   PRINT_RECEIPT: 'print:receipt',
+  // Server -> hammaga (kassa ko'rsatadi): bo'lim (oshxona/bar) printeriga chek chiqmadi
+  PRINT_FAILED: 'print:failed',
 } as const;
+
+/** Bo'lim printeriga chek chiqmaganda server yuboradigan xabar */
+export interface PrintFailedPayload {
+  orderId?: string;
+  tableNumber?: number;
+  station: string; // bo'lim nomi (masalan "Oshxona")
+  host: string; // printer IP
+  message: string; // xato sababi (o'zbekcha)
+}
 
 export interface OrderCreatedPayload {
   order: Order;
