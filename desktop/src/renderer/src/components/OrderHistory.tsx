@@ -1,13 +1,31 @@
 import { useState } from 'react';
-import { Order, OrderStatus, PaymentType } from '@hardweb-pos/shared';
+import { MenuUnit, Order, OrderItem, OrderStatus, PaymentType, calcOrderTotals, lineSum } from '@hardweb-pos/shared';
 import { StatusBadge, formatSum, formatDateTime, formatTime } from './ui';
 import { Modal } from './Modal';
+import { formatQty } from './numeric';
 
 const PAY_LABEL: Record<string, string> = {
   [PaymentType.Cash]: 'Naqd',
   [PaymentType.Card]: 'Karta',
   [PaymentType.QR]: 'QR',
 };
+
+/**
+ * Chek summalari (shared/money — server bilan bir xil, butun so'm): total — mijoz to'laydigan/to'lagan
+ * summa (chegirma/xizmat haqi bilan), subtotal — qatorlar yig'indisi. Tarix, "Mening buyurtmalarim"
+ * va vozvrat shu summani ko'rsatadi.
+ */
+export function orderCheckTotals(o: Order) {
+  return calcOrderTotals(
+    (o.items ?? []).map((it) => ({ price: it.price ?? 0, quantity: it.quantity })),
+    o.discountPercent,
+    o.servicePercent,
+  );
+}
+
+/** Miqdor: kg taom — "1,25 kg", dona — "2×" */
+const qtyLabel = (it: OrderItem) =>
+  it.unit === MenuUnit.Weight ? `${formatQty(it.quantity)} kg` : `${formatQty(it.quantity)}×`;
 
 // Buyurtmalar/cheklar tarixi ro'yxati + tafsilot modali (shikoyatlar uchun).
 // onRevert berilsa — "Tayyor" holatdagi buyurtmani ortga qaytarish tugmasi chiqadi (KDS uchun).
@@ -55,6 +73,9 @@ export function OrderHistory({
     return <div className="text-muted text-center py-10">Tarix bo‘sh</div>;
   }
 
+  // Tanlangan chek summalari (tafsilot oynasi uchun)
+  const selTotals = sel ? orderCheckTotals(sel) : null;
+
   return (
     <>
       <div className="divide-y divide-border">
@@ -71,7 +92,7 @@ export function OrderHistory({
                 {o.waiterName && <span className="text-muted font-normal"> · {o.waiterName}</span>}
               </div>
               <div className="text-sm text-muted truncate">
-                {o.items.map((i) => `${i.quantity}× ${i.menuItemName}`).join(', ')}
+                {o.items.map((i) => `${qtyLabel(i)} ${i.menuItemName}`).join(', ')}
               </div>
             </div>
             <div className="text-right shrink-0">
@@ -83,14 +104,14 @@ export function OrderHistory({
                 <StatusBadge status={o.status} />
               )}
               <div className={`text-sm font-bold mt-1 ${o.refunded ? 'line-through text-muted' : ''}`}>
-                {formatSum(o.total ?? 0)}
+                {formatSum(orderCheckTotals(o).total)}
               </div>
             </div>
           </button>
         ))}
       </div>
 
-      {sel && (
+      {sel && selTotals && (
         <Modal title={`Stol №${sel.tableNumber ?? '—'} — buyurtma`} onClose={() => setSel(null)}>
           <div className="space-y-1.5 text-sm mb-4">
             <Row label="Ochilgan" value={formatDateTime(sel.openedAt)} />
@@ -101,19 +122,32 @@ export function OrderHistory({
 
           <div className="bg-bg rounded-xl divide-y divide-border mb-4">
             {sel.items.map((it) => (
-              <div key={it.id} className="flex justify-between px-3 py-2">
+              <div key={it.id} className="flex justify-between gap-3 px-3 py-2">
                 <span>
-                  <span className="text-primary font-semibold">{it.quantity}×</span> {it.menuItemName}
+                  <span className="text-primary font-semibold">{qtyLabel(it)}</span> {it.menuItemName}
                   {it.note && <span className="text-warning text-xs"> ({it.note})</span>}
                 </span>
-                <span className="font-semibold">{formatSum((it.price ?? 0) * it.quantity)}</span>
+                <span className="font-semibold whitespace-nowrap">{formatSum(lineSum(it.price ?? 0, it.quantity))}</span>
               </div>
             ))}
           </div>
 
+          {/* Chegirma/xizmat haqi bo'lsa — qatorlar yig'indisidan chek summasigacha tushuntirish */}
+          {(selTotals.discountAmount > 0 || selTotals.serviceAmount > 0) && (
+            <div className="space-y-1 text-sm mb-3 px-1">
+              <Row label="Jami" value={formatSum(selTotals.subtotal)} />
+              {selTotals.discountAmount > 0 && (
+                <Row label={`Chegirma (${selTotals.discountPercent}%)`} value={`- ${formatSum(selTotals.discountAmount)}`} />
+              )}
+              {selTotals.serviceAmount > 0 && (
+                <Row label={`Xizmat haqi (${selTotals.servicePercent}%)`} value={`+ ${formatSum(selTotals.serviceAmount)}`} />
+              )}
+            </div>
+          )}
+
           <div className="flex items-center justify-between">
             <StatusBadge status={sel.status} />
-            <div className="text-xl font-extrabold text-primary">{formatSum(sel.total ?? 0)}</div>
+            <div className="text-xl font-extrabold text-primary">{formatSum(selTotals.total)}</div>
           </div>
           {sel.status !== OrderStatus.Closed && (
             <div className="text-xs text-muted mt-2 text-right">Hali to‘lanmagan</div>

@@ -31,6 +31,11 @@ export class LicenseService implements OnModuleInit {
   private readonly cloudUrl: string;
   private readonly appVersion: string;
   private state: LicenseState = { key: null, activated: false, serverStatus: null, lastOkAt: null };
+  /**
+   * Real rejimda (SEED_DEMO=false) bazada eski demo ma'lumotlar topildi — SeedService ishga tushishda
+   * belgilaydi. GET /license/status (ochiq) orqali login ekraniga qizil ogohlantirish chiqadi.
+   */
+  private demoData = false;
 
   constructor(private readonly config: ConfigService) {
     this.file = this.config.get('LICENSE_FILE') || join(process.cwd(), 'license.json');
@@ -97,7 +102,13 @@ export class LicenseService implements OnModuleInit {
       key: this.state.key,
       lastOkAt: this.state.lastOkAt,
       graceDays: Math.round(GRACE_MS / 86400000),
+      demoData: this.demoData,
     };
+  }
+
+  /** SeedService: real rejimdagi bazada demo ma'lumotlar bor/yo'q */
+  setDemoDataDetected(value: boolean): void {
+    this.demoData = value;
   }
 
   // Aktivatsiya — 8 xonalik kalit bilan (desktop kiritadi)

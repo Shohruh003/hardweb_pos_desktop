@@ -17,6 +17,7 @@ import {
   calcOrderTotals,
   canChangeOrderStatus,
   clampPercent,
+  defaultCapabilitiesForRole,
   hasCapability,
   isFullAccessRole,
   lineSum,
@@ -804,9 +805,12 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any, tok
     // 3) Unikallik
     if (pin && users.some((x) => x.pin === pin)) return fail(PIN_TAKEN_ON_CREATE);
     if (login && loginTaken(login)) return fail('Bu login band');
+    // Ruxsatlar berilmagan (yoki bo'sh) — rol bo'yicha standart ruxsatlar (server kabi)
+    let permissions = normalizePermissions(body.permissions);
+    if (permissions.length === 0 && !isFullAccessRole(role)) permissions = defaultCapabilitiesForRole(role);
     const created: MockUser = {
       id: uid(), name: String(trimmed(body.name)), role, login, pin, active: true,
-      permissions: normalizePermissions(body.permissions),
+      permissions,
       password,
       // Parolni boshqa odam (direktor) qo'ydi — xodim birinchi kirishda o'zinikiga almashtiradi
       mustChangePassword: !!password,
@@ -941,8 +945,14 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any, tok
     let list = orders
       .map((o) => {
         const pays = orderPayments(o.id);
+        // Server kabi: total — chek summasi (chegirma/xizmat bilan), subtotal — qatorlar yig'indisi
+        const totals = calcOrderTotals(o.items, o.discountPercent, o.servicePercent);
         return {
           ...o,
+          subtotal: totals.subtotal,
+          discountAmount: totals.discountAmount,
+          serviceAmount: totals.serviceAmount,
+          total: totals.total,
           hall: tables.find((t) => t.id === o.tableId)?.hall ?? o.hall ?? null,
           // Server kabi: to'lovi bor qatorda to'langan summa va asosiy to'lov turi
           ...(pays.length ? { paidAmount: sumPayments(pays), paymentType: mainPaymentType(pays, paymentType) } : {}),
@@ -1152,16 +1162,30 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any, tok
     if (o.status === OrderStatus.Closed) return fail('Hisob allaqachon yopilgan');
     const missing = o.items.filter((it) => it.exciseRequired && !it.exciseCode);
     if (missing.length) return fail(`Aksiz kodi skanerlanmagan: ${missing.map((m) => m.menuItemName).join(', ')}`);
-    if (body.discountPercent != null) o.discountPercent = clampPercent(body.discountPercent);
-    if (body.serviceFeePercent != null) o.servicePercent = clampPercent(body.serviceFeePercent);
+    // Shu so'rovgacha saqlangan foizlar bilan jami (chegirma jami summani to'langandan pastga tushirmasin)
+    const previousTotal = calcOrderTotals(o.items, o.discountPercent, o.servicePercent).total;
+    const nextDiscount = body.discountPercent != null ? clampPercent(body.discountPercent) : o.discountPercent;
+    const nextService = body.serviceFeePercent != null ? clampPercent(body.serviceFeePercent) : o.servicePercent;
     // Summalar — shared/money (server bilan bir xil, butun so'm)
-    const t = calcOrderTotals(o.items, o.discountPercent, o.servicePercent);
+    const t = calcOrderTotals(o.items, nextDiscount, nextService);
     const priorPaid = sumPayments(orderPayments(o.id));
     const remaining = remainingAmount(t.total, priorPaid);
-    if (remaining <= 0) return fail('Hisob allaqachon to‘langan');
-    const payAmount = body.amount != null ? Math.min(roundSum(body.amount), remaining) : remaining;
-    if (payAmount <= 0) return fail('To‘lov summasi noto‘g‘ri');
-    payments.push({ id: uid(), orderId: o.id, amount: payAmount, type: body.type, cashierId: actor.id, createdAt: new Date().toISOString() });
+    // Oldingi to'lovlar jami summani qoplagan (yoki 0 so'm) — yangi to'lovsiz yopiladi (server kabi)
+    const settleOnly = remaining <= 0;
+    if (settleOnly) {
+      if (o.items.length === 0) return fail('Buyurtmada taom yo‘q — hisobni bekor qiling');
+      if (priorPaid > t.total && t.total < previousTotal) {
+        return fail('Jami summa to‘langan summadan kam bo‘lib qoladi — chegirmani kamaytiring yoki ortiqcha to‘lovni o‘chiring');
+      }
+    }
+    const payAmount = settleOnly ? 0 : body.amount != null ? Math.min(roundSum(body.amount), remaining) : remaining;
+    if (!settleOnly && payAmount <= 0) return fail('To‘lov summasi noto‘g‘ri');
+    // Tekshiruvlardan o'tdi — foizlar buyurtmaga saqlanadi (server tranzaksiyasi kabi)
+    o.discountPercent = nextDiscount;
+    o.servicePercent = nextService;
+    if (payAmount > 0) {
+      payments.push({ id: uid(), orderId: o.id, amount: payAmount, type: body.type, cashierId: actor.id, createdAt: new Date().toISOString() });
+    }
     const newPaid = priorPaid + payAmount;
     const fullyPaid = newPaid >= t.total;
     const allPayments = paymentRows(o.id);
@@ -1190,7 +1214,9 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any, tok
       lines: o.items.map((it) => ({ name: it.menuItemName, quantity: it.quantity, price: it.price, sum: lineSum(it.price, it.quantity), unit: it.unit ?? MenuUnit.Piece })),
       subtotal: t.subtotal, discountPercent: t.discountPercent, discountAmount: t.discountAmount,
       serviceFeePercent: t.servicePercent, serviceFeeAmount: t.serviceAmount, total: t.total,
-      paymentType: body.type, payments: allPayments.map((p) => ({ type: p.type, amount: p.amount })),
+      // Chekdagi to'lov turi — oxirgi to'lovniki; to'lovsiz (0 so'm) chekda — so'rovdagi tur
+      paymentType: allPayments.length ? allPayments[allPayments.length - 1].type : body.type,
+      payments: allPayments.map((p) => ({ type: p.type, amount: p.amount })),
       note: o.note ?? null, customerName: o.customerName ?? null, createdAt: new Date().toISOString(),
       fiscalQrPlaceholder: false, fiscalNumber, fiscalQr,
     };
@@ -1234,7 +1260,8 @@ export function mockRequest<T>(method: string, fullPath: string, body?: any, tok
         .sort((a, b) => (b.refundedAt ?? '').localeCompare(a.refundedAt ?? ''))
         .map((o) => ({
           id: o.id,
-          total: o.items.reduce((s, it) => s + lineSum(it.price, it.quantity), 0),
+          // Qaytarilgan summa — chek summasi (chegirma/xizmat bilan), server kabi
+          total: calcOrderTotals(o.items, o.discountPercent, o.servicePercent).total,
           reason: o.refundReason || '',
           refundedAt: o.refundedAt,
           products: o.items.map((it) => ({ name: it.menuItemName, quantity: it.quantity })),

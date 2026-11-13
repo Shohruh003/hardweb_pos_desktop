@@ -14,6 +14,7 @@ import {
   ReportSummary,
   TopItem,
   WaiterStat,
+  calcOrderTotals,
 } from '@hardweb-pos/shared';
 
 @Injectable()
@@ -159,10 +160,12 @@ export class ReportsService {
       order: { refundedAt: 'DESC' },
     });
     const items = orders.map((o) => {
-      const total = (o.items || []).reduce(
-        (a, it) => a + Number(it.price) * it.quantity,
-        0,
-      );
+      // Qaytarilgan summa — chek summasi (chegirma/xizmat bilan, butun so'm): mijozga aynan shu qaytadi
+      const total = calcOrderTotals(
+        o.items || [],
+        o.discountPercent,
+        o.servicePercent,
+      ).total;
       return {
         id: o.id,
         total,

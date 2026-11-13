@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { DataSource, EntityManager } from 'typeorm';
+import { DataSource, EntityManager, Raw } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 
 import {
@@ -23,6 +23,8 @@ import {
   TableStatus,
   UserRole,
 } from '@hardweb-pos/shared';
+import { safeCompare } from '../auth/user-view';
+import { LicenseService } from '../license/license.service';
 
 /** Real rejimdagi yagona boshlang'ich foydalanuvchi (parol vaqtinchalik — birinchi kirishda almashtiriladi) */
 const REAL_DIRECTOR = { name: 'Direktor', login: 'direktor', password: '1234' };
@@ -47,7 +49,10 @@ function isRealMode(): boolean {
 export class SeedService implements OnModuleInit {
   private readonly logger = new Logger('Seed');
 
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly license: LicenseService,
+  ) {}
 
   async onModuleInit() {
     if (process.env.SEED_ON_START !== 'true') return;
@@ -63,7 +68,7 @@ export class SeedService implements OnModuleInit {
 
     if (!seeded) {
       this.logger.log('Ma’lumotlar mavjud — seed o‘tkazib yuborildi');
-      if (real) await this.warnIfDemoData();
+      if (real) await this.secureLeftoverDemoData();
       return;
     }
 
@@ -95,14 +100,59 @@ export class SeedService implements OnModuleInit {
     );
   }
 
-  // Real rejimda eski demo baza qolib ketgan bo'lsa (oldingi o'rnatishdan) — logda ogohlantiramiz
-  private async warnIfDemoData() {
-    const demoVendor = await this.dataSource
-      .getRepository(UserEntity)
-      .findOne({ where: { login: 'superadmin', name: 'Super Admin (vendor)' } });
-    if (demoVendor) {
+  // Real rejimda eski demo baza qolib ketgan bo'lsa (oldingi DEMO yoki eski Server o'rnatishidan —
+  // baza %APPDATA%da, qayta o'rnatishda o'chmaydi). Belgisi — demo seed'dagi vendor SuperAdmin.
+  // Ma'lumot avtomatik O'CHIRILMAYDI, lekin hamma biladigan demo parollar bilan ishlab ketmaslik uchun:
+  //  1) vendor SuperAdmin (login superadmin / 1234) bloklanadi — direktor uni o'chira olmaydi;
+  //  2) paroli hali demo '1234' bo'lgan har bir faol xodim keyingi kirishda parolni almashtiradi;
+  //  3) GET /license/status -> demoData: true — login ekranida qizil ogohlantirish chiqadi.
+  private async secureLeftoverDemoData() {
+    const users = this.dataSource.getRepository(UserEntity);
+    const vendors = (
+      await users.find({
+        where: {
+          login: Raw((alias) => `LOWER(${alias}) = 'superadmin'`),
+        },
+      })
+    ).filter((u) => /vendor/i.test(u.name ?? ''));
+    if (vendors.length === 0) return;
+
+    this.license.setDemoDataDetected(true);
+    this.logger.warn(
+      'Diqqat: bazada demo ma’lumotlar topildi (demo xodimlar, menyu, buyurtmalar). Real ish uchun toza baza bilan boshlang: dasturni yoping va %APPDATA%\\@hardweb-pos\\desktop\\data\\dasturxon.db faylini o‘chiring.',
+    );
+
+    // 1) Vendor SuperAdmin — bloklanadi (faol direktor bo'lsagina: tizim rahbarsiz qolmasin)
+    const activeDirectors = await users.count({
+      where: { role: UserRole.Director, active: true },
+    });
+    for (const vendor of vendors) {
+      if (!vendor.active) continue;
+      if (activeDirectors > 0) {
+        await users.update(vendor.id, { active: false });
+        this.logger.warn(`Demo vendor hisobi bloklandi: ${vendor.name} (login: ${vendor.login})`);
+      } else {
+        this.logger.warn(
+          `Demo vendor hisobi bloklanmadi — faol direktor yo‘q: ${vendor.name} (login: ${vendor.login})`,
+        );
+      }
+    }
+
+    // 2) Demo paroli ('1234') hali o'zgarmagan faol xodimlar — keyingi kirishda almashtirish majburiy
+    const candidates = await users.find({
+      where: { active: true, mustChangePassword: false },
+    });
+    const flagged: string[] = [];
+    for (const user of candidates) {
+      if (!user.passwordHash) continue;
+      if (await safeCompare(DEMO_PASSWORD, user.passwordHash)) {
+        await users.update(user.id, { mustChangePassword: true });
+        flagged.push(user.name);
+      }
+    }
+    if (flagged.length > 0) {
       this.logger.warn(
-        'Diqqat: bazada demo ma’lumotlar topildi (demo xodimlar, menyu, buyurtmalar). Real ish uchun toza baza bilan boshlang.',
+        `Paroli demo '${DEMO_PASSWORD}' bo‘lgan ${flagged.length} ta xodim keyingi kirishda parolni almashtiradi: ${flagged.join(', ')}`,
       );
     }
   }

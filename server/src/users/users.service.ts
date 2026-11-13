@@ -10,6 +10,7 @@ import { Raw, Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import {
   ALL_CAPABILITY_KEYS,
+  defaultCapabilitiesForRole,
   isFullAccessRole,
   User,
   UserRole,
@@ -113,6 +114,14 @@ export class UsersService {
     if (pin) await this.assertPinFree(pin, null, PIN_TAKEN_ON_CREATE);
     if (login) await this.assertLoginFree(login, null);
 
+    // Ruxsatlar berilmagan (yoki bo'sh) — rol bo'yicha standart ruxsatlar (ofitsiant -> zakaz,
+    // oshpaz -> KDS, ...). Aks holda yangi xodim tizimga kirsa ham hech narsa qila olmaydi.
+    // Direktor/SuperAdmin — barcha ruxsatlarga avtomatik ega, ro'yxat kerak emas.
+    let permissions = normalizePermissions(dto.permissions);
+    if (permissions.length === 0 && !isFullAccessRole(role)) {
+      permissions = defaultCapabilitiesForRole(role);
+    }
+
     const entity = this.users.create({
       name: dto.name,
       role,
@@ -122,7 +131,7 @@ export class UsersService {
       // Parolni boshqa odam (direktor) qo'ydi — xodim birinchi kirishda o'zinikiga almashtiradi
       mustChangePassword: !!password,
       active: true,
-      permissions: normalizePermissions(dto.permissions),
+      permissions,
     });
     const saved = await this.withPinConflict(
       () => this.users.save(entity),

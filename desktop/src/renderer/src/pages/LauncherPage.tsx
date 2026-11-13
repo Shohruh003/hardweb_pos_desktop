@@ -13,12 +13,28 @@ const MANAGE_CAPS = ['history', 'menu', 'tables', 'staff', 'devices', 'settings'
 
 // Kirgandan keyingi bosh sahifa — faqat ruxsat berilgan modullar plitka bo'lib chiqadi.
 export function LauncherPage() {
-  const { user, logout, updateUser } = useAuth();
+  const { user, logout, updateUser, refreshUser } = useAuth();
   const { open } = useAppNav();
   const { t } = useI18n();
   const [qrOpen, setQrOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [webAvailable, setWebAvailable] = useState(false);
+  // Ruxsatlarni qayta tekshirish (direktor ruxsat bergach — chiqib-kirmasdan)
+  const [rechecking, setRechecking] = useState(false);
+  const [recheckNote, setRecheckNote] = useState('');
+
+  async function recheckPermissions() {
+    if (rechecking) return;
+    setRechecking(true);
+    setRecheckNote('');
+    try {
+      await refreshUser();
+      // Ruxsat berilgan bo'lsa App o'zi kerakli ekranni ochadi; bu yerda qolsak — hali yo'q
+      setRecheckNote('Hali ruxsat yo‘q — direktor ruxsat bergach qayta tekshiring');
+    } finally {
+      setRechecking(false);
+    }
+  }
 
   useEffect(() => {
     // Faqat kassa (server) kompyuteri web tarqatadi — o'shanда QR tugmasi ko'rinadi
@@ -78,8 +94,16 @@ export function LauncherPage() {
         <div className="text-muted mb-8">Kerakli bo‘limni tanlang</div>
 
         {all.length === 0 ? (
-          <div className="text-muted text-center max-w-md">
-            Sizga hali hech qanday ruxsat berilmagan. Administrator yoki direktorga murojaat qiling.
+          <div className="flex flex-col items-center gap-3 text-center max-w-md">
+            <div className="text-text">
+              Sizga hali hech qanday ruxsat berilmagan. Administrator yoki direktorga murojaat qiling.
+            </div>
+            <Button variant="ghost" onClick={() => void recheckPermissions()} disabled={rechecking}>
+              {rechecking ? 'Tekshirilmoqda…' : '↻ Qayta tekshirish'}
+            </Button>
+            {recheckNote && !rechecking && (
+              <div className="text-sm font-semibold text-warning animate-pop-in">{recheckNote}</div>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4 w-full max-w-3xl">

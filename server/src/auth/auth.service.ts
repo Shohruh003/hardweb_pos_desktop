@@ -38,7 +38,9 @@ export class AuthService {
 
   // Login + parol bilan kirish (Direktor/SuperAdmin uchun yagona yo'l)
   async login(login: string, password: string, ip: string) {
-    this.throttle.assertAllowed(ip, 'password');
+    // Urinish birinchi await'dan OLDIN (sinxron) sanaladi — bir vaqtda yuborilgan so'rovlar to'dasi
+    // ham IP bo'yicha 5 tadan, umumiy 40 tadan ortiq parolni tekshirtira olmaydi
+    const attempt = this.throttle.begin(ip, 'password');
 
     const name = (login ?? '').trim();
     // Login katta-kichik harfga sezgir emas; faqat faol foydalanuvchilar.
@@ -68,11 +70,11 @@ export class AuthService {
       if (!candidates.some((u) => !!u.passwordHash)) {
         await safeCompare(password ?? '', await this.getDummyHash());
       }
-      this.throttle.recordFailure(ip, 'password');
+      // Noto'g'ri urinish begin() da allaqachon sanalgan
       throw new UnauthorizedException(WRONG_LOGIN_MESSAGE);
     }
 
-    this.throttle.recordSuccess(ip);
+    this.throttle.succeed(attempt);
     return this.issue(matched);
   }
 
@@ -116,18 +118,25 @@ export class AuthService {
     newPassword: string,
     ip: string,
   ) {
-    this.throttle.assertAllowed(ip, 'password');
+    // Joriy parolni tanlab topishga urinish ham cheklanadi — login kabi await'dan oldin sanaladi
+    const attempt = this.throttle.begin(ip, 'password');
 
-    const user = await this.findActive(userId);
+    let user: UserEntity;
+    try {
+      user = await this.findActive(userId);
+    } catch (err) {
+      this.throttle.release(attempt); // parol tekshirilmadi — urinish hisoblanmaydi
+      throw err;
+    }
     if (!user.passwordHash) {
+      this.throttle.release(attempt);
       throw new BadRequestException('Bu foydalanuvchida parol yo‘q');
     }
     if (!(await safeCompare(currentPassword ?? '', user.passwordHash))) {
-      // Joriy parolni tanlab topishga urinish ham cheklanadi
-      this.throttle.recordFailure(ip, 'password');
+      // Noto'g'ri urinish begin() da allaqachon sanalgan
       throw new BadRequestException('Joriy parol noto‘g‘ri');
     }
-    this.throttle.recordSuccess(ip);
+    this.throttle.succeed(attempt);
 
     // Vaqtinchalik parolni o'zi bilan "almashtirib" majburiy almashtirishni chetlab o'tmaslik uchun
     if (newPassword === currentPassword) {

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { OrderStatus, PaymentType } from '@hardweb-pos/shared';
 import { Button, formatSum } from './ui';
 import { Select } from './Select';
-import { OrderHistory } from './OrderHistory';
+import { OrderHistory, orderCheckTotals } from './OrderHistory';
 import { useI18n } from '../state/i18n';
 import {
   OrderFilters,
@@ -55,8 +55,9 @@ export function MyOrdersView({
   );
   const sentinelRef = useScrollSentinel(loadMore, hasMore && !loading);
 
-  // Jami tushum (yuklangan buyurtmalar bo'yicha)
-  const sum = items.reduce((s, o) => s + (o.total ?? 0), 0);
+  // Jami tushum (yuklangan buyurtmalar bo'yicha) — chek summalari (chegirma/xizmat bilan), ro'yxatdagi
+  // bilan bir xil; vozvrat qilingan cheklar tushumga kirmaydi (hisobotlar kabi)
+  const sum = items.reduce((s, o) => (o.refunded ? s : s + orderCheckTotals(o).total), 0);
 
   const PRESETS: { key: DatePreset; label: string }[] = [
     { key: 'today', label: t('filter.today') },

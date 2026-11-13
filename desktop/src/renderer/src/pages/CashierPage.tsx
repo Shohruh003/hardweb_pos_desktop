@@ -273,6 +273,11 @@ export function CashierPage() {
   const change = typedAmount !== null && typedAmount > remaining ? typedAmount - remaining : 0;
   // Ochiq hisob boshqa joyda yopilgan/bekor qilingan (ro'yxatda yo'q)
   const selectedGone = !!selected && ordersLoaded && !orders.some((o) => o.id === selected.id);
+  // To'langan summa jami summadan oshib ketgan (chegirma oshirilgan) — server bunday yopishni rad etadi
+  const overpaid = paidAmount > totals.total;
+  // Oldingi to'lovlar jami summani qoplagan (yoki hisob 0 so'm) — yangi to'lovsiz "Hisobni yopish"
+  const canSettle =
+    !!selected && !selectedGone && selected.items.length > 0 && remaining <= 0 && !overpaid;
 
   // Buyurtma tanlanganda — uning to'lovlari va chegirma/xizmatini yuklaymiz
   useEffect(() => {
@@ -306,22 +311,7 @@ export function CashierPage() {
         discountPercent: discount,
         serviceFeePercent: serviceFee,
       });
-      if (res.fullyPaid) {
-        // To'liq to'landi — chek chiqarilgunga qadar ro'yxatda "chek chiqmadi" bo'lib qoladi
-        const rc = res.receipt;
-        if (rc) {
-          setUnprinted((prev) => [...prev.filter((u) => u.order.id !== order.id), { order, receipt: rc }]);
-          setReceipt(rc);
-        }
-        setSelected(null);
-        refresh();
-      } else {
-        // Qisman to'landi — buyurtma ochiq qoladi; javobdagi eng yangi holatni olamiz
-        if (Array.isArray(res.payments)) setPayments(res.payments);
-        else loadPayments(order.id);
-        if (res.order && res.order.id === order.id && Array.isArray(res.order.items)) setSelected(res.order);
-        setPayAmount('');
-      }
+      applyPayResult(order, res);
     } catch (e) {
       setPayError((e as Error).message || 'To‘lov o‘tmadi');
       // Hisob holati o'zgargan bo'lishi mumkin (boshqa joyda to'langan/taom qo'shilgan) — yangilaymiz
@@ -329,6 +319,50 @@ export function CashierPage() {
     } finally {
       setPaying(false);
     }
+  }
+
+  // Hisobni yangi to'lovsiz yopish: oldingi to'lovlar jami summani qoplagan (masalan to'lovdan keyin
+  // taom olib tashlangan) yoki to'lanadigan summa 0 so'm (100% chegirma). Server hisobni yopadi,
+  // stolni bo'shatadi, skladdan ayiradi va chekni oldingi to'lovlar bilan qaytaradi.
+  async function settleBill() {
+    if (!selected || paying || !canSettle) return;
+    const order = selected;
+    setPaying(true);
+    setPayError('');
+    try {
+      const res = await api.post<PayResponse>(`/orders/${order.id}/pay`, {
+        // Yangi to'lov yozilmaydi; tur faqat 0 so'mlik chek uchun (to'lovlar bo'lsa — oxirgisiniki)
+        type: payments.length ? payments[payments.length - 1].type : PaymentType.Cash,
+        discountPercent: discount,
+        serviceFeePercent: serviceFee,
+      });
+      applyPayResult(order, res);
+    } catch (e) {
+      setPayError((e as Error).message || 'Hisob yopilmadi');
+      refresh();
+    } finally {
+      setPaying(false);
+    }
+  }
+
+  // To'lov javobi: to'liq — chek oynasi ("chek chiqmadi" ro'yxatiga), qisman — hisob ochiq qoladi
+  function applyPayResult(order: Order, res: PayResponse) {
+    if (res.fullyPaid) {
+      // To'liq to'landi — chek chiqarilgunga qadar ro'yxatda "chek chiqmadi" bo'lib qoladi
+      const rc = res.receipt;
+      if (rc) {
+        setUnprinted((prev) => [...prev.filter((u) => u.order.id !== order.id), { order, receipt: rc }]);
+        setReceipt(rc);
+      }
+      setSelected(null);
+      refresh();
+      return;
+    }
+    // Qisman to'landi — buyurtma ochiq qoladi; javobdagi eng yangi holatni olamiz
+    if (Array.isArray(res.payments)) setPayments(res.payments);
+    else loadPayments(order.id);
+    if (res.order && res.order.id === order.id && Array.isArray(res.order.items)) setSelected(res.order);
+    setPayAmount('');
   }
 
   async function removePayment(p: PaymentRow) {
@@ -688,74 +722,107 @@ export function CashierPage() {
                 </div>
               )}
 
-              {/* To'lov summasi (bo'sh qoldirilsa — qolgan summa to'liq to'lanadi) */}
-              <div className="mb-3">
-                <div className="text-sm text-muted mb-2">
-                  To‘lov summasi <span className="text-xs">(bo‘sh — qolganini to‘liq)</span>
-                </div>
-                <input
-                  value={payAmount}
-                  // Faqat raqamlar: bo'shliq/vergul/nuqta minglik ajratgich sifatida olib tashlanadi
-                  onChange={(e) => {
-                    setPayAmount(cleanDigitsInput(e.target.value));
-                    setPayError('');
-                  }}
-                  inputMode="numeric"
-                  placeholder={formatSum(remaining)}
-                  className="w-full px-3 py-3 rounded-xl bg-bg border border-border outline-none focus:border-primary text-lg font-bold text-center"
-                />
-                <div className="mt-1.5 min-h-[20px] text-sm text-center">
-                  {remaining > 0 &&
-                    (typedAmount === null ? (
-                      <span className="text-muted">Qolgan {formatSum(remaining)} to‘liq to‘lanadi</span>
-                    ) : change > 0 ? (
-                      <span className="font-bold text-success">
-                        Qaytim: {formatSum(change)}{' '}
-                        <span className="font-normal text-muted">· to‘lov {formatSum(remaining)}</span>
-                      </span>
-                    ) : (
-                      <span className="text-text">
-                        {formatSum(typedAmount)} to‘lanadi
-                        {remaining - typedAmount > 0 && (
-                          <span className="text-muted"> · keyin qoladi {formatSum(remaining - typedAmount)}</span>
-                        )}
-                      </span>
-                    ))}
-                </div>
-              </div>
-
-              {payError && (
-                <div
-                  role="alert"
-                  className="mb-3 bg-danger/10 border border-danger/50 text-danger rounded-xl px-3.5 py-2.5 text-sm font-semibold"
-                >
-                  ⚠️ {payError}
-                </div>
-              )}
-
-              {/* To'lov usullari — bosilganda summa shu usul bilan to'lanadi */}
-              <div className="grid grid-cols-3 gap-2">
-                {PAYMENT_OPTIONS.map((p) => (
+              {canSettle ? (
+                /* Hisob to'liq qoplangan (yoki 0 so'm) — yangi to'lov kerak emas, faqat yopish */
+                <div className="rounded-2xl border-2 border-success/60 bg-success/10 p-4 animate-pop-in">
+                  <div className="text-center text-lg font-extrabold text-success">
+                    {paidAmount > 0 ? '✓ Hisob to‘liq to‘langan' : '✓ To‘lanadigan summa 0 so‘m'}
+                  </div>
+                  <div className="text-center text-sm text-text mt-1 mb-3">
+                    {paidAmount > 0
+                      ? 'Yangi to‘lov kerak emas — hisobni yoping, chek chiqadi va stol bo‘shaydi.'
+                      : 'Hisob to‘lovsiz yopiladi — chek chiqadi va stol bo‘shaydi.'}
+                  </div>
+                  {payError && (
+                    <div
+                      role="alert"
+                      className="mb-3 bg-danger/10 border border-danger/50 text-danger rounded-xl px-3.5 py-2.5 text-sm font-semibold"
+                    >
+                      ⚠️ {payError}
+                    </div>
+                  )}
                   <button
-                    key={p.type}
-                    onClick={() => addPayment(p.type)}
-                    disabled={payDisabled}
-                    className="py-3.5 rounded-xl font-bold bg-primary text-white hover:brightness-110 active:scale-95 transition-all disabled:opacity-50"
+                    onClick={settleBill}
+                    disabled={paying || pendingExcise.length > 0}
+                    className="w-full py-4 rounded-xl text-lg font-extrabold bg-success text-white shadow-lg hover:brightness-110 active:scale-[0.98] transition-all disabled:opacity-50"
                   >
-                    {paying ? '…' : t(`pay.${p.type}`)}
+                    {paying ? 'Yopilmoqda…' : '✅ Hisobni yopish'}
                   </button>
-                ))}
-              </div>
-              {pendingExcise.length > 0 && (
-                <div className="text-xs text-danger mt-2 text-center">Avval aksiz kodini skanerlang</div>
-              )}
-              {/* Tugmalar nega o'chiq — tushuntirish */}
-              {!selectedGone && remaining <= 0 && selected.items.length > 0 && (
-                <div className="text-sm text-warning font-semibold mt-3 text-center">
-                  {paidAmount > 0
-                    ? 'To‘langan summa jami summaga yetdi, lekin hisob yopilmadi — chegirma/xizmat haqini tekshiring yoki ortiqcha to‘lovni o‘chiring.'
-                    : 'To‘lanadigan summa 0 so‘m — chegirmani tekshiring.'}
+                  {pendingExcise.length > 0 && (
+                    <div className="text-xs text-danger mt-2 text-center">Avval aksiz kodini skanerlang</div>
+                  )}
                 </div>
+              ) : (
+                <>
+                  {/* To'lov summasi (bo'sh qoldirilsa — qolgan summa to'liq to'lanadi) */}
+                  <div className="mb-3">
+                    <div className="text-sm text-muted mb-2">
+                      To‘lov summasi <span className="text-xs">(bo‘sh — qolganini to‘liq)</span>
+                    </div>
+                    <input
+                      value={payAmount}
+                      // Faqat raqamlar: bo'shliq/vergul/nuqta minglik ajratgich sifatida olib tashlanadi
+                      onChange={(e) => {
+                        setPayAmount(cleanDigitsInput(e.target.value));
+                        setPayError('');
+                      }}
+                      inputMode="numeric"
+                      placeholder={formatSum(remaining)}
+                      className="w-full px-3 py-3 rounded-xl bg-bg border border-border outline-none focus:border-primary text-lg font-bold text-center"
+                    />
+                    <div className="mt-1.5 min-h-[20px] text-sm text-center">
+                      {remaining > 0 &&
+                        (typedAmount === null ? (
+                          <span className="text-muted">Qolgan {formatSum(remaining)} to‘liq to‘lanadi</span>
+                        ) : change > 0 ? (
+                          <span className="font-bold text-success">
+                            Qaytim: {formatSum(change)}{' '}
+                            <span className="font-normal text-muted">· to‘lov {formatSum(remaining)}</span>
+                          </span>
+                        ) : (
+                          <span className="text-text">
+                            {formatSum(typedAmount)} to‘lanadi
+                            {remaining - typedAmount > 0 && (
+                              <span className="text-muted"> · keyin qoladi {formatSum(remaining - typedAmount)}</span>
+                            )}
+                          </span>
+                        ))}
+                    </div>
+                  </div>
+
+                  {payError && (
+                    <div
+                      role="alert"
+                      className="mb-3 bg-danger/10 border border-danger/50 text-danger rounded-xl px-3.5 py-2.5 text-sm font-semibold"
+                    >
+                      ⚠️ {payError}
+                    </div>
+                  )}
+
+                  {/* To'lov usullari — bosilganda summa shu usul bilan to'lanadi */}
+                  <div className="grid grid-cols-3 gap-2">
+                    {PAYMENT_OPTIONS.map((p) => (
+                      <button
+                        key={p.type}
+                        onClick={() => addPayment(p.type)}
+                        disabled={payDisabled}
+                        className="py-3.5 rounded-xl font-bold bg-primary text-white hover:brightness-110 active:scale-95 transition-all disabled:opacity-50"
+                      >
+                        {paying ? '…' : t(`pay.${p.type}`)}
+                      </button>
+                    ))}
+                  </div>
+                  {pendingExcise.length > 0 && (
+                    <div className="text-xs text-danger mt-2 text-center">Avval aksiz kodini skanerlang</div>
+                  )}
+                  {/* To'lovlar jami summadan oshib ketgan (chegirma oshirildi) — tugmalar nega o'chiq */}
+                  {!selectedGone && overpaid && (
+                    <div className="mt-3 rounded-xl border border-warning/50 bg-warning/10 px-3.5 py-2.5 text-sm font-semibold text-text text-center">
+                      ⚠️ To‘langan summa jami summadan {formatSum(paidAmount - totals.total)} ko‘p — chegirma/xizmat
+                      haqini tekshiring yoki ortiqcha to‘lovni o‘chiring.
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>

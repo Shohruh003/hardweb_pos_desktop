@@ -155,8 +155,12 @@ export function ServerAddressForm({
   );
 }
 
-// Kirish ekrani — PIN bilan (mock va real bir xil ishlaydi)
-export function LoginPage() {
+/** Kassa kompyuteridagi baza fayli (DEPLOY.md, 2-qadam) */
+const DB_PATH = '%APPDATA%\\@hardweb-pos\\desktop\\data\\dasturxon.db';
+
+// Kirish ekrani — PIN bilan (mock va real bir xil ishlaydi).
+// demoData — server (real rejim) bazasida eski demo ma'lumotlar topilgan: qizil ogohlantirish.
+export function LoginPage({ demoData = false }: { demoData?: boolean }) {
   const { loginByPin, login, sessionExpired, dismissSessionExpired } = useAuth();
   const { t } = useI18n();
   const [pin, setPin] = useState('');
@@ -262,6 +266,33 @@ export function LoginPage() {
         <div className="absolute top-4 right-4">
           <ThemeLangControls />
         </div>
+
+        {/* Real ish uchun o'rnatilgan serverda eski demo baza qolib ketgan — yopib bo'lmaydigan ogohlantirish */}
+        {demoData && (
+          <div
+            role="alert"
+            className="mb-5 w-full max-w-[440px] rounded-xl border-2 border-danger bg-danger/15 px-4 py-3 text-left animate-pop-in"
+          >
+            <div className="flex items-start gap-2.5">
+              <span className="text-xl leading-none text-danger">⛔</span>
+              <div className="min-w-0">
+                <div className="font-extrabold text-danger">
+                  Bazada demo ma‘lumotlar bor — o‘rnatishdan oldin eski bazani o‘chiring
+                </div>
+                <div className="mt-1 text-sm text-text">
+                  Kassa kompyuterida dasturni yoping va quyidagi faylni o‘chiring (yoki boshqa joyga ko‘chiring),
+                  so‘ng dasturni qayta oching — toza baza yaratiladi:
+                </div>
+                <div className="mt-1.5 rounded-md bg-bg/70 border border-danger/40 px-2 py-1 font-mono text-xs text-text break-all select-all">
+                  {DB_PATH}
+                </div>
+                <div className="mt-1.5 text-xs text-text/80">
+                  Demo xodimlarning paroli hammaga ma‘lum: vendor hisobi bloklandi, qolganlar parolni almashtirishi shart.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="text-primary font-extrabold text-2xl tracking-tight">DasturXon</div>
         <div className="text-muted text-sm mb-6">

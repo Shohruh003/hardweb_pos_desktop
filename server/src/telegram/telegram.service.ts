@@ -8,7 +8,7 @@ import {
   PaymentEntity,
   SettingsEntity,
 } from '../entities';
-import { OrderStatus, lineSum, roundSum } from '@hardweb-pos/shared';
+import { OrderStatus, calcOrderTotals, roundSum } from '@hardweb-pos/shared';
 import {
   escapeHtml,
   inDaySql,
@@ -244,8 +244,9 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       where: { refunded: true, refundedAt: inDay },
       order: { refundedAt: 'DESC' },
     });
+    // Qaytarilgan summa — chek summasi (chegirma/xizmat bilan), /reports/refunds bilan bir xil
     const orderSum = (o: OrderEntity) =>
-      (o.items || []).reduce((a, it) => a + lineSum(it.price, it.quantity), 0);
+      calcOrderTotals(o.items || [], o.discountPercent, o.servicePercent).total;
     const refundTotal = refundedOrders.reduce((s, o) => s + orderSum(o), 0);
     const closedCount = await this.orders.count({
       where: { status: OrderStatus.Closed, closedAt: inDay },

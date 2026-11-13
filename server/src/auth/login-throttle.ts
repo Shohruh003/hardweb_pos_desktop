@@ -32,6 +32,14 @@ export const TOO_MANY_ATTEMPTS_MESSAGE =
 /** Kirish turi: PIN yoki login/parol (parol almashtirishdagi joriy parol ham "password") */
 export type LoginKind = 'pin' | 'password';
 
+/** begin() boshlagan parol urinishi — natijaga qarab succeed() yoki release() ga beriladi */
+export interface LoginAttempt {
+  readonly ip: string;
+  readonly kind: LoginKind;
+  /** Urinish qayd etilgan vaqt (ms) — hisoblagichdagi aynan shu yozuvni topish uchun */
+  readonly at: number;
+}
+
 interface Counter {
   /** Oyna ichidagi noto'g'ri urinishlar vaqtlari (ms) */
   failures: number[];
@@ -79,10 +87,42 @@ export class LoginThrottle {
     }
   }
 
-  /** Noto'g'ri urinishni qayd etish (IP va umumiy hisoblagich) */
-  recordFailure(ip: string, kind: LoginKind): void {
-    const now = Date.now();
+  /**
+   * Parol urinishini BOSHLASH — sinxron, hech qanday await'dan OLDIN chaqiriladi: blok bo'lsa 429,
+   * aks holda urinish darhol "noto'g'ri" deb sanaladi (IP va umumiy hisoblagichda).
+   * Sabab: bcrypt tekshiruvi event loop'ni bo'shatadi — sanash tekshiruvdan keyin bo'lsa, bir vaqtda
+   * yuborilgan o'nlab so'rov hammasi assertAllowed'dan o'tib, cheklovni butunlay chetlab o'tardi.
+   * Parol to'g'ri chiqsa — succeed(); parol umuman tekshirilmagan bo'lsa — release();
+   * noto'g'ri bo'lsa hech narsa qilinmaydi (urinish allaqachon sanalgan).
+   */
+  begin(ip: string, kind: LoginKind): LoginAttempt {
+    this.assertAllowed(ip, kind);
+    const at = Date.now();
+    this.recordFailureAt(ip, kind, at);
+    return { ip, kind, at };
+  }
 
+  /** Urinish muvaffaqiyatli: IP hisoblagichi nolga tushadi, umumiy hisoblagichdan shu urinish olinadi */
+  succeed(attempt: LoginAttempt): void {
+    this.byIp.delete(attempt.ip);
+    this.retract(this.global[attempt.kind], attempt.at, GLOBAL_MAX_FAILURES, GLOBAL_WINDOW_MS, GLOBAL_BLOCK_MS);
+  }
+
+  /** Urinish parol tekshiruvigacha yetmadi (masalan foydalanuvchida parol yo'q) — sanalmaydi */
+  release(attempt: LoginAttempt): void {
+    const counter = this.byIp.get(attempt.ip);
+    if (counter) {
+      this.retract(counter, attempt.at, IP_MAX_FAILURES, IP_WINDOW_MS, IP_BLOCK_MS);
+    }
+    this.retract(this.global[attempt.kind], attempt.at, GLOBAL_MAX_FAILURES, GLOBAL_WINDOW_MS, GLOBAL_BLOCK_MS);
+  }
+
+  /** Noto'g'ri urinishni qayd etish (IP va umumiy hisoblagich) — PIN kirishi uchun */
+  recordFailure(ip: string, kind: LoginKind): void {
+    this.recordFailureAt(ip, kind, Date.now());
+  }
+
+  private recordFailureAt(ip: string, kind: LoginKind, now: number): void {
     let counter = this.byIp.get(ip);
     if (!counter) {
       if (this.byIp.size >= MAX_TRACKED_IPS) this.sweep(now);
@@ -115,7 +155,11 @@ export class LoginThrottle {
     this.byIp.delete(ip);
   }
 
-  /** Hisoblagichga urinish qo'shish; chegaraga yetsa blok qo'yiladi (true qaytadi) */
+  /**
+   * Hisoblagichga urinish qo'shish; chegaraga yetsa blok qo'yiladi (yangi blok — true).
+   * Yozuvlar blokdan keyin ham qoladi (retract() blokni kim qo'yganini bilishi uchun) — blok oynaga
+   * teng (60 s), shuning uchun blok tugaganda ular baribir oynadan chiqib bo'lgan bo'ladi.
+   */
   private hit(
     counter: Counter,
     now: number,
@@ -125,12 +169,32 @@ export class LoginThrottle {
   ): boolean {
     counter.failures = counter.failures.filter((t) => now - t < windowMs);
     counter.failures.push(now);
-    if (counter.failures.length >= max) {
+    if (counter.failures.length >= max && counter.blockedUntil <= now) {
       counter.blockedUntil = now + blockMs;
-      counter.failures = [];
       return true;
     }
     return false;
+  }
+
+  /**
+   * begin() qayd etgan urinishni hisoblagichdan olib tashlash. Blokni aynan shu urinish qo'ygan
+   * bo'lsa va usiz chegaraga yetilmagan bo'lsa — blok ham bekor qilinadi (to'g'ri parol kiritgan
+   * xodim o'zi va boshqalar uchun blok sababchisi bo'lmasin).
+   */
+  private retract(
+    counter: Counter,
+    at: number,
+    max: number,
+    windowMs: number,
+    blockMs: number,
+  ): void {
+    const i = counter.failures.lastIndexOf(at);
+    if (i < 0) return;
+    counter.failures.splice(i, 1);
+    if (counter.blockedUntil === at + blockMs) {
+      const counted = counter.failures.filter((t) => t <= at && at - t < windowMs).length;
+      if (counted < max) counter.blockedUntil = 0;
+    }
   }
 
   /** Muddati o'tgan yozuvlarni tozalash; baribir ko'p bo'lsa — eng eskilarini (Map tartibi) o'chiramiz */

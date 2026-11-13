@@ -1,6 +1,7 @@
 // Ruxsatlar (capabilities) — xodim nima qila olishini belgilaydi.
 // Rol emas, aynan shu ruxsatlar UI'ni va amallarni boshqaradi.
 // Direktor va SuperAdmin — barcha ruxsatlarga ega (avtomatik).
+import { UserRole } from './enums';
 
 export interface Capability {
   key: string;
@@ -31,6 +32,39 @@ export const CAPABILITIES: Capability[] = [
 ];
 
 export const ALL_CAPABILITY_KEYS = CAPABILITIES.map((c) => c.key);
+
+/**
+ * Rol bo'yicha standart ruxsatlar. Yangi xodim qo'shilganda (yoki ruxsatlari belgilanmagan xodimning
+ * roli o'zgarganda) oldindan belgilanadi — direktor keyin xohlagancha o'zgartiradi. Ruxsatsiz xodim
+ * tizimga kirsa ham hech narsa qila olmaydi, shuning uchun server ham POST /users'da ruxsatlar
+ * berilmasa (yoki bo'sh bo'lsa) shu ro'yxatni qo'llaydi.
+ * Direktor/SuperAdmin bu yerda yo'q — ular barcha ruxsatlarga avtomatik ega.
+ * Administrator — demo seed'dagi administrator to'plami bilan bir xil.
+ */
+export const DEFAULT_ROLE_CAPABILITIES: Readonly<Partial<Record<UserRole, readonly string[]>>> = {
+  [UserRole.Waiter]: ['waiter'],
+  [UserRole.Cook]: ['kitchen'],
+  [UserRole.Cashier]: ['cashier', 'history', 'revenue'],
+  [UserRole.Admin]: [
+    'history',
+    'reports',
+    'menu',
+    'inventory',
+    'stations',
+    'tables',
+    'staff',
+    'devices',
+    'terminals',
+    'settings',
+    'refund',
+    'cashier',
+  ],
+};
+
+/** Rolning standart ruxsatlari (yangi massiv; Direktor/SuperAdmin va noma'lum rol — bo'sh) */
+export function defaultCapabilitiesForRole(role: string): string[] {
+  return [...(DEFAULT_ROLE_CAPABILITIES[role as UserRole] ?? [])];
+}
 
 // Direktor/SuperAdmin barcha ruxsatga ega — shu rollarni tekshiramiz
 export function isFullAccessRole(role: string): boolean {

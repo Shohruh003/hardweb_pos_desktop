@@ -291,6 +291,13 @@ export class OrdersService {
       const dto = this.toDto(o, tableNo.get(o.tableId));
       dto.hall = tableHall.get(o.tableId) ?? null;
       dto.waiterName = waiterName.get(o.waiterId) ?? null;
+      // Tarix qatorida total — CHEK summasi (chegirma/xizmat bilan, mijoz to'lagan summa);
+      // subtotal — qatorlar yig'indisi. Cheklar tarixi, vozvrat va hisobotlar shu summani ko'rsatadi.
+      const totals = calcOrderTotals(o.items || [], o.discountPercent, o.servicePercent);
+      dto.subtotal = totals.subtotal;
+      dto.discountAmount = totals.discountAmount;
+      dto.serviceAmount = totals.serviceAmount;
+      dto.total = totals.total;
       const orderPays = paysByOrder.get(o.id);
       if (orderPays?.length) {
         dto.paidAmount = sumPayments(orderPays);
@@ -671,7 +678,9 @@ export class OrdersService {
     return dtoOut;
   }
 
-  // Kassa: to'lov qabul qilish, hisobni yopish, stolni bo'shatish, chek qaytarish (TZ 5.3)
+  // Kassa: to'lov qabul qilish, hisobni yopish, stolni bo'shatish, chek qaytarish (TZ 5.3).
+  // Oldingi to'lovlar jami summani allaqachon qoplagan ochiq hisob (yoki 0 so'mlik hisob) shu
+  // so'rov bilan yangi to'lovsiz yopiladi ("Hisobni yopish"). Faqat yopilgan hisob rad etiladi.
   async pay(
     id: string,
     dto: PayOrderDto,
@@ -702,6 +711,14 @@ export class OrdersService {
       );
     }
 
+    // Shu so'rovgacha saqlangan foizlar bilan jami summa — chegirma oshirilib, jami to'langan
+    // summadan pastga tushib qolishini aniqlash uchun
+    const previousTotal = calcOrderTotals(
+      order.items || [],
+      order.discountPercent,
+      order.servicePercent,
+    ).total;
+
     // Chegirma/xizmat foizini buyurtmaga saqlaymiz — bo'lib to'lashda total barqaror qoladi
     if (dto.discountPercent != null) order.discountPercent = clampPercent(dto.discountPercent);
     if (dto.serviceFeePercent != null) order.servicePercent = clampPercent(dto.serviceFeePercent);
@@ -723,13 +740,32 @@ export class OrdersService {
     });
     const priorPaid = sumPayments(priorPayments);
     const remaining = remainingAmount(total, priorPaid);
-    if (remaining <= 0) {
-      throw new BadRequestException('Hisob allaqachon to‘langan');
+
+    // Oldingi to'lovlar jami summani allaqachon qoplagan (masalan qisman to'lovdan keyin taom
+    // olib tashlandi yoki 100% chegirma — to'lovsiz hisob): yangi to'lov yozilmaydi, hisob
+    // shunchaki yopiladi (chek, sklad, fiskal — oddiy to'liq to'lovdagidek). Aks holda bunday
+    // hisobni na to'lab, na bekor qilib bo'lardi.
+    const settleOnly = remaining <= 0;
+    if (settleOnly) {
+      if (!(order.items || []).length) {
+        throw new BadRequestException('Buyurtmada taom yo‘q — hisobni bekor qiling');
+      }
+      // Chegirma (yoki xizmat haqini kamaytirish) jami summani to'langan summadan pastga
+      // tushirmasin — aks holda chekdagi to'lovlar jami summadan ko'p bo'lib qoladi
+      if (priorPaid > total && total < previousTotal) {
+        throw new BadRequestException(
+          'Jami summa to‘langan summadan kam bo‘lib qoladi — chegirmani kamaytiring yoki ortiqcha to‘lovni o‘chiring',
+        );
+      }
     }
-    // To'lov summasi (butun so'm): berilmasa — qolgan summa; berilsa — qolgandan oshmaydi
-    const payAmount =
-      dto.amount != null ? Math.min(roundSum(dto.amount), remaining) : remaining;
-    if (payAmount <= 0) {
+    // To'lov summasi (butun so'm): berilmasa — qolgan summa; berilsa — qolgandan oshmaydi.
+    // Hisob allaqachon qoplangan bo'lsa — yangi to'lov yo'q (0)
+    const payAmount = settleOnly
+      ? 0
+      : dto.amount != null
+        ? Math.min(roundSum(dto.amount), remaining)
+        : remaining;
+    if (!settleOnly && payAmount <= 0) {
       throw new BadRequestException('To‘lov summasi noto‘g‘ri');
     }
     const newPaid = priorPaid + payAmount;
@@ -747,16 +783,18 @@ export class OrdersService {
     const fiscalEnabled = process.env.FISCAL_ENABLED !== 'false';
 
     await this.dataSource.transaction(async (manager) => {
-      const savedPayment = await manager.save(
-        manager.create(PaymentEntity, {
-          orderId: order.id,
-          amount: payAmount, // butun so'm
-          type: dto.type,
-          cashierId,
-        }),
-      );
-      newPaymentId = savedPayment.id;
-      newPaymentAt = isoOf(savedPayment.createdAt);
+      if (payAmount > 0) {
+        const savedPayment = await manager.save(
+          manager.create(PaymentEntity, {
+            orderId: order.id,
+            amount: payAmount, // butun so'm
+            type: dto.type,
+            cashierId,
+          }),
+        );
+        newPaymentId = savedPayment.id;
+        newPaymentAt = isoOf(savedPayment.createdAt);
+      }
       // chegirma/xizmat persistini saqlaymiz
       await manager.save(order);
 
@@ -796,20 +834,24 @@ export class OrdersService {
       }
     });
 
-    const allPayments = [
-      ...priorPayments.map((p) => ({
-        id: p.id,
-        type: p.type,
-        amount: roundSum(p.amount),
-        createdAt: isoOf(p.createdAt),
-      })),
-      {
+    const allPayments = priorPayments.map((p) => ({
+      id: p.id,
+      type: p.type,
+      amount: roundSum(p.amount),
+      createdAt: isoOf(p.createdAt),
+    }));
+    if (payAmount > 0) {
+      allPayments.push({
         id: newPaymentId,
         type: dto.type,
         amount: payAmount,
         createdAt: newPaymentAt || new Date().toISOString(),
-      },
-    ];
+      });
+    }
+    // Chekdagi to'lov turi — oxirgi to'lovniki; to'lovsiz yopilgan hisobda (0 so'm) — so'rovdagi tur
+    const receiptPaymentType = allPayments.length
+      ? allPayments[allPayments.length - 1].type
+      : dto.type;
 
     // To'lov javobida order.total — YAKUNIY summa (chegirma/xizmat bilan), qolgan joylarda
     // DTO total = subtotal (qatorlar yig'indisi)
@@ -848,7 +890,7 @@ export class OrdersService {
       serviceFeePercent: totals.servicePercent,
       serviceFeeAmount: totals.serviceAmount,
       total,
-      paymentType: dto.type,
+      paymentType: receiptPaymentType,
       payments: allPayments.map((p) => ({ type: p.type, amount: p.amount })),
       note: order.note ?? null,
       customerName: order.customerName ?? null,
@@ -912,12 +954,18 @@ export class OrdersService {
     const saved = await this.orders.save(order);
     const table = await this.tables.findOne({ where: { id: saved.tableId } });
     const dto = this.toDto(saved, table?.number);
+    // Qaytariladigan summa — chek summasi (chegirma/xizmat bilan), qatorlar yig'indisi emas
+    const checkTotal = calcOrderTotals(
+      order.items || [],
+      order.discountPercent,
+      order.servicePercent,
+    ).total;
 
     // Direktorga Telegram orqali vozvrat cheki (TZ #10) — xato bo'lsa ham davom etadi
     this.telegram
       .notifyRefund({
         tableNumber: table?.number,
-        total: dto.total ?? 0,
+        total: checkTotal,
         reason: order.refundReason ?? '',
         by: byName,
         items: (order.items || [])

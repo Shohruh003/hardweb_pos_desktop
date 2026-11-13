@@ -28,6 +28,8 @@ export function App() {
   const finishSplash = useCallback(() => setSplashDone(true), []);
   // Litsenziya holati (real rejim): 'checking' | 'active' | qulf holati (not_activated/suspended/...)
   const [license, setLicense] = useState<string>(MOCK ? 'active' : 'checking');
+  // Serverdagi bazada eski demo ma'lumotlar bor (real rejim) — login ekrani ogohlantiradi
+  const [demoData, setDemoData] = useState(false);
   const [editServer, setEditServer] = useState(false);
 
   const checkLicense = useCallback(async () => {
@@ -40,6 +42,7 @@ export function App() {
     for (let attempt = 0; attempt < 25; attempt++) {
       try {
         const info = await fetchLicenseStatus(getServerUrl(), 4000);
+        setDemoData(info.demoData);
         setLicense(info.locked ? info.status : 'active');
         return;
       } catch {
@@ -129,7 +132,7 @@ export function App() {
   // Demo: navbat ekrani (mijozlar tablosi) — login talab qilmaydi
   if (MOCK && queue) return <QueueScreen />;
 
-  if (!user) return <LoginPage />;
+  if (!user) return <LoginPage demoData={!MOCK && demoData} />;
 
   // Vaqtinchalik parol (birinchi kirish yoki rahbar o'rnatgan parol) — avval yangi parol
   // o'rnatilishi shart, qolgan ilova yopiq. Chiqish esa doim mumkin.

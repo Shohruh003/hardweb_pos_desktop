@@ -99,6 +99,8 @@ export function setServerUrl(url: string): string {
 export interface LicenseStatusInfo {
   status: string;
   locked: boolean;
+  /** Real rejimdagi serverda eski demo baza topilgan — login ekranida qizil ogohlantirish */
+  demoData: boolean;
 }
 
 /**
@@ -114,7 +116,11 @@ export async function fetchLicenseStatus(baseUrl: string, timeoutMs = 4000): Pro
     const data: unknown = await res.json();
     const status = (data as { status?: unknown } | null)?.status;
     if (typeof status !== 'string') throw new Error('DasturXon serveri javobi emas');
-    return { status, locked: !!(data as { locked?: unknown }).locked };
+    return {
+      status,
+      locked: !!(data as { locked?: unknown }).locked,
+      demoData: (data as { demoData?: unknown }).demoData === true,
+    };
   } finally {
     clearTimeout(timer);
   }

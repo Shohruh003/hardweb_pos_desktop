@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react';
-import { CAPABILITIES, User, UserRole, isFullAccessRole } from '@hardweb-pos/shared';
+import {
+  CAPABILITIES,
+  User,
+  UserRole,
+  defaultCapabilitiesForRole,
+  isFullAccessRole,
+} from '@hardweb-pos/shared';
 import { Button } from '../../components/ui';
 import { Select } from '../../components/Select';
 import { Modal } from '../../components/Modal';
@@ -27,6 +33,12 @@ const NAME_MAX = 80;
 const PIN_LENGTH = 4;
 
 const CREDENTIALS_REQUIRED = 'Direktor uchun login va parol majburiy (PIN bilan kira olmaydi)';
+const NO_CAPABILITIES = 'Kamida bitta ruxsat belgilang — aks holda xodim tizimga kirsa ham hech narsa qila olmaydi';
+
+/** Ikki ruxsatlar ro'yxati bir xilmi (tartibsiz) */
+function samePermissions(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((k) => b.includes(k));
+}
 
 interface StaffForm {
   id?: string;
@@ -35,6 +47,11 @@ interface StaffForm {
   pin: string;
   active: boolean;
   permissions: string[];
+  /**
+   * Formadagi ruxsatlar qaysi rolning standart to'plami (direktor hali o'zgartirmagan) — rol
+   * almashtirilganda yangi rolning standartlari qo'yiladi. null — ruxsatlar qo'lda tanlangan.
+   */
+  capsFromRole: string | null;
   login: string; // '' — login yo'q
   password: string; // tahrirlashda '' — o'zgarmaydi
   // Tahrirlashda asl qiymatlar — nima o'zgarganini aniqlash uchun
@@ -125,7 +142,9 @@ export function StaffTab() {
       role: UserRole.Waiter,
       pin: randomPin(takenPins()),
       active: true,
-      permissions: [],
+      // Rol bo'yicha standart ruxsatlar oldindan belgilanadi (direktor o'zgartira oladi)
+      permissions: defaultCapabilitiesForRole(UserRole.Waiter),
+      capsFromRole: UserRole.Waiter,
       login: '',
       password: '',
     });
@@ -133,13 +152,16 @@ export function StaffTab() {
   function openEdit(u: User) {
     setFormError('');
     setShowPassword(false);
+    const permissions = u.permissions ?? [];
+    const roleDefaults = defaultCapabilitiesForRole(u.role);
     setForm({
       id: u.id,
       name: u.name,
       role: u.role,
       pin: u.pin ?? '',
       active: u.active,
-      permissions: u.permissions ?? [],
+      permissions,
+      capsFromRole: roleDefaults.length > 0 && samePermissions(permissions, roleDefaults) ? u.role : null,
       login: u.login ?? '',
       password: '',
       origRole: u.role,
@@ -153,7 +175,29 @@ export function StaffTab() {
   function toggleCap(key: string) {
     if (!form) return;
     const has = form.permissions.includes(key);
-    patchForm({ permissions: has ? form.permissions.filter((k) => k !== key) : [...form.permissions, key] });
+    patchForm({
+      permissions: has ? form.permissions.filter((k) => k !== key) : [...form.permissions, key],
+      capsFromRole: null, // direktor ruxsatlarni o'zi tanladi — rol almashsa ham saqlanadi
+    });
+  }
+
+  /** Rol bo'yicha standart ruxsatlarni qo'yish (masalan ruxsati yo'q eski xodim uchun) */
+  function applyRoleDefaults() {
+    if (!form) return;
+    patchForm({ permissions: defaultCapabilitiesForRole(form.role), capsFromRole: form.role });
+  }
+
+  // Rol almashtirilganda: ruxsatlar hali standart (o'zgartirilmagan) yoki umuman yo'q bo'lsa —
+  // yangi rolning standart ruxsatlari qo'yiladi; direktor qo'lda tanlagan ruxsatlar saqlanadi.
+  // Direktor/SuperAdmin'da ruxsatlar ishlatilmaydi — ro'yxat o'zgarmaydi.
+  function changeRole(role: string) {
+    if (!form) return;
+    const patch: Partial<StaffForm> = { role };
+    if (!isFullAccessRole(role) && (form.capsFromRole !== null || form.permissions.length === 0)) {
+      patch.permissions = defaultCapabilitiesForRole(role);
+      patch.capsFromRole = role;
+    }
+    patchForm(patch);
   }
 
   const isSelf = !!form?.id && form.id === me?.id;
@@ -190,6 +234,8 @@ export function StaffTab() {
     const pinChanged = f.pin !== (f.origPin ?? '');
     if (!full && pinChanged && f.pin && f.pin.length !== PIN_LENGTH) return 'PIN 4 ta raqamdan iborat bo‘lishi kerak';
     if (pinOwner) return `Bu PIN band — ${pinOwner.name}ga berilgan. Boshqa PIN tanlang`;
+    // Ruxsatsiz xodim kirsa ham hech narsa qila olmaydi (Direktor/SuperAdmin — hammasi avtomatik)
+    if (!full && f.permissions.length === 0) return NO_CAPABILITIES;
     if (actorFull) {
       if (login && !LOGIN_PATTERN.test(login)) {
         return 'Login 3–32 belgi bo‘lishi kerak: lotin harflari, raqamlar, nuqta (.), _ yoki -';
@@ -413,7 +459,14 @@ export function StaffTab() {
                           vaqtinchalik parol
                         </span>
                       )}
-                      {!full && <span>{u.permissions?.length ? `· ${u.permissions.length} ruxsat` : '· ruxsat yo‘q'}</span>}
+                      {!full &&
+                        (u.permissions?.length ? (
+                          <span>· {u.permissions.length} ruxsat</span>
+                        ) : (
+                          <span className="font-semibold text-warning" title="Xodim tizimga kirsa ham hech narsa qila olmaydi">
+                            · ruxsat yo‘q
+                          </span>
+                        ))}
                     </div>
                   </div>
                 </div>
@@ -490,7 +543,7 @@ export function StaffTab() {
                   🔒 {ROLE_LABEL[form.role] ?? form.role}
                 </div>
               ) : (
-                <Select value={form.role} onChange={(v) => patchForm({ role: v })} options={roleOptions} />
+                <Select value={form.role} onChange={changeRole} options={roleOptions} />
               )}
             </div>
             {!fullRole ? (
@@ -628,7 +681,25 @@ export function StaffTab() {
             </div>
           ) : (
             <div className="mb-3">
-              <div className="text-sm font-semibold mb-2">Ruxsatlar — nima qila oladi?</div>
+              <div className="text-sm font-semibold mb-1">Ruxsatlar — nima qila oladi?</div>
+              {form.permissions.length === 0 ? (
+                <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-warning/50 bg-warning/10 px-3 py-2 text-sm">
+                  <span className="flex-1 min-w-[200px] font-semibold text-text">
+                    ⚠️ Hech qanday ruxsat belgilanmagan — xodim tizimga kirsa ham hech narsa qila olmaydi.
+                  </span>
+                  {!lockOwnRole && defaultCapabilitiesForRole(form.role).length > 0 && (
+                    <Button variant="ghost" className="py-1.5 text-sm shrink-0" onClick={applyRoleDefaults}>
+                      Rol bo‘yicha belgilash
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                form.capsFromRole === form.role && (
+                  <div className="text-xs text-muted mb-2">
+                    {ROLE_LABEL[form.role] ?? form.role} uchun standart ruxsatlar belgilandi — kerak bo‘lsa o‘zgartiring.
+                  </div>
+                )
+              )}
               <div className="text-xs text-muted mb-1">Operatsion</div>
               <div className="grid grid-cols-2 gap-2 mb-2">
                 {opsCaps.map((c) => (
