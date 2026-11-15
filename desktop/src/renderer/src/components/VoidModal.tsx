@@ -51,7 +51,8 @@ const roundQty = (n: number) => Math.round(n * 1e6) / 1e6;
 function parseQty(text: string | undefined, kg: boolean): number {
   const s = String(text ?? '').trim();
   if (!s) return 0;
-  const n = Number(kg ? cleanDecimalInput(s, 6) : s);
+  // dona ham kasr bo'lishi mumkin (0,5 porsiya) — 0.3.2
+  const n = Number(cleanDecimalInput(s, kg ? 6 : 3));
   return Number.isFinite(n) ? n : NaN;
 }
 
@@ -118,7 +119,6 @@ export default function VoidModal({ order, itemIds, wholeOrder, onClose, onDone 
     for (const r of rows) {
       if (r.v === 0) continue;
       if (!Number.isFinite(r.v) || r.v < 0 || r.v > r.lineQty + EPS) invalid = true;
-      else if (!isKg(r.it) && !Number.isInteger(r.v)) invalid = true;
     }
     const chosen = rows.filter((r) => Number.isFinite(r.v) && r.v > 0);
     const voidSum = chosen.reduce((s, r) => s + lineSum(r.it.price ?? 0, Math.min(r.v, r.lineQty)), 0);

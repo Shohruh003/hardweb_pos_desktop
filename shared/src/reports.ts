@@ -102,3 +102,26 @@ export interface DebtRow {
   repaidType: string | null; // qaysi usul bilan qaytarildi (to'lov usuli kaliti)
   repaidByName: string | null;
 }
+
+/** GET /api/reports/items?from=&to=&type= — barcha sotilgan taomlar (0.3.2) */
+export interface SoldItemRow {
+  name: string;
+  category: string | null;
+  unit: string; // 'dona' | 'kg'
+  quantity: number;
+  sum: number;
+  hall: number; // stolda, zalda yeyilgan
+  saboy: number; // stoldagi olib ketish (saboy) qatorlari
+  takeaway: number; // olib ketish buyurtmalari
+  delivery: number; // yetkazish buyurtmalari
+}
+
+export interface SoldItemsReport {
+  from: string;
+  to: string;
+  fromUtc: string;
+  toUtc: string;
+  count: number;
+  total: number;
+  items: SoldItemRow[];
+}

@@ -449,8 +449,9 @@ function brandHead(b: EscPosBuilder, restaurantName: string | null | undefined, 
 function infoLines(b: EscPosBuilder, h: HeadInfo, rows: Array<[string, string | null | undefined]>): void {
   b.align('left');
   const queue = positiveInt(h.queueNumber);
-  if (typeOf(h.orderType) === 'stol' && queue) b.line(`Buyurtma №${queue}`);
-  b.line(`Sana: ${fmtDateTime(h.at)}`);
+  // Ixcham: "Buyurtma №15" va sana bitta qatorda
+  if (typeOf(h.orderType) === 'stol' && queue) b.cols(`Buyurtma №${queue}`, fmtDateTime(h.at));
+  else b.line(`Sana: ${fmtDateTime(h.at)}`);
   for (const [label, value] of rows) {
     const v = clean(value);
     if (v) b.wrapped(`${label}: ${v}`, { hang: label.length + 2 });
@@ -471,18 +472,66 @@ interface PaperLine {
 }
 
 /**
- * Taomlar: nom (saboy — "(olib ketish)"), ostida "2 x 35 000 ... 70 000"; narxi qo'lda o'zgartirilgan
- * bo'lsa — narx yonida "*" va keyingi qatorda "(asl narx: 40 000)" (ekrandagi chizilgan asl narx o'rniga).
+ * Bir xil taomlarni birlashtirish (0.3.2): ofitsiant choyni 3 marta qo'shgan bo'lsa — chekda bitta
+ * "3x KO'K CHOY" qatori. Kalit: nom + birlik + narx + saboy + qo'lda o'zgartirilgan narx. Tartib —
+ * birinchi qo'shilgan o'rnida.
  */
-function itemLines(b: EscPosBuilder, lines: PaperLine[]): void {
-  b.align('left');
+export function mergePaperLines(lines: PaperLine[]): PaperLine[] {
+  const out: PaperLine[] = [];
+  const idx = new Map<string, number>();
   for (const l of lines) {
-    b.wrapped(`${clean(l.name) || 'Taom'}${l.takeaway ? ' (olib ketish)' : ''}`, { hang: 2 });
-    b.cols(`  ${qtyText(l.quantity, l.unit)} x ${money(l.price)}${l.priceOverridden ? '*' : ''}`, money(l.sum));
-    if (l.priceOverridden && l.originalPrice != null && Number.isFinite(Number(l.originalPrice))) {
-      b.line(`    (asl narx: ${money(l.originalPrice)})`);
+    const key = [clean(l.name), l.unit ?? '', Number(l.price), l.takeaway ? 1 : 0, l.priceOverridden ? 1 : 0, l.originalPrice ?? ''].join('|');
+    const at = idx.get(key);
+    if (at === undefined) {
+      idx.set(key, out.length);
+      out.push({ ...l });
+    } else {
+      const m = out[at];
+      m.quantity = Math.round((Number(m.quantity) + Number(l.quantity)) * 1e6) / 1e6;
+      m.sum += l.sum;
     }
   }
+  return out;
+}
+
+/**
+ * Ixcham taom qatori (0.3.2 — qog'oz tejash): bitta qatorda "3x KO'K CHOY ......... 9 000";
+ * miqdor 1 dan farq qilsa — bir dona narxi qavsda: "4x KRELISHKA (15 000)"; kg — "0.5 kg JIGAR (180 000/kg)".
+ * Narxi qo'lda o'zgartirilgan bo'lsa — "*" va asl narx.
+ */
+function itemRow(b: EscPosBuilder, l: PaperLine): void {
+  const kg = l.unit === UNIT_KG;
+  const q = Number(l.quantity);
+  const qty = kg ? `${qtyText(q, l.unit)} ` : `${qtyText(q, l.unit)}x `;
+  const unitPrice = kg || q !== 1 ? ` (${money(l.price)}${kg ? '/kg' : ''}${l.priceOverridden ? '*' : ''})` : l.priceOverridden ? ' *' : '';
+  b.cols(`${qty}${clean(l.name) || 'Taom'}${unitPrice}`, money(l.sum));
+  if (l.priceOverridden && l.originalPrice != null && Number.isFinite(Number(l.originalPrice))) {
+    b.line(`   (asl narx: ${money(l.originalPrice)})`);
+  }
+}
+
+/**
+ * Taomlar (mijoz cheki va schot): bir xillari birlashtiriladi. Stolda saboy (olib ketish) qatorlari
+ * bo'lsa — ikki bo'lim: "ZALDA" + "Zal uchun" summasi va "OLIB KETISH (SABOY)" + "Saboy uchun" summasi.
+ * Bo'limlar chiqarilgan bo'lsa true (summalar blokida "Mahsulotlar" qatori takrorlanmaydi).
+ */
+function itemLines(b: EscPosBuilder, raw: PaperLine[]): boolean {
+  b.align('left');
+  const lines = mergePaperLines(raw);
+  const hall = lines.filter((l) => !l.takeaway);
+  const saboy = lines.filter((l) => l.takeaway);
+  if (hall.length === 0 || saboy.length === 0) {
+    for (const l of lines) itemRow(b, l);
+    return false;
+  }
+  b.bold(true).line('ZALDA').bold(false);
+  for (const l of hall) itemRow(b, l);
+  b.bold(true).cols('Zal uchun', money(hall.reduce((t, l) => t + l.sum, 0))).bold(false);
+  b.divider();
+  b.bold(true).line('OLIB KETISH (SABOY)').bold(false);
+  for (const l of saboy) itemRow(b, l);
+  b.bold(true).cols('Saboy uchun', money(saboy.reduce((t, l) => t + l.sum, 0))).bold(false);
+  return true;
 }
 
 /** Narxi o'zgartirilgan qator bo'lsa — izoh ("* narx o'zgartirilgan") */
@@ -502,10 +551,12 @@ interface PaperTotals {
 }
 
 /** Summalar bloki: Mahsulotlar / Chegirma / Xizmat haqi / Yetkazish narxi / katta JAMI */
-function totalsBlock(b: EscPosBuilder, t: PaperTotals): void {
+function totalsBlock(b: EscPosBuilder, t: PaperTotals, sections = false): void {
   b.align('left');
   b.divider();
-  b.cols('Mahsulotlar', money(t.subtotal));
+  // Zal/Saboy bo'limlari bo'lsa ularning summasi yuqorida; chegirma/xizmat bo'lmasa "Mahsulotlar" ortiqcha
+  const extras = t.discountAmount > 0 || t.serviceAmount > 0 || t.deliveryFee > 0;
+  if (!sections && extras) b.cols('Mahsulotlar', money(t.subtotal));
   if (t.discountAmount > 0) {
     b.cols(`Chegirma (${percentText(t.discountPercent)}%)`, `-${money(t.discountAmount)}`);
   }
@@ -526,10 +577,10 @@ function noteLine(b: EscPosBuilder, note: string | null | undefined): void {
 
 /** Chek oxiri: rahmat, qog'ozni surish va (cutter yoqilgan bo'lsa) kesish */
 function finish(b: EscPosBuilder, autoCut: boolean, footer: string[] = ['Rahmat! Yana keling']): Buffer {
-  b.feed(1).align('center');
+  b.align('center');
   for (const f of footer) b.wrapped(f);
-  // Cutter yoqilgan bo'lsa — kesamiz; o'chiq bo'lsa qog'ozni yirtish chizig'igacha suramiz
-  b.feed(autoCut ? 2 : 6);
+  // Cutter yoqilgan bo'lsa — kesamiz (pichoqqacha minimal surish); o'chiq bo'lsa yirtish chizig'igacha
+  b.feed(autoCut ? 2 : 5);
   if (autoCut) b.cut();
   return b.build();
 }
@@ -570,7 +621,7 @@ export function buildReceiptBuffer(receipt: Receipt, width = 32, autoCut = true)
     priceOverridden: !!l.priceOverridden,
     originalPrice: l.originalPrice ?? null,
   }));
-  itemLines(b, lines);
+  const sections = itemLines(b, lines);
 
   const subtotal = whole(receipt.subtotal);
   const serviceBase = lines.some((l) => l.takeaway)
@@ -585,7 +636,7 @@ export function buildReceiptBuffer(receipt: Receipt, width = 32, autoCut = true)
     serviceBase,
     deliveryFee: type === TYPE_DELIVERY ? Math.max(0, whole(receipt.deliveryFee)) : 0,
     total: whole(receipt.total),
-  });
+  }, sections);
 
   // To'lovlar — har biri usul nomi bilan (bo'lib to'langan bo'lsa hammasi)
   const pays =
@@ -593,8 +644,12 @@ export function buildReceiptBuffer(receipt: Receipt, width = 32, autoCut = true)
       ? receipt.payments
       : [{ type: receipt.paymentType, amount: receipt.total, label: undefined as string | undefined }];
   b.align('left');
-  b.line(pays.length > 1 ? "To'lov (bo'lib):" : "To'lov:");
-  for (const p of pays) b.cols(`  ${methodLabel(p.type, p.label)}`, money(p.amount));
+  if (pays.length === 1) {
+    b.cols(`To'lov: ${methodLabel(pays[0].type, pays[0].label)}`, money(pays[0].amount));
+  } else {
+    b.line("To'lov (bo'lib):");
+    for (const p of pays) b.cols(`  ${methodLabel(p.type, p.label)}`, money(p.amount));
+  }
   overrideFootnote(b, lines);
   noteLine(b, receipt.note);
   // Fiskal hujjat raqami (QR hozircha o'chirilgan — keyinchalik yoqiladi)
@@ -689,9 +744,9 @@ export function buildBillBuffer(order: BillOrder, width = 48, autoCut = true): B
   ]);
 
   const lines = orderPaperLines(order);
-  itemLines(b, lines);
+  const sections = itemLines(b, lines);
   const totals = orderTotals(order, lines, type);
-  totalsBlock(b, totals);
+  totalsBlock(b, totals, sections);
 
   // Qisman to'langan hisob — to'langan va qolgan summa
   const paid = whole(order.paidAmount);

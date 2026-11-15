@@ -7,6 +7,8 @@ import { api } from '../lib/api';
 import { usePosSettings } from '../lib/posSettings';
 import { useAuth } from '../state/auth';
 import { ReportTab, ReportTabs, useReportTab } from './reports/ReportTabs';
+import { RangePicker, ReportRange, customValid, defaultReportRange, periodQuery, toDateRange } from './reports/RangePicker';
+import { ItemsReport } from './reports/ItemsReport';
 import { WaiterShareReport } from './reports/WaiterShareReport';
 import { CashSummaryCard } from './reports/CashSummaryCard';
 import { DebtsPanel } from './reports/DebtsPanel';
@@ -54,14 +56,16 @@ export function Dashboard({ onBack }: { onBack: () => void }) {
   const { user } = useAuth();
   const pos = usePosSettings();
   const tabs = useMemo<ReportTab[]>(() => {
-    const list: ReportTab[] = ['overview'];
+    const list: ReportTab[] = ['overview', 'items'];
     if (canSeeCash(user)) list.push('cash', 'debts');
     if (canSeeVoids(user)) list.push('voids');
     if (canSeeWaiterShares(user)) list.push('waiters');
     return list;
   }, [user]);
   const [tab, setTab] = useReportTab('dashboard.tab', tabs);
-  const [period, setPeriod] = useState<Period>('day');
+  const [rr, setRr] = useState<ReportRange>(defaultReportRange);
+  const period: Period = rr.mode === 'custom' ? 'day' : rr.mode;
+  const pq = periodQuery(rr);
   const [summary, setSummary] = useState<ReportSummary | null>(null);
   const [topItems, setTopItems] = useState<TopItem[]>([]);
   const [waiters, setWaiters] = useState<WaiterStat[]>([]);
@@ -69,29 +73,29 @@ export function Dashboard({ onBack }: { onBack: () => void }) {
   const [expenses, setExpenses] = useState<ExpenseData>({ items: [], total: 0 });
   const [refunds, setRefunds] = useState<RefundData>({ count: 0, total: 0, items: [] });
   const [cashTick, setCashTick] = useState(0);
-  const range = useMemo(() => periodRange(period), [period]);
+  const range = useMemo(() => toDateRange(rr), [rr]);
 
   // Davr tez almashtirilsa — kechikib kelgan eski davr javoblari yangisini bosib ketmasin
   const reqRef = useRef(0);
 
   useEffect(() => {
-    if (tab !== 'overview') return;
+    if (tab !== 'overview' || !customValid(rr)) return;
     const req = ++reqRef.current;
     const fresh = <T,>(set: (v: T) => void) => (v: T) => {
       if (req === reqRef.current) set(v);
     };
     const days = period === 'month' ? 30 : period === 'week' ? 14 : 7;
-    api.get<ReportSummary>(`/reports/summary?period=${period}`).then(fresh(setSummary)).catch(() => {});
-    api.get<TopItem[]>(`/reports/top-items?period=${period}`).then(fresh(setTopItems)).catch(() => {});
-    api.get<WaiterStat[]>(`/reports/waiters?period=${period}`).then(fresh(setWaiters)).catch(() => {});
+    api.get<ReportSummary>(`/reports/summary?${pq}`).then(fresh(setSummary)).catch(() => {});
+    api.get<TopItem[]>(`/reports/top-items?${pq}`).then(fresh(setTopItems)).catch(() => {});
+    api.get<WaiterStat[]>(`/reports/waiters?${pq}`).then(fresh(setWaiters)).catch(() => {});
     api.get<DailyPoint[]>(`/reports/daily?days=${days}`).then(fresh(setDaily)).catch(() => {});
     // Rasxod — tanlangan davrdagi CHIQIMlar (kirim — kassaga qo'yilgan pul, tushumdan ayirilmaydi)
     api
-      .get<ExpenseData>(`/expenses?from=${range.from}&to=${range.to}&kind=chiqim`)
+      .get<ExpenseData>(`/expenses?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}&kind=chiqim`)
       .then(fresh(setExpenses))
       .catch(() => {});
-    api.get<RefundData>(`/reports/refunds?period=${period}`).then(fresh(setRefunds)).catch(() => {});
-  }, [period, range, tab]);
+    api.get<RefundData>(`/reports/refunds?${pq}`).then(fresh(setRefunds)).catch(() => {});
+  }, [period, range, tab, pq, rr]);
 
   const revenue = summary?.revenue ?? 0;
   const net = revenue - (expenses.total ?? 0);
@@ -141,15 +145,16 @@ export function Dashboard({ onBack }: { onBack: () => void }) {
         </button>
       </div>
 
-      {(tab === 'overview' || tab === 'voids') && (
+      {(tab === 'overview' || tab === 'voids' || tab === 'items') && (
         <div className="mb-5">
-          <Segmented<Period> value={period} onChange={setPeriod} options={PERIODS} testIdPrefix="period" />
+          <RangePicker value={rr} onChange={setRr} />
         </div>
       )}
 
       {tab === 'cash' && <CashSummaryCard refreshKey={cashTick} />}
       {tab === 'debts' && <DebtsPanel onChanged={() => setCashTick((n) => n + 1)} />}
-      {tab === 'voids' && <VoidsReport range={range} />}
+      {tab === 'voids' && customValid(rr) && <VoidsReport range={range} />}
+      {tab === 'items' && customValid(rr) && <ItemsReport range={range} />}
       {tab === 'waiters' && <WaiterShareReport />}
 
       {tab === 'overview' && (

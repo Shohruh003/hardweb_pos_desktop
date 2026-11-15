@@ -23,6 +23,11 @@ export class MenuItemEntity {
   @Column({ name: 'station_id', type: 'uuid', nullable: true })
   stationId: string | null;
 
+  // Qo'shimcha printerlar (0.3.2, eski POS'dagi "Printerlar"): chek nusxasi ham shu bo'limlarga chiqadi
+  // (masalan salat — Salatxona + Kassa nazorati). null/bo'sh — faqat asosiy bo'lim.
+  @Column({ name: 'extra_station_ids', type: 'simple-json', nullable: true })
+  extraStationIds: string[] | null;
+
   // Rasm — data URL (base64). select:false: ro'yxatlar, buyurtma va chek so'rovlari uni
   // O'QIMAYDI (har telefonga yuzlab KB base64 ketmasin). Rasm alohida ochiq manzildan beriladi:
   // GET /api/menu/items/:id/image (kerak joyda addSelect('m.image') bilan o'qiladi).

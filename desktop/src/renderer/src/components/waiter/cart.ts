@@ -53,7 +53,8 @@ export function qtyLabel(quantity: number, unit: MenuUnit | undefined): string {
 /** Miqdorni birlikka moslab yaxlitlash: dona — butun, kg — 6 xona */
 export function roundQty(q: number, unit: MenuUnit): number {
   if (!Number.isFinite(q) || q <= 0) return 0;
-  return unit === MenuUnit.Weight ? Math.round(q * 1e6) / 1e6 : Math.round(q);
+  // kg — 6 xonagacha; dona/porsiya — 3 xonagacha kasr (yarim porsiya: 0,5) — 0.3.2
+  return unit === MenuUnit.Weight ? Math.round(q * 1e6) / 1e6 : Math.round(q * 1e3) / 1e3;
 }
 
 /**

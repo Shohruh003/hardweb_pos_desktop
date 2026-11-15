@@ -34,7 +34,8 @@ const roundQty = (n: number) => Math.round(n * 1e6) / 1e6;
 function parseQty(text: string | undefined, kg: boolean): number {
   const s = String(text ?? '').trim();
   if (!s) return 0;
-  const n = Number(kg ? cleanDecimalInput(s, 6) : s);
+  // dona ham kasr bo'lishi mumkin (0,5 porsiya) — 0.3.2
+  const n = Number(cleanDecimalInput(s, kg ? 6 : 3));
   return Number.isFinite(n) ? n : NaN;
 }
 
@@ -103,7 +104,7 @@ export default function SplitCheckModal({ order, siblings, onClose, onDone }: Sp
     for (const it of items) {
       const lineQty = Number(it.quantity) || 0;
       const q = parseQty(qty[it.id], isKg(it));
-      if (!Number.isFinite(q) || q < 0 || q > lineQty + EPS || (!isKg(it) && !Number.isInteger(q))) {
+      if (!Number.isFinite(q) || q < 0 || q > lineQty + EPS) {
         invalid = true;
         left.push({ price: Number(it.price ?? 0), quantity: lineQty, takeaway: !!it.takeaway });
         continue;

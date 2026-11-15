@@ -79,7 +79,7 @@ export function LineEditModal({
   const [price, setPrice] = useState(() => Math.max(0, Math.round(initial.price)));
   // Miqdor — haqiqiy qiymat (kg: summa bo'yicha 6 xonagacha); maydonlar matni alohida
   const [qty, setQty] = useState(() => (initial.quantity > 0 ? roundQty(initial.quantity, unit) : 0));
-  const [qtyText, setQtyText] = useState(() => (initial.quantity > 0 ? String(Math.round(initial.quantity)) : ''));
+  const [qtyText, setQtyText] = useState(() => (initial.quantity > 0 ? toKgText(roundQty(initial.quantity, unit)) : ''));
   const [kgText, setKgText] = useState(() => toKgText(initial.quantity));
   const [sumText, setSumText] = useState(() =>
     initial.quantity > 0 ? String(lineSum(initial.price, initial.quantity)) : '',
@@ -94,11 +94,14 @@ export function LineEditModal({
 
   const noteChanged = note.trim() !== (initial.note ?? '').trim();
   const intQty = Math.round(qty);
-  const showCount = !kg && intQty >= 2 && !!note.trim() && noteChanged;
-  const portions = showCount ? Math.min(Math.max(1, count ?? intQty), intQty) : intQty;
+  // "Faqat N tasiga" — faqat butun miqdorda (kasr porsiyada qatorni bo'lib bo'lmaydi)
+  const showCount = !kg && Number.isInteger(qty) && intQty >= 2 && !!note.trim() && noteChanged;
+  // count — izoh qo'yiladigan porsiyalar; qator bo'linmasa — butun miqdor (kasr ham: 2,4 bo'linmaydi)
+  const portions = showCount ? Math.min(Math.max(1, count ?? intQty), intQty) : qty;
   const total = lineSum(price, qty);
   const priceChanged = Math.round(price) !== Math.round(menuPrice);
-  const valid = qty > 0 && (kg || (Number.isInteger(qty) && qty <= QTY_MAX)) && price >= 0 && price <= PRICE_MAX;
+  // dona/porsiya — kasr ham mumkin (0,5 / 1,3), 3 xonagacha (0.3.2)
+  const valid = qty > 0 && (kg || qty <= QTY_MAX) && price >= 0 && price <= PRICE_MAX;
 
   function selectField(f: Field) {
     fresh.current = true;
@@ -108,7 +111,7 @@ export function LineEditModal({
 
   // ---- Raqam kiritish ----
   function setQtyFromText(text: string) {
-    const n = Math.min(QTY_MAX, parseInt0(text));
+    const n = Math.min(QTY_MAX, roundQty(parseKg(text), unit));
     setQtyText(text);
     setQty(n);
   }
@@ -138,18 +141,20 @@ export function LineEditModal({
     fresh.current = false;
     // Yangi tanlangan maydonda birinchi tugma eski qiymatni almashtiradi (⌫ — tozalaydi)
     const base = (cur: string) => (first ? '' : cur);
-    if (active === 'qty') setQtyFromText(applyNumKey(base(qtyText), k, { maxDigits: 3 }));
+    if (active === 'qty') setQtyFromText(applyNumKey(base(qtyText), k, { decimal: true, maxDecimals: 3, maxDigits: 3 }));
     else if (active === 'kg') setKgFromText(applyNumKey(base(kgText), k, { decimal: true, maxDecimals: 3, maxDigits: 3 }));
     else if (active === 'sum') setSumFromText(applyNumKey(base(sumText), k, { maxDigits: 9 }));
     else if (active === 'price') setPriceFromText(applyNumKey(base(priceText), k, { maxDigits: 9 }));
   }
 
   function stepQty(d: number) {
-    const n = Math.min(QTY_MAX, Math.max(1, intQty + d));
+    // +/- butun birlik qadami; kasr qism saqlanadi (1,5 -> 2,5); 1 dan kamga tushmaydi
+    const next = qty + d;
+    const n = next < 1 ? qty || 1 : Math.min(QTY_MAX, roundQty(next, unit));
     fresh.current = true;
     setActive('qty');
     setQty(n);
-    setQtyText(String(n));
+    setQtyText(toKgText(n));
   }
 
   function resetPrice() {
@@ -199,7 +204,7 @@ export function LineEditModal({
       let k: NumKey | null = null;
       if (/^[0-9]$/.test(e.key)) k = e.key as NumKey;
       else if (e.key === 'Backspace') k = 'back';
-      else if ((e.key === ',' || e.key === '.') && f === 'kg') k = ',';
+      else if ((e.key === ',' || e.key === '.') && (f === 'kg' || f === 'qty')) k = ',';
       if (k) {
         e.preventDefault();
         live.current.pressKey(k);
@@ -213,7 +218,7 @@ export function LineEditModal({
   const totalLine =
     qty > 0 ? (
       <>
-        {kg ? `${formatKg(qty)} kg` : `${intQty} ×`} {formatAmount(price)} ={' '}
+        {kg ? `${formatKg(qty)} kg` : `${formatKg(qty)} ×`} {formatAmount(price)} ={' '}
         <span className="text-text text-lg font-black">{formatSum(total)}</span>
       </>
     ) : (
@@ -303,7 +308,7 @@ export function LineEditModal({
               <button
                 type="button"
                 onClick={() => stepQty(-1)}
-                disabled={intQty <= 1}
+                disabled={qty <= 1}
                 aria-label="Kamaytirish"
                 className="w-14 h-14 rounded-xl bg-surface border border-border flex items-center justify-center active:scale-90 disabled:opacity-40"
               >
@@ -321,7 +326,7 @@ export function LineEditModal({
               <button
                 type="button"
                 onClick={() => stepQty(1)}
-                disabled={intQty >= QTY_MAX}
+                disabled={qty >= QTY_MAX}
                 aria-label="Ko‘paytirish"
                 className="w-14 h-14 rounded-xl bg-primary-hover text-white flex items-center justify-center active:scale-90 disabled:opacity-40"
               >
@@ -364,7 +369,7 @@ export function LineEditModal({
 
           {numericActive ? (
             <div className="max-w-[340px]">
-              <NumPad onKey={pressKey} decimal={active === 'kg'} testIdPrefix="line-key" />
+              <NumPad onKey={pressKey} decimal={active === 'kg' || active === 'qty'} testIdPrefix="line-key" />
             </div>
           ) : (
             <button

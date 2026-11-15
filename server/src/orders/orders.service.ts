@@ -845,7 +845,7 @@ export class OrdersService {
       const mi = menuById.get(i.menuItemId)!;
       // Stop list (B29): kassir "tugadi" deb belgilagan taom qo'shilmaydi
       if (mi.available === false) throw new BadRequestException(stopListMessage(mi.name));
-      // dona — butun son, kg — 6 xonagacha kasr (summa bo'yicha kiritilgan og'irlik)
+      // dona — 3 xonagacha kasr (0,5 porsiya), kg — 6 xonagacha kasr (summa bo'yicha kiritilgan og'irlik)
       if (!isValidQuantity(Number(i.quantity), mi.unit ?? MenuUnit.Piece)) {
         throw new BadRequestException(quantityInvalidMessage(mi.name));
       }

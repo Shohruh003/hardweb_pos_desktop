@@ -353,10 +353,10 @@ export function CashierPage() {
         // Bitta stoldagi hisoblar: Hisob 1, Hisob 2…
         return (a.order.checkNo ?? 1) - (b.order.checkNo ?? 1);
       }
-      // Kunlik raqam yarim tunda qaytadan boshlanadi — avval ochilgan vaqt, keyin raqam
-      const byTime = String(a.order.openedAt).localeCompare(String(b.order.openedAt));
+      // Olib ketish / yetkazish: ENG YANGISI birinchi (0.3.2) — ochilgan vaqt bo'yicha, keyin raqam
+      const byTime = String(b.order.openedAt).localeCompare(String(a.order.openedAt));
       if (byTime !== 0) return byTime;
-      return (a.order.queueNumber ?? 0) - (b.order.queueNumber ?? 0);
+      return (b.order.queueNumber ?? 0) - (a.order.queueNumber ?? 0);
     });
   }, [unprinted, active, mode, activeHall, halls]);
 

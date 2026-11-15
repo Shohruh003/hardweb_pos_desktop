@@ -182,6 +182,11 @@ function byQueueNumber(a: Order, b: Order): number {
   return (a.queueNumber ?? 1e9) - (b.queueNumber ?? 1e9) || a.openedAt.localeCompare(b.openedAt);
 }
 
+/** Olib ketish / yetkazish kartochkalari: ENG YANGISI birinchi ("+ Yangi buyurtma" yonida) — 0.3.2 */
+function newestFirst(a: Order, b: Order): number {
+  return String(b.openedAt).localeCompare(String(a.openedAt)) || (b.queueNumber ?? 0) - (a.queueNumber ?? 0);
+}
+
 /** Yangilangan buyurtma: javobda zal/ofitsiant ismi bo'lmasa — eskisidagisi saqlanadi */
 function mergeOrder(prev: Order, next: Order): Order {
   const sameTable = prev.tableId === next.tableId;
@@ -571,8 +576,8 @@ export function WaiterPage() {
       [OrderType.Delivery]: [],
     };
     for (const o of activeOrders) res[orderTypeOf(o)].push(o);
-    res[OrderType.Takeaway].sort(byQueueNumber);
-    res[OrderType.Delivery].sort(byQueueNumber);
+    res[OrderType.Takeaway].sort(newestFirst);
+    res[OrderType.Delivery].sort(newestFirst);
     return res;
   }, [activeOrders]);
 

@@ -3,10 +3,15 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { FORBIDDEN_MESSAGE } from '../auth/user-view';
-import { ReportPeriod, UserRole } from '@hardweb-pos/shared';
+import { OrderType, ReportPeriod, UserRole } from '@hardweb-pos/shared';
 import { Actor, can, isAdminRole } from '../orders/order-rules';
 import { DebtStatus, DEBT_STATUS_MESSAGE, ReportsService, SHARE_PERCENT_MESSAGE, WAITER_REQUIRED_MESSAGE } from './reports.service';
 import { resolveDay, resolveRange } from './report-dates';
+
+/** ?from= yoki ?to= berilsa — aniq oraliq (sana yoki sana+vaqt), aks holda null (eski davr) */
+function rangeOrNull(q: Record<string, unknown>) {
+  return queryStr(q.from) || queryStr(q.to) ? resolveRange(q.from, q.to) : null;
+}
 
 function normalizePeriod(p?: string): ReportPeriod {
   return p === 'week' || p === 'month' ? p : 'day';
@@ -54,26 +59,35 @@ export class ReportsController {
 
   @Roles(...LEGACY_ROLES)
   @Get('summary')
-  summary(@Query('period') period?: string) {
-    return this.reports.summary(normalizePeriod(period));
+  summary(@Query() q: Record<string, unknown>) {
+    return this.reports.summary(normalizePeriod(queryStr(q.period)), rangeOrNull(q));
   }
 
   @Roles(...LEGACY_ROLES)
   @Get('top-items')
-  topItems(@Query('period') period?: string) {
-    return this.reports.topItems(normalizePeriod(period));
+  topItems(@Query() q: Record<string, unknown>) {
+    return this.reports.topItems(normalizePeriod(queryStr(q.period)), 10, rangeOrNull(q));
   }
 
   @Roles(...LEGACY_ROLES)
   @Get('waiters')
-  waiters(@Query('period') period?: string) {
-    return this.reports.waiterStats(normalizePeriod(period));
+  waiters(@Query() q: Record<string, unknown>) {
+    return this.reports.waiterStats(normalizePeriod(queryStr(q.period)), rangeOrNull(q));
   }
 
   @Roles(...LEGACY_ROLES)
   @Get('refunds')
-  refunds(@Query('period') period?: string) {
-    return this.reports.refunds(normalizePeriod(period));
+  refunds(@Query() q: Record<string, unknown>) {
+    return this.reports.refunds(normalizePeriod(queryStr(q.period)), rangeOrNull(q));
+  }
+
+  // Barcha sotilgan taomlar (0.3.2): ?from=&to= (sana yoki sana+vaqt), ?type=stol|olib_ketish|yetkazish
+  @Roles(...LEGACY_ROLES)
+  @Get('items')
+  items(@Query() q: Record<string, unknown>) {
+    const t = queryStr(q.type);
+    const type = t === 'stol' || t === 'olib_ketish' || t === 'yetkazish' ? (t as OrderType) : null;
+    return this.reports.allItems(resolveRange(q.from, q.to), type);
   }
 
   @Roles(...LEGACY_ROLES)

@@ -5,10 +5,11 @@ import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { IconBan, IconCash, IconReceipt, IconUser } from '../waiter/icons';
 
-export type ReportTab = 'overview' | 'waiters' | 'cash' | 'debts' | 'voids';
+export type ReportTab = 'overview' | 'items' | 'waiters' | 'cash' | 'debts' | 'voids';
 
 const TAB_META: Record<ReportTab, { label: string; icon: (cls: string) => ReactNode }> = {
   overview: { label: 'Umumiy', icon: (c) => <ChartIcon className={c} /> },
+  items: { label: 'Taomlar', icon: (c) => <IconReceipt className={c} strokeWidth={2.4} /> },
   waiters: { label: 'Ofitsiantlar', icon: (c) => <IconUser className={c} strokeWidth={2.4} /> },
   cash: { label: 'Kassa', icon: (c) => <IconCash className={c} strokeWidth={2.4} /> },
   debts: { label: 'Qarzlar', icon: (c) => <IconReceipt className={c} strokeWidth={2.4} /> },

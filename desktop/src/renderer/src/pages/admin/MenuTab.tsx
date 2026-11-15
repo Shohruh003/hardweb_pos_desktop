@@ -21,6 +21,8 @@ interface ItemForm {
   ingredients: string;
   unit: MenuUnit;
   stationId: string;
+  /** qo'shimcha printerlar — chek nusxasi (masalan Kassa nazorati) */
+  extraStationIds: string[];
   /** serverdagi joriy rasm (to'liq URL) */
   currentImage?: string;
 }
@@ -148,6 +150,7 @@ export function MenuTab() {
       ingredients: '',
       unit: MenuUnit.Piece,
       stationId: stations[0]?.id ?? '',
+      extraStationIds: [],
     });
   }
 
@@ -165,6 +168,7 @@ export function MenuTab() {
       ingredients: it.ingredients ?? '',
       unit: it.unit ?? MenuUnit.Piece,
       stationId: it.stationId ?? '',
+      extraStationIds: Array.isArray(it.extraStationIds) ? it.extraStationIds : [],
       currentImage: itemImage(it),
     });
     // Mavjud retseptni yuklaymiz
@@ -205,6 +209,7 @@ export function MenuTab() {
       ingredients: form.ingredients.trim() || null,
       unit: form.unit,
       stationId: form.stationId || null,
+      extraStationIds: form.extraStationIds.filter((id) => id && id !== form.stationId),
     };
     // Rasm faqat o'zgarganda: yangi data URL yoki '' (o'chirish)
     if (photo !== undefined && (form.id || photo)) body.image = photo;
@@ -467,6 +472,38 @@ export function MenuTab() {
             options={[{ value: '', label: 'Bo‘limsiz (chek chiqmaydi)' }, ...stations.map((s) => ({ value: s.id, label: s.name }))]}
             placeholder="Bo‘lim tanlang"
           />
+          {/* Qo'shimcha printerlar (eski POS'dagi "Printerlar"): chek nusxasi ham shu bo'limlarga chiqadi */}
+          {stations.length > 1 && (
+            <div className="mb-3">
+              <label className="block text-sm text-muted mb-1">Qo‘shimcha printerlar (chek nusxasi, masalan Kassa nazorati)</label>
+              <div className="flex flex-wrap gap-2" data-testid="extra-stations">
+                {stations
+                  .filter((st) => st.id !== form.stationId)
+                  .map((st) => {
+                    const on = form.extraStationIds.includes(st.id);
+                    return (
+                      <button
+                        key={st.id}
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() =>
+                          setForm({
+                            ...form,
+                            extraStationIds: on ? form.extraStationIds.filter((x) => x !== st.id) : [...form.extraStationIds, st.id],
+                          })
+                        }
+                        className={`h-10 px-3 rounded-xl border-2 text-sm font-bold transition-colors ${
+                          on ? 'bg-primary-hover border-primary-hover text-white' : 'bg-surface border-border text-text hover:border-primary/60'
+                        }`}
+                      >
+                        {on ? '✓ ' : '+ '}
+                        {st.name}
+                      </button>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
           {/* Retsept — skladdan ayiriladigan mahsulotlar (universal) */}
           <div className="mb-4 rounded-xl border border-border bg-bg/40 p-3">
             <div className="flex items-center justify-between mb-2">

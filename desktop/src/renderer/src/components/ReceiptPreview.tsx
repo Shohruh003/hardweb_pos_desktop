@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { MenuUnit, OrderType, orderDisplayName, orderTypeOf, roundSum } from '@hardweb-pos/shared';
-import type { Receipt } from '@hardweb-pos/shared';
+import type { Receipt, ReceiptLine } from '@hardweb-pos/shared';
 import { Button, formatSum } from './ui';
 import { formatQty } from './numeric';
 import { api } from '../lib/api';
@@ -162,7 +162,11 @@ export function ReceiptPreview({
     receipt.payments && receipt.payments.length > 0
       ? receipt.payments
       : [{ type: receipt.paymentType, amount: receipt.total, label: undefined as string | undefined }];
-  const lines = receipt.lines ?? [];
+  // Bir xil taomlar bitta qatorda (qog'oz chek bilan bir xil — 0.3.2)
+  const lines = mergeReceiptLines(receipt.lines ?? []);
+  const hallLines = lines.filter((l) => !l.takeaway);
+  const saboyLines = lines.filter((l) => l.takeaway);
+  const sections = hallLines.length > 0 && saboyLines.length > 0;
   // Xizmat haqi qaysi summadan: saboy (olib ketiladigan) qatorlarsiz
   const serviceBase = lines.reduce((s, l) => (l.takeaway ? s : s + roundSum(l.sum)), 0);
   const subtotal = roundSum(receipt.subtotal);
@@ -228,27 +232,22 @@ export function ReceiptPreview({
             </div>
             <Dash />
 
-            {lines.map((l, i) => (
-              <div key={i} className="mb-1">
-                <div className="break-words">
-                  {l.name}
-                  {l.takeaway ? ' (olib ketish)' : ''}
-                </div>
-                <div className="flex justify-between gap-2">
-                  <span>
-                    {l.unit === MenuUnit.Weight ? `${formatQty(l.quantity)} kg` : formatQty(l.quantity)} x {amount(l.price)}
-                    {l.priceOverridden ? '*' : ''}
-                    {l.priceOverridden && l.originalPrice != null && (
-                      <span className="ml-1 line-through opacity-60">{amount(l.originalPrice)}</span>
-                    )}
-                  </span>
-                  <span className="whitespace-nowrap">{amount(l.sum)}</span>
-                </div>
-              </div>
-            ))}
+            {sections ? (
+              <>
+                <div className="font-bold">ZALDA</div>
+                {hallLines.map((l, i) => <ReceiptRow key={'h' + i} l={l} amount={amount} />)}
+                <Row label="Zal uchun" value={amount(hallLines.reduce((t, l) => t + roundSum(l.sum), 0))} />
+                <Dash />
+                <div className="font-bold">OLIB KETISH (SABOY)</div>
+                {saboyLines.map((l, i) => <ReceiptRow key={'s' + i} l={l} amount={amount} />)}
+                <Row label="Saboy uchun" value={amount(saboyLines.reduce((t, l) => t + roundSum(l.sum), 0))} />
+              </>
+            ) : (
+              lines.map((l, i) => <ReceiptRow key={i} l={l} amount={amount} />)
+            )}
 
             <Dash />
-            <Row label="Mahsulotlar" value={amount(subtotal)} />
+            {!sections && <Row label="Mahsulotlar" value={amount(subtotal)} />}
             {roundSum(receipt.discountAmount) > 0 && (
               <Row label={`Chegirma (${formatPercent(receipt.discountPercent)}%)`} value={`- ${amount(receipt.discountAmount)}`} />
             )}
@@ -340,6 +339,48 @@ function Row({ label, value }: { label: string; value: string }) {
     <div className="flex justify-between gap-2 text-[12px]">
       <span>{label}</span>
       <span className="whitespace-nowrap">{value}</span>
+    </div>
+  );
+}
+
+/** Bir xil taomlarni birlashtirish (nom + birlik + narx + saboy + o'zgartirilgan narx) — qog'oz chek bilan bir xil */
+function mergeReceiptLines(lines: ReceiptLine[]): ReceiptLine[] {
+  const out: ReceiptLine[] = [];
+  const idx = new Map<string, number>();
+  for (const l of lines) {
+    const key = [l.name, l.unit ?? '', Number(l.price), l.takeaway ? 1 : 0, l.priceOverridden ? 1 : 0, l.originalPrice ?? ''].join('|');
+    const at = idx.get(key);
+    if (at === undefined) {
+      idx.set(key, out.length);
+      out.push({ ...l });
+    } else {
+      const m = out[at];
+      m.quantity = Math.round((Number(m.quantity) + Number(l.quantity)) * 1e6) / 1e6;
+      m.sum = roundSum(m.sum) + roundSum(l.sum);
+    }
+  }
+  return out;
+}
+
+/** Ixcham chek qatori: "3x KO'K CHOY (3 000) ....... 9 000" */
+function ReceiptRow({ l, amount }: { l: ReceiptLine; amount: (n: number | string | null | undefined) => string }) {
+  const kg = l.unit === MenuUnit.Weight;
+  const q = Number(l.quantity);
+  return (
+    <div className="flex justify-between gap-2 mb-0.5">
+      <span className="break-words min-w-0">
+        {kg ? `${formatQty(q)} kg ` : `${formatQty(q)}x `}
+        {l.name}
+        {(kg || q !== 1) && (
+          <span className="opacity-70">
+            {' '}({amount(l.price)}{kg ? '/kg' : ''}{l.priceOverridden ? '*' : ''})
+          </span>
+        )}
+        {l.priceOverridden && l.originalPrice != null && (
+          <span className="ml-1 line-through opacity-60">{amount(l.originalPrice)}</span>
+        )}
+      </span>
+      <span className="whitespace-nowrap">{amount(l.sum)}</span>
     </div>
   );
 }

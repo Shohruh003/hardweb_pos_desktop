@@ -5,7 +5,7 @@
 // UTC bo'yicha oldingi sanada turadi — shunda ham to'g'ri kunga tushadi.
 import { BadRequestException } from '@nestjs/common';
 
-export const DATE_INVALID_MESSAGE = 'Sana noto‘g‘ri (YYYY-MM-DD)';
+export const DATE_INVALID_MESSAGE = 'Sana noto‘g‘ri (YYYY-MM-DD yoki YYYY-MM-DDTHH:MM)';
 export const RANGE_INVALID_MESSAGE = 'Sana oralig‘i noto‘g‘ri';
 export const RANGE_TOO_LONG_MESSAGE = 'Sana oralig‘i juda katta (1 yilgacha)';
 
@@ -34,6 +34,23 @@ export function parseLocalDate(value: unknown): Date | null {
   // 31-fevral kabi sanalar keyingi oyga "o'tib ketadi" — rad etamiz
   if (date.getFullYear() !== y || date.getMonth() !== mo - 1 || date.getDate() !== d) return null;
   return date;
+}
+
+/**
+ * 'YYYY-MM-DDTHH:MM' (yoki bo'sh joy bilan) -> mahalliy sana-vaqt; vaqtsiz 'YYYY-MM-DD' -> kun boshi.
+ * hasTime — vaqt berilganmi (0.3.2: hisobotlarda istalgan soat oralig'i). Noto'g'ri -> null.
+ */
+export function parseLocalDateTime(value: unknown): { date: Date; hasTime: boolean } | null {
+  const raw = String((Array.isArray(value) ? value[0] : value) ?? '').trim();
+  const m = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}):(\d{2}))?$/.exec(raw);
+  if (!m) return null;
+  const day = parseLocalDate(m[1]);
+  if (!day) return null;
+  if (m[2] === undefined) return { date: day, hasTime: false };
+  const h = Number(m[2]);
+  const mi = Number(m[3]);
+  if (h > 23 || mi > 59) return null;
+  return { date: new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, mi, 0, 0), hasTime: true };
 }
 
 /** Mahalliy kun boshi (00:00) */
@@ -69,9 +86,25 @@ export function dayRange(day: Date): LocalRange {
 export function resolveRange(fromRaw: unknown, toRaw: unknown, now: Date = new Date()): LocalRange {
   const fromGiven = isGiven(fromRaw);
   const toGiven = isGiven(toRaw);
-  const from = fromGiven ? parseLocalDate(fromRaw) : null;
-  const to = toGiven ? parseLocalDate(toRaw) : null;
-  if ((fromGiven && !from) || (toGiven && !to)) throw new BadRequestException(DATE_INVALID_MESSAGE);
+  const fromDt = fromGiven ? parseLocalDateTime(fromRaw) : null;
+  const toDt = toGiven ? parseLocalDateTime(toRaw) : null;
+  if ((fromGiven && !fromDt) || (toGiven && !toDt)) throw new BadRequestException(DATE_INVALID_MESSAGE);
+  // Vaqt bilan oraliq (0.3.2): "15.11 08:00 — 16.11 03:00" — aniq daqiqalar bo'yicha
+  if (fromDt?.hasTime || toDt?.hasTime) {
+    const start = fromDt ? fromDt.date : dayStart(toDt!.date);
+    // "gacha" vaqti kiradi (shu daqiqa oxirigacha); vaqtsiz "gacha" — o'sha kun oxirigacha
+    const endExcl = toDt ? (toDt.hasTime ? new Date(toDt.date.getTime() + 60_000) : nextDayStart(toDt.date)) : new Date(now.getTime() + 60_000);
+    if (endExcl.getTime() <= start.getTime()) throw new BadRequestException(RANGE_INVALID_MESSAGE);
+    if (endExcl.getTime() - start.getTime() > RANGE_MAX_DAYS * 86_400_000) throw new BadRequestException(RANGE_TOO_LONG_MESSAGE);
+    return {
+      from: localDateKey(start),
+      to: localDateKey(new Date(endExcl.getTime() - 1)),
+      fromUtc: sqliteUtc(start),
+      toUtc: sqliteUtc(endExcl),
+    };
+  }
+  const from = fromDt ? fromDt.date : null;
+  const to = toDt ? toDt.date : null;
 
   const today = dayStart(now);
   const start = from ?? to ?? today;

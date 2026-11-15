@@ -157,6 +157,8 @@ const STATUS_DEBOUNCE_MS = 300;
 
 interface ResolvedItem {
   stationId: string | null;
+  /** qo'shimcha printerlar (menyudagi taomdan) — chek nusxasi */
+  extraStationIds?: string[];
   stationName: string | null;
   name: string;
   quantity: number;
@@ -357,11 +359,15 @@ export class StationPrintService implements OnModuleInit, OnModuleDestroy {
 
     // 1) Taomlarni bo'limlar bo'yicha guruhlash (bo'limsiz taom chek chiqarmaydi)
     const groups = new Map<string, ResolvedItem[]>();
-    for (const it of await this.resolveItems(items)) {
-      if (!it.stationId) continue;
-      const list = groups.get(it.stationId);
+    const add = (sid: string, it: ResolvedItem) => {
+      const list = groups.get(sid);
       if (list) list.push(it);
-      else groups.set(it.stationId, [it]);
+      else groups.set(sid, [it]);
+    };
+    for (const it of await this.resolveItems(items)) {
+      if (it.stationId) add(it.stationId, it);
+      // Qo'shimcha printerlar (0.3.2): nusxa — masalan Kassa nazoratiga ham
+      for (const extra of it.extraStationIds ?? []) add(extra, it);
     }
     if (groups.size === 0) return [];
 
@@ -469,21 +475,15 @@ export class StationPrintService implements OnModuleInit, OnModuleDestroy {
    * bo'limsiz ("chek chiqmaydi").
    */
   private async resolveItems(items: OrderItem[]): Promise<ResolvedItem[]> {
-    const lookupIds = [
-      ...new Set(
-        items
-          .filter((it) => it.stationId === undefined || !it.menuItemName)
-          .map((it) => it.menuItemId)
-          .filter(Boolean),
-      ),
-    ];
+    // Qo'shimcha printerlar har doim menyudan olinadi — shuning uchun barcha taomlar o'qiladi
+    const lookupIds = [...new Set(items.map((it) => it.menuItemId).filter(Boolean))];
     const menuById = new Map<string, MenuItemEntity>();
     if (lookupIds.length) {
       try {
         // Rasm (base64) ustunini o'qimaymiz — faqat kerakli maydonlar
         const rows = await this.menuItems.find({
           where: { id: In(lookupIds) },
-          select: { id: true, name: true, unit: true, stationId: true },
+          select: { id: true, name: true, unit: true, stationId: true, extraStationIds: true },
         });
         for (const m of rows) menuById.set(m.id, m);
       } catch (e) {
@@ -503,6 +503,7 @@ export class StationPrintService implements OnModuleInit, OnModuleDestroy {
         unit: it.unit ?? mi?.unit ?? null,
         note: it.note != null && String(it.note).trim() ? String(it.note) : null, // chekda tozalanadi
         takeaway: it.takeaway === true,
+        extraStationIds: Array.isArray(mi?.extraStationIds) ? mi!.extraStationIds.filter((x) => x && x !== stationId) : [],
       };
     });
   }

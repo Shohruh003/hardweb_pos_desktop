@@ -14,6 +14,8 @@ import { SettingsPanel } from '../components/SettingsPanel';
 import { BackButton } from '../components/BackButton';
 import { OrderTypeBreakdown } from '../components/cashier/OrderTypeBreakdown';
 import { ReportTab, ReportTabs, useReportTab } from '../components/reports/ReportTabs';
+import { RangePicker, ReportRange, customValid, defaultReportRange, periodQuery, toDateRange } from '../components/reports/RangePicker';
+import { ItemsReport } from '../components/reports/ItemsReport';
 import { WaiterShareReport } from '../components/reports/WaiterShareReport';
 import { CashSummaryCard } from '../components/reports/CashSummaryCard';
 import { DebtsPanel } from '../components/reports/DebtsPanel';
@@ -47,14 +49,15 @@ export function DirectorPage() {
   // Restoran sozlamalari (Telegram, xizmat haqi...) — server faqat direktor/superadmin'ga ruxsat beradi
   const canSettings = !!user && isFullAccessRole(user.role);
   const tabs = useMemo<ReportTab[]>(() => {
-    const list: ReportTab[] = ['overview'];
+    const list: ReportTab[] = ['overview', 'items'];
     if (canSeeWaiterShares(user)) list.push('waiters');
     if (canSeeCash(user)) list.push('cash', 'debts');
     if (canSeeVoids(user)) list.push('voids');
     return list;
   }, [user]);
   const [tab, setTab] = useReportTab('director.tab', tabs);
-  const [period, setPeriod] = useState<ReportPeriod>('day');
+  const [rr, setRr] = useState<ReportRange>(defaultReportRange);
+  const pq = periodQuery(rr);
   const [showSettings, setShowSettings] = useState(false);
   const [summary, setSummary] = useState<ReportSummary | null>(null);
   const [topItems, setTopItems] = useState<TopItem[]>([]);
@@ -65,51 +68,41 @@ export function DirectorPage() {
   // Har so'rov alohida (bittasi xato bersa ham qolganlari ko'rinadi); davr almashtirilganda
   // kechikkan eski javoblar yangisini bosib ketmaydi
   const reqRef = useRef(0);
-  const load = useCallback((p: ReportPeriod) => {
+  const load = useCallback((p: string) => {
     const req = ++reqRef.current;
     const fresh = <T,>(set: (v: T) => void) => (v: T) => {
       if (req === reqRef.current) set(v);
     };
-    api.get<ReportSummary>(`/reports/summary?period=${p}`).then(fresh(setSummary)).catch(() => {});
-    api.get<TopItem[]>(`/reports/top-items?period=${p}`).then(fresh(setTopItems)).catch(() => {});
-    api.get<WaiterStat[]>(`/reports/waiters?period=${p}`).then(fresh(setWaiters)).catch(() => {});
+    api.get<ReportSummary>(`/reports/summary?${p}`).then(fresh(setSummary)).catch(() => {});
+    api.get<TopItem[]>(`/reports/top-items?${p}`).then(fresh(setTopItems)).catch(() => {});
+    api.get<WaiterStat[]>(`/reports/waiters?${p}`).then(fresh(setWaiters)).catch(() => {});
   }, []);
 
   useEffect(() => {
-    if (tab !== 'overview') return;
-    load(period);
+    if (tab !== 'overview' || !customValid(rr)) return;
+    load(pq);
     // Hisob yopilganda hisobotni yangilash (deyarli jonli — TZ F-5.6); ketma-ket hodisalar bitta so'rov
     const socket = getSocket();
     let timer: number | undefined;
     const onClosed = () => {
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => load(period), 400);
+      timer = window.setTimeout(() => load(pq), 400);
     };
     socket.on(SOCKET_EVENTS.ORDER_CLOSED, onClosed);
     return () => {
       window.clearTimeout(timer);
       socket.off(SOCKET_EVENTS.ORDER_CLOSED, onClosed);
     };
-  }, [period, load, tab]);
+  }, [pq, rr, load, tab]);
 
   const maxTop = Math.max(1, ...topItems.map((x) => x.quantity));
   const maxWaiter = Math.max(1, ...waiters.map((w) => w.revenue));
   const payments = (summary?.paymentBreakdown ?? []) as PaymentRow[];
   const totalPay = Math.max(1, payments.reduce((s, p) => s + p.amount, 0));
-  const voidRange = useMemo(() => periodRange(period), [period]);
+  const voidRange = useMemo(() => toDateRange(rr), [rr]);
 
-  const periodChips = (
-    <Segmented<ReportPeriod>
-      value={period}
-      onChange={setPeriod}
-      testIdPrefix="period"
-      options={[
-        { value: 'day', label: t('filter.today') },
-        { value: 'week', label: t('filter.week') },
-        { value: 'month', label: t('filter.month') },
-      ]}
-    />
-  );
+  // Davr: Bugun / Hafta / Oy yoki istalgan sana va vaqt oralig'i (0.3.2)
+  const periodChips = <RangePicker value={rr} onChange={setRr} />;
 
   return (
     <AppShell title={t('title.director')}>
@@ -209,6 +202,13 @@ export function DirectorPage() {
         {tab === 'cash' && <CashSummaryCard refreshKey={cashTick} />}
 
         {tab === 'debts' && <DebtsPanel onChanged={() => setCashTick((n) => n + 1)} />}
+
+        {tab === 'items' && (
+          <>
+            <div className="mb-4 sm:mb-5">{periodChips}</div>
+            {customValid(rr) && <ItemsReport range={voidRange} />}
+          </>
+        )}
 
         {tab === 'voids' && (
           <>

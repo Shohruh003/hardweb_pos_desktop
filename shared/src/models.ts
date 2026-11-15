@@ -61,6 +61,7 @@ export interface MenuItem {
   price: number; // narx (dona uchun — bir dona narxi; kg uchun — 1 kg narxi)
   categoryId: string; // kategoriya_id (birinchi/ikkinchi taom, salat, shirinlik...)
   stationId?: string | null; // qaysi bo'limdan chiqadi (oshxona/bar/somsaxona...)
+  extraStationIds?: string[] | null; // qo'shimcha printerlar: chek nusxasi ham shu bo'limlarga (masalan Kassa nazorati)
   image?: string | null; // rasm (data URL) — FAQAT yuklash/tahrirlashda yuboriladi; ro'yxatlarda kelmaydi
   imageUrl?: string | null; // rasm manzili: '/api/menu/items/<id>/image?v=<n>' (server URL oldiga qo'shiladi)
   ingredients?: string | null; // taomga ketadigan mahsulotlar

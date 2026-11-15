@@ -226,14 +226,17 @@ export function decimalPlaces(n: number): number {
   return s.includes('.') ? s.split('.')[1].length : 0;
 }
 
+/** Dona/porsiya taomlarda kasr miqdor xonalari (0,5 / 1,25 / 0,333) — restoran talabi, 0.3.2 */
+export const PIECE_QTY_DECIMALS = 3;
+
 /**
- * Miqdor shu o'lchov birligi uchun to'g'rimi: musbat; dona — butun son; kg — 6 xonagacha kasr.
- * (Taom qo'shish, hisobni bo'lish va otkazda bir xil qoida.)
+ * Miqdor shu o'lchov birligi uchun to'g'rimi: musbat; dona — 3 xonagacha kasr (yarim porsiya: 0,5);
+ * kg — 6 xonagacha kasr. (Taom qo'shish, hisobni bo'lish va otkazda bir xil qoida.)
  */
 export function isValidQuantity(value: unknown, unit: MenuUnit | string | null | undefined): boolean {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return false;
   if (unit === MenuUnit.Weight) return decimalPlaces(value) <= QTY_DECIMALS;
-  return Number.isInteger(value);
+  return decimalPlaces(value) <= PIECE_QTY_DECIMALS;
 }
 
 /** Pul hisobiga kerakli qator maydonlari (narx, miqdor, saboy belgisi) */

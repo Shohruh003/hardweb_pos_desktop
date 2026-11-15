@@ -64,6 +64,17 @@ export function shiftAnchor(mode: RangeMode, anchor: string, dir: -1 | 1): strin
 
 /** "13.11.2026" yoki "11.11 – 17.11.2026" (yillar har xil bo'lsa — ikkalasi to'liq) */
 export function rangeLabel(r: DateRange): string {
+  // Sana + vaqt (0.3.2): "15.11 08:00 – 16.11.2026 03:00"
+  if (r.from.includes('T') || r.to.includes('T')) {
+    const part = (v: string) => {
+      const [d, t] = v.split('T');
+      const [y, m, dd] = d.split('-');
+      return { dm: `${dd}.${m}`, y, t: t ?? '' };
+    };
+    const a = part(r.from);
+    const b = part(r.to);
+    return `${a.dm}${a.y !== b.y ? '.' + a.y : ''} ${a.t} – ${b.dm}.${b.y} ${b.t}`.trim();
+  }
   const a = keyToDate(r.from);
   const b = keyToDate(r.to);
   const full = (d: Date) => `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()}`;

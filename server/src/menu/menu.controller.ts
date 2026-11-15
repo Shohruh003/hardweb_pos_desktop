@@ -67,6 +67,8 @@ class MenuItemDto {
   @IsOptional() @IsBoolean() exciseRequired?: boolean;
   @IsOptional() @IsEnum(MenuUnit) unit?: MenuUnit;
   @IsOptional() @IsString() stationId?: string;
+  // Qo'shimcha printerlar (bo'lim id'lari); [] yoki null — yo'q
+  @IsOptional() @IsArray() @IsUUID('all', { each: true }) extraStationIds?: string[] | null;
   @IsOptional() @IsBoolean() favorite?: boolean;
 }
 
@@ -81,6 +83,8 @@ class MenuItemPatchDto {
   @IsOptional() @IsBoolean() exciseRequired?: boolean;
   @IsOptional() @IsEnum(MenuUnit) unit?: MenuUnit;
   @IsOptional() @IsString() stationId?: string;
+  // Qo'shimcha printerlar (bo'lim id'lari); [] yoki null — yo'q
+  @IsOptional() @IsArray() @IsUUID('all', { each: true }) extraStationIds?: string[] | null;
   @IsOptional() @IsBoolean() favorite?: boolean;
 }
 
@@ -96,7 +100,7 @@ function assertCanToggleAvailability(user: RequestUser | undefined): void {
 }
 
 /** null qilib bo'ladigan taom maydonlari (qolganlari NOT NULL — null kelsa e'tiborsiz) */
-const NULLABLE_ITEM_FIELDS = new Set(['stationId', 'ingredients']);
+const NULLABLE_ITEM_FIELDS = new Set(['stationId', 'ingredients', 'extraStationIds']);
 
 /** Rasm bor-yo'qligi — base64 matnini o'qimasdan (SQLite typeof() qiymat kontentini yuklamaydi) */
 const HAS_IMAGE_SQL = "CASE WHEN typeof(m.image) = 'text' THEN 1 ELSE 0 END";
@@ -109,6 +113,7 @@ function toMenuItem(m: MenuItemEntity, hasImage: boolean): MenuItem {
     price: Number(m.price),
     categoryId: m.categoryId,
     stationId: m.stationId ?? null,
+    extraStationIds: Array.isArray(m.extraStationIds) ? m.extraStationIds : [],
     imageUrl: hasImage ? menuImageUrl(m.id, m.imageVersion) : null,
     ingredients: m.ingredients ?? null,
     available: !!m.available,

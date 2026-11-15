@@ -225,5 +225,5 @@ export function formatKg(q: number | string | null | undefined): string {
 export function qtyText(quantity: number | string, unit: MenuUnit | string | null | undefined): string {
   if (unit === MenuUnit.Weight) return `${formatKg(quantity)} kg`;
   const n = Number(quantity);
-  return Number.isFinite(n) ? String(Math.round(n * 1000) / 1000) : '0';
+  return Number.isFinite(n) ? String(Math.round(n * 1000) / 1000).replace('.', ',') : '0';
 }
