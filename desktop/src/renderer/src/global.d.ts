@@ -30,7 +30,7 @@ declare global {
       platform: string;
       version: string;
       showKeyboard: () => Promise<{ ok: boolean }>;
-      getLanInfo: () => Promise<{ ip: string | null; webUrl: string | null; webAvailable: boolean }>;
+      getLanInfo: () => Promise<{ ip: string | null; webUrl: string | null; webAvailable: boolean; serverPc?: boolean }>;
       printer: {
         printReceipt: (receipt: Receipt) => Promise<PrintResult>;
         printKitchen: (order: Order) => Promise<PrintResult>;

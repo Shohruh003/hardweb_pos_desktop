@@ -31,7 +31,7 @@ contextBridge.exposeInMainWorld('hardweb', {
   // Windows ekran klaviaturasini ochish (planshet/monoblok uchun)
   showKeyboard: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('keyboard:show'),
   // Ofitsiant telefoni uchun kassaning web manzili (QR)
-  getLanInfo: (): Promise<{ ip: string | null; webUrl: string | null; webAvailable: boolean }> =>
+  getLanInfo: (): Promise<{ ip: string | null; webUrl: string | null; webAvailable: boolean; serverPc?: boolean }> =>
     ipcRenderer.invoke('app:lan-info'),
   printer: {
     printReceipt: (receipt: Receipt): Promise<PrintResult> =>

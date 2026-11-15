@@ -36,12 +36,14 @@ import {
   UpdateOrderStatusDto,
 } from './dto';
 import {
+  BILL_FORBIDDEN_MESSAGE,
   PRICE_FORBIDDEN_MESSAGE,
   VOID_FORBIDDEN_MESSAGE,
   WAITER_CHANGE_FORBIDDEN_MESSAGE,
   can,
   canChangeWaiter,
   canOperateOrders,
+  canPrintBill,
   canViewAllHistory,
   canVoid,
 } from './order-rules';
@@ -146,7 +148,8 @@ export class OrdersController {
 
   // Schot so'raldi — stol "hisob kutilmoqda" bo'ladi (ofitsiant bosadi)
   @Post(':id/request-bill')
-  requestBill(@Param('id') id: string) {
+  requestBill(@Param('id') id: string, @Request() req: any) {
+    if (!canPrintBill(req?.user)) throw new ForbiddenException(BILL_FORBIDDEN_MESSAGE);
     return this.orders.requestBill(id);
   }
 
@@ -154,6 +157,7 @@ export class OrdersController {
   @Post(':id/bill-printed')
   billPrinted(@Param('id') id: string, @Request() req: any) {
     assertOperate(req);
+    if (!canPrintBill(req?.user)) throw new ForbiddenException(BILL_FORBIDDEN_MESSAGE);
     return this.orders.markBillPrinted(id);
   }
 
@@ -196,14 +200,14 @@ export class OrdersController {
   @Post(':id/change-type')
   changeType(@Param('id') id: string, @Body() dto: ChangeOrderTypeDto, @Request() req: any) {
     assertOperate(req);
-    return this.orders.changeType(id, dto);
+    return this.orders.changeType(id, dto, req.user);
   }
 
   // Hisobni boshqa stolga ko'chirish (smenit stol) — faqat stolga buyurtma; band stolga — qo'shimcha hisob
   @Post(':id/move-table')
   moveTable(@Param('id') id: string, @Body() dto: MoveTableDto, @Request() req: any) {
     assertOperate(req);
-    return this.orders.moveTable(id, dto.tableId);
+    return this.orders.moveTable(id, dto.tableId, req.user);
   }
 
   // Buyurtma ofitsiantini o'zgartirish (smenit ofitsant) — faqat kassir yoki administrator / direktor
@@ -217,7 +221,8 @@ export class OrdersController {
 
   // Hisob chekini kassa (printerli terminal) chop etsin (relay)
   @Post(':id/print-bill')
-  printBill(@Param('id') id: string) {
+  printBill(@Param('id') id: string, @Request() req: any) {
+    if (!canPrintBill(req?.user)) throw new ForbiddenException(BILL_FORBIDDEN_MESSAGE);
     return this.orders.printBillRelay(id);
   }
 

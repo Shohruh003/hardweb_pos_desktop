@@ -8,7 +8,7 @@ import { ChangeTypeModal } from './orderActions/ChangeTypeModal';
 import { MoveTableModal } from './orderActions/MoveTableModal';
 import { ChangeWaiterModal } from './orderActions/ChangeWaiterModal';
 import { printBillAndMark } from './orderActions/printBill';
-import { canChangeWaiter, canVoid, canWorkOrders } from './orderActions/perms';
+import { canChangeWaiter, canPrintBill, canVoid, canWorkOrders } from './orderActions/perms';
 import { IconBan, IconPrinter, IconProps, IconRepeat, IconScissors, IconTableMove, IconUserSwap } from './waiter/icons';
 import { Spinner } from './waiter/Sheet';
 
@@ -125,7 +125,7 @@ export default function OrderActionsBar({ order, siblings, onChanged, hide, comp
   if (canChangeWaiter(user) && !hidden.has('waiter')) {
     actions.push({ key: 'waiter', label: 'Ofitsiant', Icon: IconUserSwap, tone: 'plain' });
   }
-  if (work && !hidden.has('bill')) {
+  if (work && canPrintBill(user) && !hidden.has('bill')) {
     actions.push({
       key: 'bill',
       label: 'Chek',

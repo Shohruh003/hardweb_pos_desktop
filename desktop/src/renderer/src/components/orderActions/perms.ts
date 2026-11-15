@@ -21,6 +21,11 @@ export function canVoid(user: UserLike): boolean {
   return hasCapability(user, 'void');
 }
 
+/** Schot (hisob cheki) chiqarish — faqat kassir yoki administrator/direktor (restoran talabi) */
+export function canPrintBill(user: UserLike): boolean {
+  return hasCapability(user, 'cashier') || isAdminRole(user);
+}
+
 /** Ofitsiantni almashtirish — faqat kassir yoki administrator/direktor */
 export function canChangeWaiter(user: UserLike): boolean {
   return hasCapability(user, 'cashier') || isAdminRole(user);

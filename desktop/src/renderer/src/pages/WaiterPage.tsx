@@ -19,6 +19,8 @@ import {
   hasCapability,
   orderDisplayName,
   orderTypeOf,
+  TABLE_OWNER_MESSAGE,
+  canServeTable,
 } from '@hardweb-pos/shared';
 import { AppShell } from '../components/AppShell';
 import { FeedbackModal, FeedbackVariant } from '../components/FeedbackModal';
@@ -749,8 +751,21 @@ export function WaiterPage() {
     return checks.length ? checkNoOf(checks[0]) : 1;
   }, []);
   const openTable = useCallback(
-    (tbl: Table) => openTarget({ kind: 'table', tableId: tbl.id, checkNo: defaultCheckFor(tbl.id) }),
-    [openTarget, defaultCheckFor],
+    (tbl: Table) => {
+      // Stol egasi qoidasi: boshqa ofitsiant ochgan stolga ofitsiant taom qo'sha olmaydi (server ham tekshiradi)
+      const open = activeOrders.filter((o) => o.tableId === tbl.id && orderTypeOf(o) === OrderType.DineIn);
+      if (!canServeTable(user, open)) {
+        const owner = open.find((o) => o.waiterId && o.waiterId !== user?.id);
+        setFeedback({
+          variant: 'warning',
+          title: 'Bu stol sizniki emas',
+          subtitle: (owner?.waiterName ? owner.waiterName + ' xizmat qilyapti. ' : '') + TABLE_OWNER_MESSAGE,
+        });
+        return;
+      }
+      openTarget({ kind: 'table', tableId: tbl.id, checkNo: defaultCheckFor(tbl.id) });
+    },
+    [openTarget, defaultCheckFor, activeOrders, user],
   );
   const openNew = useCallback(
     (type: OrderType) => {

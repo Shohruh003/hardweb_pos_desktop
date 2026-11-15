@@ -173,6 +173,13 @@ export function canChangeWaiter(actor: Actor | null | undefined): boolean {
   return can(actor, 'cashier') || isAdminRole(actor);
 }
 
+// ---- Schot (hisob cheki) — faqat kassir / administrator / direktor (restoran talabi, 0.3.1) ----
+export const BILL_FORBIDDEN_MESSAGE = 'Schotni faqat kassir chiqara oladi';
+
+export function canPrintBill(actor: Actor | null | undefined): boolean {
+  return can(actor, 'cashier') || isAdminRole(actor);
+}
+
 /** Cheklar tarixini to'liq ko'rish: 'history' ruxsati yoki administrator / direktor */
 export function canViewAllHistory(actor: Actor | null | undefined): boolean {
   return can(actor, 'history') || isAdminRole(actor);

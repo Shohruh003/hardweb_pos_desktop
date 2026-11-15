@@ -170,6 +170,18 @@ export function LoginPage({ demoData = false }: { demoData?: boolean }) {
   const [logoClicks, setLogoClicks] = useState(0);
   // Direktor/rahbar — login + parol rejimi (PIN emas, xavfsizroq)
   const [pwMode, setPwMode] = useState(false);
+  // Direktor login/parol bilan faqat server (kassa) kompyuterida kiradi — monoblok/telefonda tugma yo'q
+  const [serverPc, setServerPc] = useState(MOCK);
+  useEffect(() => {
+    if (MOCK) return;
+    let alive = true;
+    window.hardweb?.getLanInfo?.()
+      .then((info) => alive && setServerPc(!!info?.serverPc))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
   const [loginName, setLoginName] = useState('');
   const [password, setPassword] = useState('');
   // Tez bosishlarda ham to'g'ri ishlashi uchun joriy PIN va band holati ref'da
@@ -406,7 +418,8 @@ export function LoginPage({ demoData = false }: { demoData?: boolean }) {
           </div>
         )}
 
-        {/* PIN <-> login/parol rejimini almashtirish */}
+        {/* PIN <-> login/parol rejimini almashtirish (faqat server kompyuterida) */}
+        {(serverPc || pwMode) && (
         <button
           onClick={() => {
             setPwMode((v) => !v);
@@ -418,6 +431,7 @@ export function LoginPage({ demoData = false }: { demoData?: boolean }) {
         >
           {pwMode ? '← Xodim (PIN) bilan kirish' : '🔑 Direktor (login/parol) bilan kirish'}
         </button>
+        )}
 
         {/* Server manzili — boshqa kompyuterda (terminalda) kassa IP'sini kiritish uchun.
             Demo rejimda server yo'q — ko'rsatilmaydi. */}

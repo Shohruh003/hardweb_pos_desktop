@@ -1,5 +1,25 @@
 // Buyurtma holatlari qoidalari — server va demo (mock) bir xil tekshiradi.
 import { OrderStatus, OrderType } from './enums';
+import { isFullAccessRole } from './permissions';
+
+/** Ofitsiant boshqa ofitsiantning stoliga taom qo'shmoqchi bo'lganda */
+export const TABLE_OWNER_MESSAGE = 'Bu stol boshqa ofitsiantga tegishli — unga taom qo‘sha olmaysiz';
+
+/**
+ * Stol egasi qoidasi (restoran talabi): ofitsiant istalgan BO'SH stolni ocha oladi, lekin boshqa
+ * ofitsiant ochgan (ochiq hisobi bor) stolga taom qo'sha olmaydi va u yerda yangi hisob ocha olmaydi.
+ * Kassir, administrator va direktor — hamma stolga. openOrders — shu stoldagi ochiq hisoblar.
+ */
+export function canServeTable(
+  user: { id?: string | null; role?: string | null; permissions?: string[] | null } | null | undefined,
+  openOrders: { waiterId?: string | null }[] | null | undefined,
+): boolean {
+  if (!user) return false;
+  const role = String(user.role ?? '');
+  if (isFullAccessRole(role) || role === 'administrator') return true;
+  if ((user.permissions ?? []).includes('cashier')) return true;
+  return (openOrders ?? []).every((o) => !o.waiterId || o.waiterId === user.id);
+}
 
 /** Buyurtma turlari nomi (UI tugmalari, chek, hisobot) */
 export const ORDER_TYPE_LABELS: Record<OrderType, string> = {

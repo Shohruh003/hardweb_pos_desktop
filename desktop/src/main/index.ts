@@ -386,7 +386,12 @@ function pickLanIp(): string | null {
 // Ofitsiant telefoni uchun — kassaning LAN IP'si va web manzili (QR ko'rsatish uchun)
 ipcMain.handle('app:lan-info', () => {
   const ip = pickLanIp();
-  return { ip, webUrl: ip ? `http://${ip}:${WEB_PORT}` : null, webAvailable: webListening };
+  // serverPc — shu ilova serverni o'zi ishga tushiradigan (kassa) kompyuterdami.
+  // Terminal (monoblok) va telefonlarda false: u yerda direktor kirish tugmasi ko'rsatilmaydi.
+  // Dev rejimda (packaged emas) — true, ishlab chiqishda qulay bo'lsin.
+  const serverPc =
+    !__MOCK__ && (!app.isPackaged || existsSync(join(process.resourcesPath, 'server', 'dist', 'main.js')));
+  return { ip, webUrl: ip ? `http://${ip}:${WEB_PORT}` : null, webAvailable: webListening, serverPc };
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

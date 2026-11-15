@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { SOCKET_EVENTS } from '@hardweb-pos/shared';
-import type { OrderCreatedPayload, Order, Receipt } from '@hardweb-pos/shared';
+import type { Order, Receipt } from '@hardweb-pos/shared';
 import { getSocket } from '../lib/socket';
 import { loadPosSettings } from '../lib/posSettings';
 
@@ -49,20 +49,14 @@ export function PrintRelayHost(): null {
       void printIfHost(() => window.hardweb?.printer?.printReceipt?.(receipt));
     };
 
-    // Yangi buyurtma — kassa printeridan zakas cheki (hisob bo'lishdan paydo bo'lgan hisob bundan mustasno)
-    const onCreated = (payload?: OrderCreatedPayload) => {
-      const order = payload?.order;
-      if (!order || payload?.source === 'split') return;
-      void printIfHost(() => window.hardweb?.printer?.printOrderTicket?.(order));
-    };
+    // Eslatma: yangi buyurtmaning kassa printeridan "zakaz cheki" nusxasi CHIQARILMAYDI (restoran talabi, 0.3.1) —
+    // taomlar faqat o'z bo'limlari printeridan chiqadi (server yuboradi).
 
     socket.on(SOCKET_EVENTS.PRINT_BILL, onPrintBill);
     socket.on(SOCKET_EVENTS.PRINT_RECEIPT, onPrintReceipt);
-    socket.on(SOCKET_EVENTS.ORDER_CREATED, onCreated);
     return () => {
       socket.off(SOCKET_EVENTS.PRINT_BILL, onPrintBill);
       socket.off(SOCKET_EVENTS.PRINT_RECEIPT, onPrintReceipt);
-      socket.off(SOCKET_EVENTS.ORDER_CREATED, onCreated);
     };
   }, []);
   return null;

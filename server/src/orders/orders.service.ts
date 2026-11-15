@@ -59,6 +59,8 @@ import {
   remainingAmount,
   roundSum,
   sumPayments,
+  TABLE_OWNER_MESSAGE,
+  canServeTable,
 } from '@hardweb-pos/shared';
 import {
   ChangeOrderTypeDto,
@@ -795,11 +797,17 @@ export class OrdersService {
           throw new BadRequestException(ORDER_OTHER_TABLE_MESSAGE);
         }
         table = await this.tableOf(target);
+        // Stol egasi: boshqa ofitsiant ochgan stolga taom qo'sha olmaydi
+        if (actor && table && !canServeTable(actor, await this.openChecksAt(table.id))) {
+          throw new ForbiddenException(TABLE_OWNER_MESSAGE);
+        }
       }
     } else if (input.type === OrderType.DineIn) {
       table = await this.tables.findOne({ where: { id: dto.tableId! } });
       if (!table) throw new NotFoundException(TABLE_NOT_FOUND_MESSAGE);
       const open = await this.openChecksAt(table.id);
+      // Stol egasi: boshqa ofitsiant ochgan stolga taom qo'sha / yangi hisob ocha olmaydi
+      if (actor && !canServeTable(actor, open)) throw new ForbiddenException(TABLE_OWNER_MESSAGE);
       tableHadOpen = open.length > 0;
       if (dto.checkNo != null) {
         // "Hisob-2" yorlig'i: shu raqamli ochiq hisob bo'lsa — unga, aks holda aynan shu raqam bilan yangi
@@ -1385,11 +1393,11 @@ export class OrdersService {
    *  • olib ketish <-> yetkazish: raqam saqlanadi.
    * Kunlik raqam (№) saqlanadi (raqamsiz eski buyurtma — yangi raqam oladi). Oshxona cheki yo'q.
    */
-  async changeType(id: string, dto: ChangeOrderTypeDto): Promise<Order> {
-    return this.serial(() => this.changeTypeLocked(id, dto));
+  async changeType(id: string, dto: ChangeOrderTypeDto, actor?: Actor): Promise<Order> {
+    return this.serial(() => this.changeTypeLocked(id, dto, actor));
   }
 
-  private async changeTypeLocked(id: string, dto: ChangeOrderTypeDto): Promise<Order> {
+  private async changeTypeLocked(id: string, dto: ChangeOrderTypeDto, actor?: Actor): Promise<Order> {
     const order = await this.findEntity(id);
     if (order.status === OrderStatus.Closed) throw new BadRequestException(ORDER_CLOSED_MESSAGE);
     if (!(ORDER_TYPES as string[]).includes(dto.type)) {
@@ -1409,6 +1417,9 @@ export class OrdersService {
       if (!dto.tableId) throw new BadRequestException(TABLE_REQUIRED_MESSAGE);
       newTable = await this.tables.findOne({ where: { id: dto.tableId } });
       if (!newTable) throw new NotFoundException(TABLE_NOT_FOUND_MESSAGE);
+      if (actor && !canServeTable(actor, await this.openChecksAt(newTable.id))) {
+        throw new ForbiddenException(TABLE_OWNER_MESSAGE);
+      }
     } else {
       // Telefon: berilsa — tekshiriladi; berilmasa — buyurtmadagisi (olib ketishda ixtiyoriy)
       const rawPhone = typeof dto.phone === 'string' ? dto.phone.trim() : '';
@@ -1513,11 +1524,11 @@ export class OrdersService {
    * Yangi stol band bo'lsa — hisob u yerda qo'shimcha hisob bo'ladi (keyingi raqam), xato emas.
    * Boshqa zalga o'tganda (to'lov bo'lmasa) xizmat haqi o'sha zal foiziga o'zgaradi (B24).
    */
-  async moveTable(id: string, newTableId: string): Promise<Order> {
-    return this.serial(() => this.moveTableLocked(id, newTableId));
+  async moveTable(id: string, newTableId: string, actor?: Actor): Promise<Order> {
+    return this.serial(() => this.moveTableLocked(id, newTableId, actor));
   }
 
-  private async moveTableLocked(id: string, newTableId: string): Promise<Order> {
+  private async moveTableLocked(id: string, newTableId: string, actor?: Actor): Promise<Order> {
     const order = await this.findEntity(id);
     if (orderTypeOf(order) !== OrderType.DineIn) {
       throw new BadRequestException(NOT_TABLE_ORDER_MESSAGE);
@@ -1530,6 +1541,9 @@ export class OrdersService {
     }
     const newTable = await this.tables.findOne({ where: { id: newTableId } });
     if (!newTable) throw new NotFoundException('Yangi stol topilmadi');
+    if (actor && !canServeTable(actor, await this.openChecksAt(newTable.id))) {
+      throw new ForbiddenException(TABLE_OWNER_MESSAGE);
+    }
     const oldTable = await this.tableOf(order);
     const oldTableId = order.tableId;
     const paid = sumPayments(await this.payments.find({ where: { orderId: order.id } }));
