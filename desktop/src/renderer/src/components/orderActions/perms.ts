@@ -1,6 +1,6 @@
 // Buyurtma amallari uchun ruxsatlar (server bilan bir xil qoidalar — B19, B22, B31).
 // UI faqat tugmani ko'rsatish/yashirish uchun ishlatadi; haqiqiy tekshiruv serverda.
-import { hasCapability } from '@hardweb-pos/shared';
+import { hasCapability, isOrderManager } from '@hardweb-pos/shared';
 
 type UserLike = { role: string; permissions?: string[] } | null | undefined;
 
@@ -11,9 +11,17 @@ export function isAdminRole(user: UserLike): boolean {
   return !!user && ADMIN_ROLES.has(user.role);
 }
 
-/** Buyurtma bilan ishlay oladimi (ofitsiant yoki kassir) — turi, stol, bo'lish, chek */
+/** Buyurtma bilan ishlay oladimi (ofitsiant yoki kassir) — taom qo'shish, izoh */
 export function canWorkOrders(user: UserLike): boolean {
   return hasCapability(user, 'waiter') || hasCapability(user, 'cashier');
+}
+
+/**
+ * Kassa amallari — stolni ko'chirish, buyurtma turini o'zgartirish, hisobni bo'lish (restoran talabi,
+ * 0.3.3): faqat kassir yoki administrator/direktor. Ofitsiant faqat o'z stoliga taom qo'shadi.
+ */
+export function canManageOrders(user: UserLike): boolean {
+  return isOrderManager(user);
 }
 
 /** Otkaz (yuborilgan taomni / hisobni bekor qilish) — faqat 'void' ruxsati (kassir, administrator, direktor) */
@@ -23,7 +31,7 @@ export function canVoid(user: UserLike): boolean {
 
 /** Schot (hisob cheki) chiqarish — faqat kassir yoki administrator/direktor (restoran talabi) */
 export function canPrintBill(user: UserLike): boolean {
-  return hasCapability(user, 'cashier') || isAdminRole(user);
+  return isOrderManager(user);
 }
 
 /** Ofitsiantni almashtirish — faqat kassir yoki administrator/direktor */

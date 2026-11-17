@@ -60,6 +60,9 @@ import {
   roundSum,
   sumPayments,
   TABLE_OWNER_MESSAGE,
+  ORDER_OWNER_MESSAGE,
+  UserRole,
+  canSeeOrder,
   canServeTable,
 } from '@hardweb-pos/shared';
 import {
@@ -466,7 +469,9 @@ export class OrdersService {
   // ofitsiant — faqat o'zi qabul qilgan buyurtmalar; boshqalar — 403.
   async history(query: HistoryQuery, actor?: Actor): Promise<PaginatedOrders> {
     let forcedWaiterId: string | undefined;
-    if (actor && !canViewAllHistory(actor) && !can(actor, 'kitchen')) {
+    // Ofitsiant (lavozim) — har doim faqat o'z savdosi, KDS ruxsati belgilangan bo'lsa ham (0.3.3)
+    const kitchenSeesAll = !!actor && can(actor, 'kitchen') && actor.role !== UserRole.Waiter;
+    if (actor && !canViewAllHistory(actor) && !kitchenSeesAll) {
       if (can(actor, 'waiter') && actor.id) forcedWaiterId = actor.id;
       else throw new ForbiddenException(FORBIDDEN_MESSAGE);
     }
@@ -801,6 +806,9 @@ export class OrdersService {
         if (actor && table && !canServeTable(actor, await this.openChecksAt(table.id))) {
           throw new ForbiddenException(TABLE_OWNER_MESSAGE);
         }
+      } else if (actor && !canSeeOrder(actor, target)) {
+        // Olib ketish / yetkazish: boshqa ofitsiantning buyurtmasiga taom qo'sha olmaydi (0.3.3)
+        throw new ForbiddenException(ORDER_OWNER_MESSAGE);
       }
     } else if (input.type === OrderType.DineIn) {
       table = await this.tables.findOne({ where: { id: dto.tableId! } });
@@ -1247,6 +1255,14 @@ export class OrdersService {
       this.gateway.emitOrderUpdated(dto);
       return dto;
     });
+  }
+
+  // POST /orders/:id/bill-check — schot chiqarish mumkinmi (buyurtma bor va yopilmagan). Holat
+  // o'zgarmaydi; ruxsat controller'da tekshiriladi.
+  async assertBillable(id: string): Promise<{ ok: true }> {
+    const order = await this.findEntity(id);
+    if (order.status === OrderStatus.Closed) throw new BadRequestException(ORDER_CLOSED_MESSAGE);
+    return { ok: true };
   }
 
   // POST /orders/:id/bill-printed — schot (hisob cheki) mijozga berildi ("chek berildi", B23).

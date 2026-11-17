@@ -70,17 +70,37 @@ export function defaultCapabilitiesForRole(role: string): string[] {
   return [...(DEFAULT_ROLE_CAPABILITIES[role as UserRole] ?? [])];
 }
 
+/**
+ * Lavozim bo'yicha HECH QACHON berilmaydigan ruxsatlar (restoran talabi, 0.3.3): ofitsiant kassa,
+ * tushum, hisobotlar, cheklar tarixi, otkaz va vozvratga ega bo'la olmaydi — Xodimlarda belgilansa
+ * ham. Ofitsiant faqat o'z savdosini ko'radi ("Mening buyurtmalarim"). Bunday ish kerak bo'lsa —
+ * xodimga Kassir yoki Administrator roli beriladi.
+ */
+export const ROLE_FORBIDDEN_CAPABILITIES: Readonly<Partial<Record<UserRole, readonly string[]>>> = {
+  [UserRole.Waiter]: ['cashier', 'revenue', 'reports', 'history', 'void', 'refund'],
+};
+
+/** Shu lavozimga bu ruxsatni berish mumkinmi (Direktor/SuperAdmin — hammasi) */
+export function roleAllowsCapability(role: string, cap: string): boolean {
+  return !(ROLE_FORBIDDEN_CAPABILITIES[role as UserRole] ?? []).includes(cap);
+}
+
+/** Ruxsatlar ro'yxatidan lavozimga taqiqlanganlarini olib tashlaydi (yangi massiv, tartib saqlanadi) */
+export function capabilitiesForRole(role: string, caps: readonly string[] | null | undefined): string[] {
+  return (caps ?? []).filter((c) => roleAllowsCapability(role, c));
+}
+
 // Direktor/SuperAdmin barcha ruxsatga ega — shu rollarni tekshiramiz
 export function isFullAccessRole(role: string): boolean {
   return role === 'direktor' || role === 'superadmin';
 }
 
-// Foydalanuvchida ruxsat bormi?
+// Foydalanuvchida ruxsat bormi? Lavozimga taqiqlangan ruxsat bazada qolib ketgan bo'lsa ham — yo'q.
 export function hasCapability(
   user: { role: string; permissions?: string[] } | null | undefined,
   cap: string,
 ): boolean {
   if (!user) return false;
   if (isFullAccessRole(user.role)) return true;
-  return (user.permissions ?? []).includes(cap);
+  return roleAllowsCapability(user.role, cap) && (user.permissions ?? []).includes(cap);
 }

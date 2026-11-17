@@ -37,11 +37,15 @@ import {
 } from './dto';
 import {
   BILL_FORBIDDEN_MESSAGE,
+  CHANGE_TYPE_FORBIDDEN_MESSAGE,
+  MOVE_TABLE_FORBIDDEN_MESSAGE,
   PRICE_FORBIDDEN_MESSAGE,
+  SPLIT_FORBIDDEN_MESSAGE,
   VOID_FORBIDDEN_MESSAGE,
   WAITER_CHANGE_FORBIDDEN_MESSAGE,
   can,
   canChangeWaiter,
+  canManageOrders,
   canOperateOrders,
   canPrintBill,
   canViewAllHistory,
@@ -56,10 +60,18 @@ function assertCapability(req: any, capability: string): void {
   }
 }
 
-// Buyurtma bilan ishlash (stol, tur, bo'lish, schot, yetkazish): ofitsiant yoki kassir
+// Buyurtma bilan ishlash (yetkazish ma'lumoti va h.k.): ofitsiant yoki kassir
 function assertOperate(req: any): void {
   if (!canOperateOrders(req?.user)) {
     throw new ForbiddenException(FORBIDDEN_MESSAGE);
+  }
+}
+
+// Kassa amallari (stol ko'chirish, buyurtma turi, hisobni bo'lish) — faqat kassir / administrator /
+// direktor (restoran talabi, 0.3.3). Ofitsiant faqat o'z stoliga taom qo'shadi.
+function assertManage(req: any, message: string): void {
+  if (!canManageOrders(req?.user)) {
+    throw new ForbiddenException(message);
   }
 }
 
@@ -112,9 +124,11 @@ export class OrdersController {
 
   @Post()
   create(@Body() dto: CreateOrderDto, @Request() req: any) {
-    // Terminal tanlagan ofitsiant bo'lsa o'sha, aks holda kirgan foydalanuvchi.
+    // Kassa (kassir / administrator / direktor) tanlagan ofitsiant nomidan, aks holda kirgan foydalanuvchi:
+    // ofitsiant buyurtmani boshqa ofitsiant nomiga yoza olmaydi (0.3.3).
     // req.user — narxni qo'lda o'zgartirish ruxsatini tekshirish uchun (B31).
-    return this.orders.create(dto, dto.waiterId || req.user.id, req.user);
+    const waiterId = dto.waiterId && canManageOrders(req.user) ? dto.waiterId : req.user.id;
+    return this.orders.create(dto, waiterId, req.user);
   }
 
   // Oshxona holatlari (qabul_qilindi | tayyorlanmoqda | tayyor). "yopildi" — faqat to'lov orqali.
@@ -151,6 +165,14 @@ export class OrdersController {
   requestBill(@Param('id') id: string, @Request() req: any) {
     if (!canPrintBill(req?.user)) throw new ForbiddenException(BILL_FORBIDDEN_MESSAGE);
     return this.orders.requestBill(id);
+  }
+
+  // Schot chiqarishdan OLDIN ruxsat tekshiruvi (0.3.3): terminalning o'z printeri bo'lsa ham schot
+  // faqat server ruxsat bergandan keyin chop etiladi (ofitsiant — 403). Hech narsa o'zgarmaydi.
+  @Post(':id/bill-check')
+  billCheck(@Param('id') id: string, @Request() req: any) {
+    if (!canPrintBill(req?.user)) throw new ForbiddenException(BILL_FORBIDDEN_MESSAGE);
+    return this.orders.assertBillable(id);
   }
 
   // Schot mijozga berildi ("chek berildi", B23) — chop etilgandan keyin (printer bo'lmasa ham)
@@ -192,21 +214,21 @@ export class OrdersController {
   // Hisobni bo'lish (B18) — tanlangan taomlar yangi yoki shu stoldagi boshqa hisobga
   @Post(':id/split')
   split(@Param('id') id: string, @Body() dto: SplitOrderDto, @Request() req: any) {
-    assertOperate(req);
+    assertManage(req, SPLIT_FORBIDDEN_MESSAGE);
     return this.orders.split(id, dto);
   }
 
   // Buyurtma turini o'zgartirish (B22): Stolga / Olib ketish / Yetkazib berish
   @Post(':id/change-type')
   changeType(@Param('id') id: string, @Body() dto: ChangeOrderTypeDto, @Request() req: any) {
-    assertOperate(req);
+    assertManage(req, CHANGE_TYPE_FORBIDDEN_MESSAGE);
     return this.orders.changeType(id, dto, req.user);
   }
 
   // Hisobni boshqa stolga ko'chirish (smenit stol) — faqat stolga buyurtma; band stolga — qo'shimcha hisob
   @Post(':id/move-table')
   moveTable(@Param('id') id: string, @Body() dto: MoveTableDto, @Request() req: any) {
-    assertOperate(req);
+    assertManage(req, MOVE_TABLE_FORBIDDEN_MESSAGE);
     return this.orders.moveTable(id, dto.tableId, req.user);
   }
 

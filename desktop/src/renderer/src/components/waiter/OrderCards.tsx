@@ -2,23 +2,26 @@
 // Birinchi plitka — "+ Yangi buyurtma". Kartochkada: katta raqam (#12 yoki stol raqami), tur nishoni,
 // holat (Tayyor — ajralib turadi), necha daqiqa oldin, to'lanadigan summa, taomlar soni, yetkazishda —
 // telefon va manzil. Stol hisobida — "Hisob 2" va kunlik raqam (№15). Kassa ruxsati bo'lsa — "To‘lash".
+// Ofitsiant boshqa ofitsiantning buyurtmasi summasini ko'rmaydi (0.3.3) — o'rnida kimniki ekani yoziladi.
 import { CSSProperties, memo } from 'react';
 import { MenuUnit, ORDER_TYPE_LABELS, Order, OrderStatus, OrderType, orderDisplayName, orderTypeOf } from '@hardweb-pos/shared';
 import { PendingOrder, pendingTitle, pendingType } from '../../lib/offlineQueue';
 import { formatSum, minutesSince } from '../ui';
-import { IconCash, IconClock, IconCloudUp, IconPhone, IconPin, IconPlus } from './icons';
+import { IconCash, IconClock, IconCloudUp, IconPhone, IconPin, IconPlus, IconUser } from './icons';
 import {
   OrderStatusChip,
   OrderTypeBadge,
   checkNoOf,
   dailyNumberLabel,
   elapsedLabel,
+  firstName,
   formatKg,
   hhmm,
   orderBigNumber,
   orderItemCount,
   payableTotal,
   phoneLabel,
+  qtyText,
 } from './orderUi';
 
 export { payableTotal } from './orderUi';
@@ -27,10 +30,10 @@ const GRID_STYLE: CSSProperties = {
   gridTemplateColumns: 'repeat(auto-fill, minmax(clamp(158px, 15vw, 248px), 1fr))',
 };
 
-/** Taomlar qisqacha: "Osh ×2, Choy ×1, Lag‘mon 1,5 kg" */
+/** Taomlar qisqacha: "Osh ×2, Choy ×1,25, Lag‘mon 1,5 kg" (kasr porsiya ham — 0,5) */
 function itemsPreview(o: Order): string {
   return o.items
-    .map((it) => `${it.menuItemName ?? ''} ${it.unit === MenuUnit.Weight ? `${formatKg(it.quantity)} kg` : `×${Math.round(Number(it.quantity) || 0)}`}`)
+    .map((it) => `${it.menuItemName ?? ''} ${it.unit === MenuUnit.Weight ? qtyText(it.quantity, it.unit) : `×${qtyText(it.quantity, it.unit)}`}`)
     .join(', ');
 }
 
@@ -49,6 +52,12 @@ export interface OrderCardsGridProps {
   onOpenPending?: () => void;
   /** kartochkada tur nishoni ko'rsatilsinmi (aralash ro'yxat — "Mening buyurtmalarim") */
   showType?: boolean;
+  /**
+   * Ofitsiant ekrani (kassa darajasi emas): boshqa ofitsiant buyurtmasining summasi ko'rsatilmaydi —
+   * o'rnida ofitsiant ismi. myId — kirgan xodim.
+   */
+  hideOthersSums?: boolean;
+  myId?: string;
 }
 
 function OrderCardsGridImpl({
@@ -61,6 +70,8 @@ function OrderCardsGridImpl({
   onPay,
   onOpenPending,
   showType,
+  hideOthersSums,
+  myId,
 }: OrderCardsGridProps) {
   return (
     <div className="grid gap-2.5 sm:gap-3" style={GRID_STYLE}>
@@ -77,6 +88,7 @@ function OrderCardsGridImpl({
           onOpen={onOpen}
           onPay={onPay}
           showType={showType}
+          hideSum={!!hideOthersSums && !!o.waiterId && o.waiterId !== myId}
         />
       ))}
     </div>
@@ -108,6 +120,7 @@ const OrderCard = memo(function OrderCard({
   onOpen,
   onPay,
   showType,
+  hideSum,
 }: {
   order: Order;
   now: number;
@@ -115,6 +128,8 @@ const OrderCard = memo(function OrderCard({
   onOpen: (order: Order) => void;
   onPay?: (order: Order) => void;
   showType?: boolean;
+  /** boshqa ofitsiantning buyurtmasi — summa o'rnida ofitsiant ismi */
+  hideSum?: boolean;
 }) {
   const type = orderTypeOf(order);
   const dineIn = type === OrderType.DineIn;
@@ -197,9 +212,19 @@ const OrderCard = memo(function OrderCard({
         )}
         <div className="mt-auto pt-1 flex flex-wrap items-end justify-between gap-x-2 gap-y-0.5">
           <span className="text-xs font-semibold text-muted whitespace-nowrap">{orderItemCount(order)} ta taom</span>
-          <span className="ml-auto text-lg font-extrabold leading-none tabular-nums text-text whitespace-nowrap">
-            {formatSum(payableTotal(order))}
-          </span>
+          {hideSum ? (
+            <span
+              data-testid="order-card-owner"
+              className="ml-auto min-w-0 flex items-center gap-1 text-sm font-bold text-muted"
+            >
+              <IconUser className="w-4 h-4 shrink-0" />
+              <span className="truncate">{firstName(order.waiterName) || '—'}</span>
+            </span>
+          ) : (
+            <span className="ml-auto text-lg font-extrabold leading-none tabular-nums text-text whitespace-nowrap">
+              {formatSum(payableTotal(order))}
+            </span>
+          )}
         </div>
       </button>
       {onPay && (

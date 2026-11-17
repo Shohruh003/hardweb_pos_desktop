@@ -9,6 +9,16 @@
 // hisobotlar — demo real xatolarni yashirmasin va real xatti-harakatni ko'rsatsin.
 import {
   ALL_CAPABILITY_KEYS,
+  BILL_FORBIDDEN_MESSAGE,
+  CHANGE_TYPE_FORBIDDEN_MESSAGE,
+  MOVE_TABLE_FORBIDDEN_MESSAGE,
+  ORDER_OWNER_MESSAGE,
+  SPLIT_FORBIDDEN_MESSAGE,
+  TABLE_OWNER_MESSAGE,
+  canSeeOrder,
+  canServeTable,
+  capabilitiesForRole,
+  isOrderManager,
   DEFAULT_PAYMENT_METHODS,
   MenuUnit,
   ORDER_TYPES,
@@ -862,7 +872,7 @@ function sessionUser(u: MockUser): User {
     role: u.role,
     login: u.login ?? null,
     active: u.active,
-    permissions: isFullAccessRole(u.role) ? [...ALL_CAPABILITY_KEYS] : [...(u.permissions ?? [])],
+    permissions: isFullAccessRole(u.role) ? [...ALL_CAPABILITY_KEYS] : capabilitiesForRole(u.role, u.permissions),
     hasPassword: !!u.password,
     mustChangePassword: !!u.mustChangePassword,
   };
@@ -877,7 +887,7 @@ function staffRow(u: MockUser): User {
     login: u.login ?? null,
     pin: u.pin ?? null,
     active: u.active,
-    permissions: [...(u.permissions ?? [])],
+    permissions: capabilitiesForRole(u.role, u.permissions),
     hasPassword: !!u.password,
     mustChangePassword: !!u.mustChangePassword,
   };
@@ -889,6 +899,8 @@ const MANAGER_ROLES: string[] = [UserRole.Admin, UserRole.Director, UserRole.Sup
 const isAdminRole = (u: MockUser) => MANAGER_ROLES.includes(u.role);
 /** Buyurtma bilan ishlash (stol ko'chirish, tur, bo'lish, schot, yetkazish): ofitsiant yoki kassir */
 const canOperateOrders = (u: MockUser) => can(u, 'waiter') || can(u, 'cashier');
+/** Kassa amallari (stol ko'chirish, tur, bo'lish, schot) — kassir / administrator / direktor (0.3.3) */
+const canManageOrders = (u: MockUser) => isOrderManager(sessionUser(u));
 /** Otkaz — faqat 'void' ruxsati (kassir, administrator, direktor) */
 const canVoid = (u: MockUser) => can(u, 'void');
 /** Narxni qo'lda o'zgartirish: kassir yoki 'void' ruxsati bor xodim */
@@ -1598,7 +1610,9 @@ function positiveInt(value: unknown, fallback: number, max: number): number {
  */
 function history(params: URLSearchParams, actor: MockUser) {
   let forcedWaiterId: string | undefined;
-  if (!canViewAllHistory(actor) && !can(actor, 'kitchen')) {
+  // Ofitsiant (lavozim) — har doim faqat o'z savdosi, KDS ruxsati belgilangan bo'lsa ham (server bilan bir xil)
+  const kitchenSeesAll = can(actor, 'kitchen') && actor.role !== UserRole.Waiter;
+  if (!canViewAllHistory(actor) && !kitchenSeesAll) {
     if (can(actor, 'waiter')) forcedWaiterId = actor.id;
     else throw forbidden();
   }
@@ -1810,7 +1824,8 @@ function createOrder(body: any, actor: MockUser): Order {
       return existing ? toDto(existing) : prev.snapshot;
     }
   }
-  const out = createLocked(body, body.waiterId || actor.id, { type, appendTo, phone, address, deliveryFee }, actor);
+  const waiterId = body.waiterId && canManageOrders(actor) ? body.waiterId : actor.id;
+  const out = createLocked(body, waiterId, { type, appendTo, phone, address, deliveryFee }, actor);
   if (requestId) rememberRequest(requestId, out);
   return out;
 }
@@ -1828,11 +1843,18 @@ function createLocked(body: any, waiterId: string, input: CreateInput, actor: Mo
     if (orderTypeOf(target) === OrderType.DineIn) {
       if (body.tableId && target.tableId && body.tableId !== target.tableId) throw bad(ORDER_OTHER_TABLE_MESSAGE);
       table = tableOf(target);
+      // Stol egasi: boshqa ofitsiant ochgan stolga taom qo'sha olmaydi
+      if (table && !canServeTable(sessionUser(actor), openChecksAt(table.id))) throw forbidden(TABLE_OWNER_MESSAGE);
+    } else if (!canSeeOrder(sessionUser(actor), target)) {
+      // Olib ketish / yetkazish: boshqa ofitsiantning buyurtmasiga taom qo'sha olmaydi
+      throw forbidden(ORDER_OWNER_MESSAGE);
     }
   } else if (input.type === OrderType.DineIn) {
     table = tables.find((t) => t.id === body.tableId) ?? null;
     if (!table) throw notFound(TABLE_NOT_FOUND_MESSAGE);
     const open = openChecksAt(table.id);
+    // Stol egasi: boshqa ofitsiant ochgan stolga taom qo'sha / yangi hisob ocha olmaydi
+    if (!canServeTable(sessionUser(actor), open)) throw forbidden(TABLE_OWNER_MESSAGE);
     tableHadOpen = open.length > 0;
     if (body.checkNo != null) {
       // "Hisob-2" yorlig'i: shu raqamli ochiq hisob bo'lsa — unga, aks holda aynan shu raqam bilan yangi
@@ -3203,7 +3225,8 @@ function route(method: string, fullPath: string, body: any, token?: string | nul
     if (pin && users.some((x) => x.pin === pin)) return fail(PIN_TAKEN_ON_CREATE);
     if (login && loginTaken(login)) return fail('Bu login band');
     // Ruxsatlar berilmagan (yoki bo'sh) — rol bo'yicha standart ruxsatlar (server kabi)
-    let permissions = normalizePermissions(body.permissions);
+    // Lavozimga taqiqlangan ruxsatlar (ofitsiantga kassa/hisobot...) saqlanmaydi (server kabi)
+    let permissions = capabilitiesForRole(role, normalizePermissions(body.permissions));
     if (permissions.length === 0 && !isFullAccessRole(role)) permissions = defaultCapabilitiesForRole(role);
     const created: MockUser = {
       id: uid(), name: String(trimmed(body.name)), role, login, pin, active: true,
@@ -3228,8 +3251,15 @@ function route(method: string, fullPath: string, body: any, token?: string | nul
     const roleChanged = body.role !== undefined && body.role !== target.role;
     const deactivating = body.active === false && target.active;
     const currentPermissions = normalizePermissions(target.permissions);
-    const nextPermissions = body.permissions !== undefined ? normalizePermissions(body.permissions) : null;
-    const permissionsChanged = nextPermissions !== null && !samePermissions(nextPermissions, currentPermissions);
+    const requestedPermissions = body.permissions !== undefined ? normalizePermissions(body.permissions) : null;
+    // Lavozimga taqiqlangan ruxsatlar saqlanmaydi; faqat shundaylari bo'lsa — rolning standart ruxsatlari (server kabi)
+    const basePermissions = requestedPermissions ?? currentPermissions;
+    let nextPermissions = capabilitiesForRole(nextRole, basePermissions);
+    if (nextPermissions.length === 0 && basePermissions.length > 0 && !isFullAccessRole(nextRole)) {
+      nextPermissions = defaultCapabilitiesForRole(nextRole);
+    }
+    const permissionsChanged = !samePermissions(nextPermissions, currentPermissions);
+    const effectivePermissionsChanged = !samePermissions(nextPermissions, capabilitiesForRole(target.role, currentPermissions));
     const currentLogin = target.login ?? null;
     const loginGiven = body.login !== undefined;
     const nextLogin = loginGiven ? (isGiven(trimmed(body.login)) ? String(trimmed(body.login)) : null) : currentLogin;
@@ -3242,7 +3272,7 @@ function route(method: string, fullPath: string, body: any, token?: string | nul
     if (!hierarchyAllows(actor, target, nextRole)) return fail(FORBIDDEN, 403);
     if ((loginChanged || newPassword) && !actorFull) return fail(FORBIDDEN, 403);
     // Administrator o'ziga rol/ruxsat bera olmaydi
-    if (isSelf && !actorFull && (roleChanged || permissionsChanged)) return fail(FORBIDDEN, 403);
+    if (isSelf && !actorFull && (roleChanged || effectivePermissionsChanged)) return fail(FORBIDDEN, 403);
 
     // 2) Kamida bitta faol direktor qoladi; o'zini bloklab bo'lmaydi
     if (
@@ -3619,6 +3649,10 @@ function ordersRoute(method: string, path: string, seg: string[], params: URLSea
   const assertOperate = () => {
     if (!canOperateOrders(actor)) throw forbidden();
   };
+  /** Kassa amallari — faqat kassir / administrator / direktor (server bilan bir xil xabar) */
+  const assertManage = (message: string) => {
+    if (!canManageOrders(actor)) throw forbidden(message);
+  };
 
   if (path === '/orders' && method === 'GET') return ok(findActive(params.get('type')));
   if (path === '/orders' && method === 'POST') return ok(createOrder(body, actor));
@@ -3679,6 +3713,7 @@ function ordersRoute(method: string, path: string, seg: string[], params: URLSea
   switch (action) {
     case 'request-bill': {
       // Schot so'raldi — stol "hisob kutilmoqda" (faqat stolga buyurtmada)
+      assertManage(BILL_FORBIDDEN_MESSAGE);
       const o = findEntity(id);
       const table = tableOf(o);
       if (table && table.status !== TableStatus.Free) table.status = TableStatus.AwaitingBill;
@@ -3686,9 +3721,17 @@ function ordersRoute(method: string, path: string, seg: string[], params: URLSea
       emitUpdated(dto);
       return ok(dto);
     }
+    case 'bill-check': {
+      // Schot chiqarishdan oldin ruxsat (terminal printeri bo'lsa ham) — holat o'zgarmaydi
+      assertManage(BILL_FORBIDDEN_MESSAGE);
+      const o = findEntity(id);
+      if (o.status === OrderStatus.Closed) throw bad(ORDER_CLOSED_MESSAGE);
+      return ok({ ok: true });
+    }
     case 'bill-printed': {
       // Schot mijozga berildi ("chek berildi", B23) — yangi taom qo'shilsa tozalanadi
       assertOperate();
+      assertManage(BILL_FORBIDDEN_MESSAGE);
       const o = findEntity(id);
       if (o.status === OrderStatus.Closed) throw bad(ORDER_CLOSED_MESSAGE);
       o.billPrintedAt = nowIso();
@@ -3742,7 +3785,7 @@ function ordersRoute(method: string, path: string, seg: string[], params: URLSea
       const problem = validateLineQty(body.items, SPLIT_QTY_INVALID_MESSAGE, SPLIT_QTY_INVALID_MESSAGE);
       if (problem) throw bad(problem);
       if (isGiven(body.targetOrderId) && !isUuid(body.targetOrderId)) throw bad(ORDER_NOT_FOUND_MESSAGE);
-      assertOperate();
+      assertManage(SPLIT_FORBIDDEN_MESSAGE);
       return ok(splitOrder(id, body));
     }
     case 'change-type': {
@@ -3756,12 +3799,12 @@ function ordersRoute(method: string, path: string, seg: string[], params: URLSea
         if (typeof body.address !== 'string') throw bad(ADDRESS_REQUIRED_MESSAGE);
         if (body.address.length > ADDRESS_MAX_LENGTH) throw bad(ADDRESS_TOO_LONG_MESSAGE);
       }
-      assertOperate();
+      assertManage(CHANGE_TYPE_FORBIDDEN_MESSAGE);
       return ok(changeType(id, body));
     }
     case 'move-table': {
       if (!isUuid(body.tableId)) throw bad('Yangi stol tanlanmagan');
-      assertOperate();
+      assertManage(MOVE_TABLE_FORBIDDEN_MESSAGE);
       return ok(moveTable(id, body.tableId));
     }
     case 'change-waiter': {
@@ -3777,6 +3820,7 @@ function ordersRoute(method: string, path: string, seg: string[], params: URLSea
     }
     case 'print-bill': {
       // Hisob (schot) chekini printerli terminalga (kassa) yuborish — relay
+      assertManage(BILL_FORBIDDEN_MESSAGE);
       const dto = toDto(findEntity(id));
       emit(SOCKET_EVENTS.PRINT_BILL, { order: dto });
       return ok(dto);

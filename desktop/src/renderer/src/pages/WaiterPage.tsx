@@ -20,7 +20,9 @@ import {
   orderDisplayName,
   orderTypeOf,
   TABLE_OWNER_MESSAGE,
+  canSeeOrder,
   canServeTable,
+  isOrderManager,
 } from '@hardweb-pos/shared';
 import { AppShell } from '../components/AppShell';
 import { FeedbackModal, FeedbackVariant } from '../components/FeedbackModal';
@@ -268,6 +270,9 @@ export function WaiterPage() {
   const me = user!;
   // Kassa ruxsati bor xodim (kassir/direktor) — to'lov oladi, "Barcha" bo'limidan boshlaydi
   const canPay = hasCapability(me, 'cashier');
+  // Kassa darajasi (kassir / administrator / direktor): barcha stollar summasi, boshqalarning buyurtmasini
+  // ochish. Ofitsiant — faqat o'z stollari va o'z savdosi (restoran talabi, 0.3.3)
+  const manager = isOrderManager(me);
   // Otkaz (yuborilgan taomni bekor qilish) — faqat kassir/administrator/direktor (B19)
   const canVoid = canVoidFor(me);
   const priceEditable = canEditPrice(me);
@@ -782,6 +787,15 @@ export function WaiterPage() {
   const openNewInMode = useCallback(() => openNew(mode), [openNew, mode]);
   const openOrder = useCallback(
     (o: Order) => {
+      // Ofitsiant boshqa ofitsiantning buyurtmasini ocha olmaydi (summasi va taomlari — faqat egasi va kassada)
+      if (!canSeeOrder(user, o)) {
+        setFeedback({
+          variant: 'warning',
+          title: 'Bu buyurtma sizniki emas',
+          subtitle: (o.waiterName ? o.waiterName + ' xizmat qilyapti. ' : '') + 'Faqat o‘sha ofitsiant yoki kassir ocha oladi.',
+        });
+        return;
+      }
       const type = orderTypeOf(o);
       if (type === OrderType.DineIn && o.tableId) {
         openTarget({ kind: 'table', tableId: o.tableId, checkNo: checkNoOf(o) });
@@ -790,7 +804,7 @@ export function WaiterPage() {
       if (type !== OrderType.DineIn) setTab(type);
       openTarget({ kind: 'order', orderId: o.id, type });
     },
-    [openTarget],
+    [openTarget, user],
   );
 
   // Kassadan kelgan nishon ("✏️ O‘zgartirish" — buyurtma; stol) — stollar va buyurtmalar yuklangach
@@ -1642,6 +1656,7 @@ export function WaiterPage() {
                   myId={me.id}
                   now={now}
                   onOpen={openTable}
+                  hideOthersSums={!manager}
                 />
               ) : (
                 <TableGrid
@@ -1651,6 +1666,7 @@ export function WaiterPage() {
                   myId={me.id}
                   now={now}
                   onOpen={openTable}
+                  hideOthersSums={!manager}
                 />
               )
             ) : (
@@ -1664,6 +1680,8 @@ export function WaiterPage() {
                   onOpen={openOrder}
                   onPay={canPay ? openPay : undefined}
                   onOpenPending={openPendingList}
+                  hideOthersSums={!manager}
+                  myId={me.id}
                 />
                 {listOrders.length === 0 && listPending.length === 0 && (
                   <div className="text-center text-muted mt-10 px-6">
@@ -1685,7 +1703,9 @@ export function WaiterPage() {
   // ---------- Tuzuvchi: kategoriyalar + rasmli menyu + buyurtma paneli ----------
   const searching = !!searchQ;
   const panelCount = (existingOrder?.items.length ?? 0) + cart.length;
-  const actionsBar = existingOrder ? (
+  // Amallar qatori (Turi/Stol/Chek/Bo'lish/Otkaz) — faqat kassa darajasi yoki otkaz ruxsati bo'lsa;
+  // oddiy ofitsiantda bo'sh joy ham qolmasin
+  const actionsBar = existingOrder && (manager || canVoid) ? (
     <OrderActionsBar
       order={existingOrder}
       siblings={dineIn ? tableChecks : undefined}

@@ -11,6 +11,7 @@ import {
   UserRole,
   calcOrderTotals,
   hasCapability,
+  isOrderManager,
   normalizeUzPhone,
   orderTypeOf,
 } from '@hardweb-pos/shared';
@@ -153,7 +154,7 @@ export function can(actor: Actor | null | undefined, capability: string): boolea
   return hasCapability({ role: actor.role, permissions: actor.permissions ?? [] }, capability);
 }
 
-/** Buyurtma bilan ishlash (stol ko'chirish, tur, bo'lish, schot): ofitsiant yoki kassir */
+/** Buyurtma bilan ishlash (yetkazish ma'lumoti va h.k.): ofitsiant yoki kassir. Kassa amallari — canManageOrders */
 export function canOperateOrders(actor: Actor | null | undefined): boolean {
   return can(actor, 'waiter') || can(actor, 'cashier');
 }
@@ -173,11 +174,24 @@ export function canChangeWaiter(actor: Actor | null | undefined): boolean {
   return can(actor, 'cashier') || isAdminRole(actor);
 }
 
-// ---- Schot (hisob cheki) — faqat kassir / administrator / direktor (restoran talabi, 0.3.1) ----
-export const BILL_FORBIDDEN_MESSAGE = 'Schotni faqat kassir chiqara oladi';
+// ---- Kassa amallari — faqat kassir / administrator / direktor (restoran talabi, 0.3.1 / 0.3.3) ----
+// Ofitsiant faqat o'z stoliga taom qo'shadi: schot chiqara olmaydi, stolni ko'chira olmaydi, buyurtma
+// turini o'zgartira olmaydi va hisobni bo'la olmaydi (shared isOrderManager — UI bilan bir xil qoida).
+// Xabarlar shared'da (demo va UI bilan bir xil matn).
+export {
+  BILL_FORBIDDEN_MESSAGE,
+  CHANGE_TYPE_FORBIDDEN_MESSAGE,
+  MOVE_TABLE_FORBIDDEN_MESSAGE,
+  SPLIT_FORBIDDEN_MESSAGE,
+} from '@hardweb-pos/shared';
+
+/** Kassa darajasidagi amallar (stol ko'chirish, tur, bo'lish, schot): kassir / administrator / direktor */
+export function canManageOrders(actor: Actor | null | undefined): boolean {
+  return isOrderManager(actor);
+}
 
 export function canPrintBill(actor: Actor | null | undefined): boolean {
-  return can(actor, 'cashier') || isAdminRole(actor);
+  return canManageOrders(actor);
 }
 
 /** Cheklar tarixini to'liq ko'rish: 'history' ruxsati yoki administrator / direktor */

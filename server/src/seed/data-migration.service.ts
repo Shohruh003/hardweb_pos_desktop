@@ -1,10 +1,15 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { DataSource, EntityManager, In } from 'typeorm';
-import { UserRole } from '@hardweb-pos/shared';
+import {
+  ROLE_FORBIDDEN_CAPABILITIES,
+  UserRole,
+  capabilitiesForRole,
+  defaultCapabilitiesForRole,
+} from '@hardweb-pos/shared';
 import { SettingsEntity, UserEntity } from '../entities';
 
 /** Joriy ma'lumot versiyasi (settings.data_version) */
-export const DATA_VERSION = 4;
+export const DATA_VERSION = 5;
 
 /**
  * Bir martalik ma'lumot yangilanishlari (sxema emas — sxemani TypeORM synchronize qiladi).
@@ -63,6 +68,17 @@ export class DataMigrationService implements OnApplicationBootstrap {
             : 'v4: otkaz ruxsatlari yangilanishi kerak emas',
         );
       }
+      if (from < 5) {
+        // 0.3.3: ofitsiant kassa, tushum, hisobotlar, cheklar tarixi, otkaz va vozvrat ruxsatiga ega emas
+        // (restoran talabi). Amalda ular allaqachon ishlamaydi (effectivePermissions) — bazadagi eski
+        // belgilar ham tozalanadi, rol keyin o'zgartirilsa qaytib chiqmasin.
+        const updated = await stripRoleForbiddenCapabilities(m);
+        this.logger.log(
+          updated.length
+            ? `v5: ${updated.length} ta ofitsiantdan kassa/hisobot ruxsatlari olib tashlandi: ${updated.join(', ')}`
+            : 'v5: ofitsiantlar ruxsatlari yangilanishi kerak emas',
+        );
+      }
       await m.update(SettingsEntity, { id: 'main' }, { dataVersion: DATA_VERSION });
     });
     this.logger.log(`Ma’lumotlar versiyasi: ${from} -> ${DATA_VERSION}`);
@@ -86,6 +102,27 @@ async function grantCapability(
     if (perms.includes(capability)) continue;
     if (!opts.includeEmpty && perms.length === 0) continue;
     await m.update(UserEntity, u.id, { permissions: [...perms, capability] });
+    updated.push(u.name);
+  }
+  return updated;
+}
+
+/**
+ * Lavozimga taqiqlangan ruxsatlarni bazadan olib tashlash (ROLE_FORBIDDEN_CAPABILITIES). Faqat shunday
+ * ruxsatlari bo'lgan xodim ruxsatsiz qolmasin — unga rolning standart ruxsatlari beriladi.
+ * O'zgartirilgan xodimlar ismlari qaytadi.
+ */
+async function stripRoleForbiddenCapabilities(m: EntityManager): Promise<string[]> {
+  const roles = Object.keys(ROLE_FORBIDDEN_CAPABILITIES) as UserRole[];
+  if (!roles.length) return [];
+  const users = await m.find(UserEntity, { where: { role: In(roles) } });
+  const updated: string[] = [];
+  for (const u of users) {
+    const perms = (u.permissions ?? []).map((p) => String(p).trim()).filter(Boolean);
+    let next = capabilitiesForRole(u.role, perms);
+    if (next.length === perms.length) continue;
+    if (next.length === 0) next = defaultCapabilitiesForRole(u.role);
+    await m.update(UserEntity, u.id, { permissions: next });
     updated.push(u.name);
   }
   return updated;

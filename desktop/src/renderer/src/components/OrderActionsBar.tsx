@@ -8,7 +8,7 @@ import { ChangeTypeModal } from './orderActions/ChangeTypeModal';
 import { MoveTableModal } from './orderActions/MoveTableModal';
 import { ChangeWaiterModal } from './orderActions/ChangeWaiterModal';
 import { printBillAndMark } from './orderActions/printBill';
-import { canChangeWaiter, canPrintBill, canVoid, canWorkOrders } from './orderActions/perms';
+import { canChangeWaiter, canManageOrders, canPrintBill, canVoid, canWorkOrders } from './orderActions/perms';
 import { IconBan, IconPrinter, IconProps, IconRepeat, IconScissors, IconTableMove, IconUserSwap } from './waiter/icons';
 import { Spinner } from './waiter/Sheet';
 
@@ -21,6 +21,8 @@ import { Spinner } from './waiter/Sheet';
 //  - ✂ Bo'lish  — SplitCheckModal (faqat stol hisobi)
 //  - 🚫 Otkaz   — VoidModal (faqat 'void' ruxsati bor xodim)
 // Har bir tugma xodim ruxsatiga va buyurtma turiga qarab ko'rinadi; oynalar shu komponent ichida ochiladi.
+// Turi, Stol, Chek va Bo'lish — faqat kassa (kassir, administrator, direktor; restoran talabi, 0.3.3):
+// ofitsiant faqat o'z stoliga taom qo'shadi — server ham 403 qaytaradi.
 // Natija (yoki xato) tugmalar ostida qisqa xabar bo'lib chiqadi.
 export interface OrderActionsBarProps {
   order: Order;
@@ -117,15 +119,17 @@ export default function OrderActionsBar({ order, siblings, onChanged, hide, comp
   const hidden = new Set(hide ?? []);
   const others = (siblings ?? []).filter((s) => s.id !== order.id);
   const work = canWorkOrders(user);
+  // Turi / Stol / Bo'lish / Chek — faqat kassa (kassir, administrator, direktor); ofitsiantda yo'q (0.3.3)
+  const manage = work && canManageOrders(user);
   const noItems = (order.items ?? []).length === 0;
 
   const actions: ActionDef[] = [];
-  if (work && !hidden.has('type')) actions.push({ key: 'type', label: 'Turi', Icon: IconRepeat, tone: 'plain' });
-  if (work && dineIn && !hidden.has('table')) actions.push({ key: 'table', label: 'Stol', Icon: IconTableMove, tone: 'plain' });
+  if (manage && !hidden.has('type')) actions.push({ key: 'type', label: 'Turi', Icon: IconRepeat, tone: 'plain' });
+  if (manage && dineIn && !hidden.has('table')) actions.push({ key: 'table', label: 'Stol', Icon: IconTableMove, tone: 'plain' });
   if (canChangeWaiter(user) && !hidden.has('waiter')) {
     actions.push({ key: 'waiter', label: 'Ofitsiant', Icon: IconUserSwap, tone: 'plain' });
   }
-  if (work && canPrintBill(user) && !hidden.has('bill')) {
+  if (manage && canPrintBill(user) && !hidden.has('bill')) {
     actions.push({
       key: 'bill',
       label: 'Chek',
@@ -134,7 +138,7 @@ export default function OrderActionsBar({ order, siblings, onChanged, hide, comp
       disabledReason: noItems ? 'Hisobda taom yo‘q' : undefined,
     });
   }
-  if (work && dineIn && !hidden.has('split')) {
+  if (manage && dineIn && !hidden.has('split')) {
     actions.push({
       key: 'split',
       label: 'Bo‘lish',

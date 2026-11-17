@@ -2,6 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcryptjs';
 import {
   ALL_CAPABILITY_KEYS,
+  capabilitiesForRole,
   isFullAccessRole,
   User,
   UserRole,
@@ -27,13 +28,17 @@ export interface RequestUser {
   permissions: string[];
 }
 
-/** Amaldagi ruxsatlar: Direktor/SuperAdmin — barchasi, qolganlar — bazadagi ro'yxat */
+/**
+ * Amaldagi ruxsatlar: Direktor/SuperAdmin — barchasi, qolganlar — bazadagi ro'yxat, lavozimga
+ * taqiqlanganlarisiz (ofitsiant kassa/tushum/hisobot/tarix/otkaz/vozvrat ruxsatiga ega bo'lmaydi —
+ * 0.3.3 dan oldin belgilangan bo'lsa ham). Har so'rovda (JwtStrategy) va sessiyada shu ro'yxat.
+ */
 export function effectivePermissions(
   user: Pick<UserEntity, 'role' | 'permissions'>,
 ): string[] {
   return isFullAccessRole(user.role)
     ? [...ALL_CAPABILITY_KEYS]
-    : [...(user.permissions ?? [])];
+    : capabilitiesForRole(user.role, user.permissions);
 }
 
 /** Sessiya javobidagi foydalanuvchi (login, login-pin, me, change-password) — PIN va parol xeshisiz */
@@ -59,7 +64,8 @@ export function toStaffRow(user: UserEntity): User {
     login: user.login ?? null,
     pin: user.pin ?? null,
     active: !!user.active,
-    permissions: [...(user.permissions ?? [])],
+    // Xodimlar oynasida ham amaldagi ruxsatlar (lavozimga taqiqlangan eski belgilar ko'rinmaydi)
+    permissions: capabilitiesForRole(user.role, user.permissions),
     hasPassword: !!user.passwordHash,
     mustChangePassword: !!user.mustChangePassword,
   };

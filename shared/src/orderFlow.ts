@@ -1,6 +1,33 @@
 // Buyurtma holatlari qoidalari — server va demo (mock) bir xil tekshiradi.
 import { OrderStatus, OrderType } from './enums';
-import { isFullAccessRole } from './permissions';
+import { hasCapability, isFullAccessRole } from './permissions';
+
+type StaffLike = { id?: string | null; role?: string | null; permissions?: string[] | null } | null | undefined;
+
+/**
+ * Kassa darajasidagi xodim — kassir ('cashier' ruxsati), administrator, direktor (restoran talabi, 0.3.3).
+ * Faqat ular: stolni ko'chiradi, buyurtma turini o'zgartiradi, hisobni bo'ladi, schot chiqaradi,
+ * istalgan stolga xizmat qiladi va boshqa ofitsiantlar hisoblarining summasini ko'radi.
+ * Ofitsiant — faqat o'z stollari va o'z savdosi.
+ */
+export function isOrderManager(user: StaffLike): boolean {
+  if (!user) return false;
+  const role = String(user.role ?? '');
+  if (isFullAccessRole(role) || role === 'administrator') return true;
+  return hasCapability({ role, permissions: user.permissions ?? [] }, 'cashier');
+}
+
+/** Kassa amallarini ofitsiant bajarmoqchi bo'lganda (server 403 va UI xabari — bir xil matn) */
+export const BILL_FORBIDDEN_MESSAGE = 'Schotni faqat kassir chiqara oladi';
+export const MOVE_TABLE_FORBIDDEN_MESSAGE = 'Stolni faqat kassir ko‘chira oladi';
+export const CHANGE_TYPE_FORBIDDEN_MESSAGE = 'Buyurtma turini faqat kassir o‘zgartira oladi';
+export const SPLIT_FORBIDDEN_MESSAGE = 'Hisobni faqat kassir bo‘la oladi';
+
+/** Bu buyurtma shu xodimniki (u ochgan) yoki xodim kassa darajasida — summasini ko'ra / ocha oladi */
+export function canSeeOrder(user: StaffLike, order: { waiterId?: string | null } | null | undefined): boolean {
+  if (!user || !order) return false;
+  return isOrderManager(user) || !order.waiterId || order.waiterId === user.id;
+}
 
 /** Ofitsiant boshqa ofitsiantning stoliga taom qo'shmoqchi bo'lganda */
 export const TABLE_OWNER_MESSAGE = 'Bu stol boshqa ofitsiantga tegishli — unga taom qo‘sha olmaysiz';
@@ -11,15 +38,16 @@ export const TABLE_OWNER_MESSAGE = 'Bu stol boshqa ofitsiantga tegishli — unga
  * Kassir, administrator va direktor — hamma stolga. openOrders — shu stoldagi ochiq hisoblar.
  */
 export function canServeTable(
-  user: { id?: string | null; role?: string | null; permissions?: string[] | null } | null | undefined,
+  user: StaffLike,
   openOrders: { waiterId?: string | null }[] | null | undefined,
 ): boolean {
   if (!user) return false;
-  const role = String(user.role ?? '');
-  if (isFullAccessRole(role) || role === 'administrator') return true;
-  if ((user.permissions ?? []).includes('cashier')) return true;
+  if (isOrderManager(user)) return true;
   return (openOrders ?? []).every((o) => !o.waiterId || o.waiterId === user.id);
 }
+
+/** Ofitsiant boshqa ofitsiantning olib ketish / yetkazish buyurtmasiga taom qo'shmoqchi bo'lganda */
+export const ORDER_OWNER_MESSAGE = 'Bu buyurtma boshqa ofitsiantga tegishli — unga taom qo‘sha olmaysiz';
 
 /** Buyurtma turlari nomi (UI tugmalari, chek, hisobot) */
 export const ORDER_TYPE_LABELS: Record<OrderType, string> = {

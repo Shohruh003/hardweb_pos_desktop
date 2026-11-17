@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
   CAPABILITIES,
+  ROLE_FORBIDDEN_CAPABILITIES,
   User,
   UserRole,
+  capabilitiesForRole,
   defaultCapabilitiesForRole,
   isFullAccessRole,
+  roleAllowsCapability,
 } from '@hardweb-pos/shared';
 import { Button } from '../../components/ui';
 import { Select } from '../../components/Select';
@@ -34,6 +37,14 @@ const PIN_LENGTH = 4;
 
 const CREDENTIALS_REQUIRED = 'Direktor uchun login va parol majburiy (PIN bilan kira olmaydi)';
 const NO_CAPABILITIES = 'Kamida bitta ruxsat belgilang — aks holda xodim tizimga kirsa ham hech narsa qila olmaydi';
+
+/** Lavozimga berilmaydigan ruxsatlar izohi (server ham saqlamaydi) — masalan ofitsiantga kassa/hisobot */
+function forbiddenCapsHint(role: string): string | null {
+  const keys = ROLE_FORBIDDEN_CAPABILITIES[role as UserRole] ?? [];
+  if (!keys.length) return null;
+  const names = CAPABILITIES.filter((c) => keys.includes(c.key)).map((c) => c.label.split(' (')[0].toLowerCase());
+  return `${ROLE_LABEL[role] ?? role}ga ${names.join(', ')} berilmaydi — u faqat o‘z savdosini ko‘radi. Bunday ish kerak bo‘lsa, Kassir yoki Administrator rolini tanlang.`;
+}
 
 /** Ikki ruxsatlar ro'yxati bir xilmi (tartibsiz) */
 function samePermissions(a: string[], b: string[]): boolean {
@@ -152,7 +163,8 @@ export function StaffTab() {
   function openEdit(u: User) {
     setFormError('');
     setShowPassword(false);
-    const permissions = u.permissions ?? [];
+    // Lavozimga taqiqlangan eski belgilar ko'rsatilmaydi (saqlanganda tozalanadi)
+    const permissions = capabilitiesForRole(u.role, u.permissions ?? []);
     const roleDefaults = defaultCapabilitiesForRole(u.role);
     setForm({
       id: u.id,
@@ -196,6 +208,14 @@ export function StaffTab() {
     if (!isFullAccessRole(role) && (form.capsFromRole !== null || form.permissions.length === 0)) {
       patch.permissions = defaultCapabilitiesForRole(role);
       patch.capsFromRole = role;
+    } else if (!isFullAccessRole(role)) {
+      // Qo'lda tanlangan ruxsatlar saqlanadi — yangi lavozimga taqiqlanganlari olib tashlanadi
+      // (masalan kassir ofitsiantga aylansa — kassa, tushum, tarix, otkaz)
+      const kept = capabilitiesForRole(role, form.permissions);
+      if (kept.length !== form.permissions.length) {
+        patch.permissions = kept.length ? kept : defaultCapabilitiesForRole(role);
+        patch.capsFromRole = kept.length ? null : role;
+      }
     }
     patchForm(patch);
   }
@@ -235,7 +255,7 @@ export function StaffTab() {
     if (!full && pinChanged && f.pin && f.pin.length !== PIN_LENGTH) return 'PIN 4 ta raqamdan iborat bo‘lishi kerak';
     if (pinOwner) return `Bu PIN band — ${pinOwner.name}ga berilgan. Boshqa PIN tanlang`;
     // Ruxsatsiz xodim kirsa ham hech narsa qila olmaydi (Direktor/SuperAdmin — hammasi avtomatik)
-    if (!full && f.permissions.length === 0) return NO_CAPABILITIES;
+    if (!full && capabilitiesForRole(f.role, f.permissions).length === 0) return NO_CAPABILITIES;
     if (actorFull) {
       if (login && !LOGIN_PATTERN.test(login)) {
         return 'Login 3–32 belgi bo‘lishi kerak: lotin harflari, raqamlar, nuqta (.), _ yoki -';
@@ -276,7 +296,7 @@ export function StaffTab() {
     const body: Record<string, unknown> = {
       name: f.name.trim(),
       role: f.role,
-      permissions: full ? [] : f.permissions,
+      permissions: full ? [] : capabilitiesForRole(f.role, f.permissions),
     };
     if (f.id) body.active = f.active;
     // Direktor PIN bilan kirmaydi — PIN yuborilmaydi; tahrirlashda bo'sh yoki o'zgarmagan PIN — yuborilmaydi
@@ -384,6 +404,34 @@ export function StaffTab() {
   const opsCaps = CAPABILITIES.filter((c) => c.group === 'ops');
   const manageCaps = CAPABILITIES.filter((c) => c.group === 'manage');
   const saveBlocked = saving || !!pinOwner || !!loginOwner;
+  // Lavozimga berilmaydigan ruxsatlar (ofitsiantga kassa/hisobot...) — belgilab bo'lmaydi
+  const capsHint = form && !fullRole ? forbiddenCapsHint(form.role) : null;
+  const renderCap = (c: (typeof CAPABILITIES)[number]) => {
+    if (!form) return null;
+    const allowed = roleAllowsCapability(form.role, c.key);
+    const locked = lockOwnRole || !allowed;
+    return (
+      <label
+        key={c.key}
+        title={allowed ? undefined : capsHint ?? undefined}
+        data-cap={c.key}
+        className={`flex items-center gap-2 text-sm select-none bg-bg border border-border rounded-lg px-2.5 py-2 ${
+          locked ? 'opacity-55 cursor-not-allowed' : 'cursor-pointer'
+        }`}
+      >
+        <input
+          type="checkbox"
+          checked={allowed && form.permissions.includes(c.key)}
+          disabled={locked}
+          onChange={() => toggleCap(c.key)}
+          className="w-4 h-4 accent-[#059669]"
+        />
+        <span className={allowed ? undefined : 'text-muted'}>
+          {allowed ? c.icon : '🔒'} {c.label}
+        </span>
+      </label>
+    );
+  };
 
   return (
     <div className="w-full">
@@ -702,48 +750,17 @@ export function StaffTab() {
               )}
               <div className="text-xs text-muted mb-1">Operatsion</div>
               <div className="grid grid-cols-2 gap-2 mb-2">
-                {opsCaps.map((c) => (
-                  <label
-                    key={c.key}
-                    className={`flex items-center gap-2 text-sm select-none bg-bg border border-border rounded-lg px-2.5 py-2 ${
-                      lockOwnRole ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={form.permissions.includes(c.key)}
-                      disabled={lockOwnRole}
-                      onChange={() => toggleCap(c.key)}
-                      className="w-4 h-4 accent-[#059669]"
-                    />
-                    <span>
-                      {c.icon} {c.label}
-                    </span>
-                  </label>
-                ))}
+                {opsCaps.map(renderCap)}
               </div>
               <div className="text-xs text-muted mb-1">Boshqaruv</div>
               <div className="grid grid-cols-2 gap-2">
-                {manageCaps.map((c) => (
-                  <label
-                    key={c.key}
-                    className={`flex items-center gap-2 text-sm select-none bg-bg border border-border rounded-lg px-2.5 py-2 ${
-                      lockOwnRole ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={form.permissions.includes(c.key)}
-                      disabled={lockOwnRole}
-                      onChange={() => toggleCap(c.key)}
-                      className="w-4 h-4 accent-[#059669]"
-                    />
-                    <span>
-                      {c.icon} {c.label}
-                    </span>
-                  </label>
-                ))}
+                {manageCaps.map(renderCap)}
               </div>
+              {capsHint && (
+                <div data-testid="role-caps-hint" className="mt-2 rounded-lg bg-bg border border-border px-3 py-2 text-xs text-muted">
+                  🔒 {capsHint}
+                </div>
+              )}
             </div>
           )}
 

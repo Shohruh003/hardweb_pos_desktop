@@ -6,6 +6,7 @@
 //   chek berildi   — to'q SARIQ, qora matn ("chek berildi" yorlig'i);
 //   tayyor         — yashil + "tayyor" (hamma taom tayyor).
 // Ofitsiantning o'z stollari — "SIZ" belgisi va oq hoshiya. Bir stolda 2+ hisob — "2 hisob".
+// Ofitsiant boshqa ofitsiant stolining summasini ko'rmaydi (0.3.3) — faqat kassa (hideOthersSums=false).
 // React.memo: savat yoki boshqa holat o'zgarganda plitkalar qayta chizilmaydi.
 import { CSSProperties, memo } from 'react';
 import { Order, OrderStatus, Table, TableStatus } from '@hardweb-pos/shared';
@@ -55,11 +56,13 @@ export interface TableGridProps {
   /** joriy vaqt (daqiqaga yaxlitlangan) — "necha daqiqa ochiq" uchun */
   now: number;
   onOpen: (table: Table) => void;
+  /** ofitsiant ekrani: boshqa ofitsiant stolining summasi ko'rsatilmaydi */
+  hideOthersSums?: boolean;
 }
 
 const NO_CHECKS: Order[] = [];
 
-function TableGridImpl({ tables, checksByTable, queuedTableIds, myId, now, onOpen }: TableGridProps) {
+function TableGridImpl({ tables, checksByTable, queuedTableIds, myId, now, onOpen, hideOthersSums }: TableGridProps) {
   return (
     <div className="grid gap-2 sm:gap-2.5" style={GRID_STYLE}>
       {tables.map((t) => {
@@ -74,6 +77,7 @@ function TableGridImpl({ tables, checksByTable, queuedTableIds, myId, now, onOpe
             // Bo'sh stol vaqtga bog'liq emas — har daqiqada qayta chizilmasin
             now={checks.length ? now : 0}
             onOpen={onOpen}
+            hideOthersSums={!!hideOthersSums}
           />
         );
       })}
@@ -124,6 +128,7 @@ export const HallSections = memo(function HallSections({
 /** Plitka faqat o'z ma'lumoti o'zgarganda qayta chiziladi (hisoblar ro'yxati elementma-element taqqoslanadi) */
 function sameTile(a: TileProps, b: TileProps): boolean {
   if (a.table !== b.table || a.myId !== b.myId || a.queued !== b.queued || a.now !== b.now || a.onOpen !== b.onOpen) return false;
+  if (a.hideOthersSums !== b.hideOthersSums) return false;
   if (a.checks === b.checks) return true;
   if (a.checks.length !== b.checks.length) return false;
   return a.checks.every((c, i) => c === b.checks[i]);
@@ -136,9 +141,10 @@ interface TileProps {
   queued: boolean;
   now: number;
   onOpen: (table: Table) => void;
+  hideOthersSums: boolean;
 }
 
-const TableTile = memo(function TableTile({ table, checks, myId, queued, now, onOpen }: TileProps) {
+const TableTile = memo(function TableTile({ table, checks, myId, queued, now, onOpen, hideOthersSums }: TileProps) {
   const busy = checks.length > 0 || table.status !== TableStatus.Free;
   // "Chek berildi": barcha ochiq hisoblarga schot chiqarilgan. Server billPrintedAt bermasa (eski
   // versiya) — stol holati "hisob kutilmoqda" bo'yicha
@@ -148,6 +154,8 @@ const TableTile = memo(function TableTile({ table, checks, myId, queued, now, on
   const tone: Tone = !busy ? 'free' : billGiven ? 'bill' : 'busy';
   const mine = checks.some((c) => c.waiterId === myId);
   const total = checks.reduce((s, c) => s + payableTotal(c), 0);
+  // Summa — faqat o'z stoli (barcha hisoblar shu ofitsiantniki) yoki kassa darajasidagi xodimga
+  const sumVisible = !hideOthersSums || checks.every((c) => !c.waiterId || c.waiterId === myId);
   const names = Array.from(new Set(checks.map((c) => firstName(c.waiterName)).filter(Boolean)));
   const openedAt = checks.reduce<string | null>((min, c) => (!min || c.openedAt < min ? c.openedAt : min), null);
   const billAt = checks.reduce<string | null>(
@@ -178,7 +186,11 @@ const TableTile = memo(function TableTile({ table, checks, myId, queued, now, on
         </span>
         {busy && checks.length > 0 ? (
           <span className="min-w-0 flex flex-col items-end gap-0.5 pt-0.5">
-            <span className="text-[15px] font-black leading-none tabular-nums truncate max-w-full">{formatAmount(total)}</span>
+            {sumVisible && (
+              <span data-testid="table-total" className="text-[15px] font-black leading-none tabular-nums truncate max-w-full">
+                {formatAmount(total)}
+              </span>
+            )}
             {checks.length > 1 && (
               <span
                 data-testid="table-checks"

@@ -10,6 +10,7 @@ import { Raw, Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import {
   ALL_CAPABILITY_KEYS,
+  capabilitiesForRole,
   defaultCapabilitiesForRole,
   isFullAccessRole,
   User,
@@ -122,7 +123,8 @@ export class UsersService {
     // Ruxsatlar berilmagan (yoki bo'sh) — rol bo'yicha standart ruxsatlar (ofitsiant -> zakaz,
     // oshpaz -> KDS, ...). Aks holda yangi xodim tizimga kirsa ham hech narsa qila olmaydi.
     // Direktor/SuperAdmin — barcha ruxsatlarga avtomatik ega, ro'yxat kerak emas.
-    let permissions = normalizePermissions(dto.permissions);
+    // Lavozimga taqiqlangan ruxsatlar (ofitsiantga kassa/tushum/hisobot...) saqlanmaydi.
+    let permissions = capabilitiesForRole(role, normalizePermissions(dto.permissions));
     if (permissions.length === 0 && !isFullAccessRole(role)) {
       permissions = defaultCapabilitiesForRole(role);
     }
@@ -165,11 +167,22 @@ export class UsersService {
     const deactivating = dto.active === false && target.active;
 
     const currentPermissions = normalizePermissions(target.permissions);
-    const nextPermissions =
+    const requestedPermissions =
       dto.permissions !== undefined ? normalizePermissions(dto.permissions) : null;
-    const permissionsChanged =
-      nextPermissions !== null &&
-      !samePermissions(nextPermissions, currentPermissions);
+    // Lavozimga taqiqlangan ruxsatlar saqlanmaydi: masalan kassir ofitsiantga aylantirilsa — kassa,
+    // tushum, tarix, otkaz ruxsatlari olinadi; eski (0.3.3 dan oldingi) taqiqlangan belgilar ham tozalanadi.
+    const basePermissions = requestedPermissions ?? currentPermissions;
+    let nextPermissions = capabilitiesForRole(nextRole, basePermissions);
+    // Faqat taqiqlangan ruxsatlari bo'lgan xodim (masalan "faqat kassa") ofitsiantga aylansa — ruxsatsiz qolmasin
+    if (nextPermissions.length === 0 && basePermissions.length > 0 && !isFullAccessRole(nextRole)) {
+      nextPermissions = defaultCapabilitiesForRole(nextRole);
+    }
+    const permissionsChanged = !samePermissions(nextPermissions, currentPermissions);
+    // Amaldagi ruxsatlar o'zgaradimi (eski taqiqlangan belgilarni tozalash — o'zgarish hisoblanmaydi)
+    const effectivePermissionsChanged = !samePermissions(
+      nextPermissions,
+      capabilitiesForRole(target.role, currentPermissions),
+    );
 
     const currentLogin = target.login ?? null;
     const loginGiven = dto.login !== undefined;
@@ -190,7 +203,7 @@ export class UsersService {
       throw new ForbiddenException(FORBIDDEN_MESSAGE);
     }
     // Administrator o'ziga rol/ruxsat bera olmaydi (o'zini "ko'tarib" olmasligi uchun)
-    if (isSelf && !actorFull && (roleChanged || permissionsChanged)) {
+    if (isSelf && !actorFull && (roleChanged || effectivePermissionsChanged)) {
       throw new ForbiddenException(FORBIDDEN_MESSAGE);
     }
 
