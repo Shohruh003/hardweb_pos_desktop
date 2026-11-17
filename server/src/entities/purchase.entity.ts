@@ -24,9 +24,16 @@ export class PurchaseEntity {
   @Column({ type: 'varchar', default: ProductUnit.Kg })
   unit: ProductUnit;
 
+  // Ta'minotchi nomi (ko'rsatish uchun nusxa; ta'minotchi nomi o'zgarsa birga yangilanadi)
   @Column({ default: '' })
-  supplier: string; // ta'minotchi
+  supplier: string;
 
+  // Ta'minotchi (0.3.3) — balans shu bo'yicha hisoblanadi; ta'minotchisiz kirimda NULL
+  @Index()
+  @Column({ name: 'supplier_id', type: 'uuid', nullable: true })
+  supplierId: string | null;
+
+  // Vozvrat (ta'minotchiga qaytarish) — manfiy qator: quantity va total manfiy
   @Column({ type: 'decimal', precision: 14, scale: 3, default: 0 })
   quantity: number;
 

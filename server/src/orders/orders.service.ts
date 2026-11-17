@@ -81,6 +81,7 @@ import {
 import { OrdersGateway } from './orders.gateway';
 import { TelegramService, VoidNotification } from '../telegram/telegram.service';
 import { InventoryService } from '../inventory/inventory.service';
+import { orderStockLabel } from '../inventory/inventory-rules';
 import {
   PrintNewItemsParams,
   PrintVoidParams,
@@ -2202,13 +2203,25 @@ export class OrdersService {
           await this.settleTable(manager, order.tableId);
         }
 
-        // Sotildi — taomlarga ketgan mahsulotlarni skladdan ayiramiz
+        // Sotildi — taomlarga ketgan mahsulotlar skladdan ayiriladi ('sale' harakatlari: kassir,
+        // buyurtma id va nomi bilan). Retseptsiz taomlar / mahsulotsiz restoran — hech narsa.
         await this.inventory.deductForOrder(
           manager,
           (order.items || []).map((it) => ({
             menuItemId: it.menuItemId,
             quantity: Number(it.quantity),
           })),
+          {
+            userId: args.cashierId,
+            userName: names.get(args.cashierId) ?? null,
+            reference: order.id,
+            referenceLabel: orderStockLabel({
+              type: order.type,
+              queueNumber: order.queueNumber,
+              tableNumber: table?.number ?? null,
+              checkNo: order.checkNo,
+            }),
+          },
         );
 
         if (fiscalEnabled) {
@@ -2346,11 +2359,13 @@ export class OrdersService {
 
   // Vozvrat — to'langan (yopilgan) chekni qaytarish. Faqat 'refund' ruxsati bor xodim
   // (controllerda tekshiriladi; Direktor/SuperAdmin avtomatik ega). Sabab jurnalga yoziladi.
+  // returnStock — sotuvda ayirilgan mahsulotlar skladga qaytadi ('refund' harakatlari), shu tranzaksiyada.
   async refund(
     id: string,
     reason: string,
     userId: string,
     byName = 'Admin',
+    returnStock = false,
   ): Promise<Order> {
     return this.serial(async () => {
       const order = await this.findEntity(id);
@@ -2364,13 +2379,29 @@ export class OrdersService {
       order.refundReason = reason?.trim() || null;
       order.refundedAt = new Date();
       order.refundedBy = userId;
-      await this.orders.update(order.id, {
-        refunded: true,
-        refundReason: order.refundReason,
-        refundedAt: order.refundedAt,
-        refundedBy: userId,
+      const table = await this.tableOf(order);
+      await this.dataSource.transaction(async (m) => {
+        await m.update(OrderEntity, order.id, {
+          refunded: true,
+          refundReason: order.refundReason,
+          refundedAt: order.refundedAt,
+          refundedBy: userId,
+        });
+        if (returnStock) {
+          await this.inventory.returnSaleStock(m, order.id, {
+            userId,
+            userName: byName,
+            reference: order.id,
+            referenceLabel: `Vozvrat: ${orderStockLabel({
+              type: order.type,
+              queueNumber: order.queueNumber,
+              tableNumber: table?.number ?? null,
+              checkNo: order.checkNo,
+            })}`,
+          });
+        }
       });
-      const dto = await this.fullDto(order);
+      const dto = await this.fullDto(order, { table });
 
       // Direktorga Telegram orqali vozvrat cheki (TZ #10) — xato bo'lsa ham davom etadi.
       // Qaytariladigan summa — chek summasi (chegirma/xizmat bilan), qatorlar yig'indisi emas.

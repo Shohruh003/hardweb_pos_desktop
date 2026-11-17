@@ -45,6 +45,31 @@ import {
   remainingAmount,
   roundSum,
   sumPayments,
+  // Sklad (0.3.3) — server bilan bir xil xabarlar va qoidalar
+  COUNT_ITEMS_REQUIRED_MESSAGE,
+  COUNT_VALUE_INVALID_MESSAGE,
+  PRODUCTION_INPUTS_REQUIRED_MESSAGE,
+  PRODUCTION_OUTPUT_REQUIRED_MESSAGE,
+  PRODUCTION_SELF_MESSAGE,
+  PRODUCT_NAME_REQUIRED_MESSAGE,
+  PRODUCT_NAME_TAKEN_MESSAGE,
+  PRODUCT_NOT_FOUND_MESSAGE,
+  STOCK_MOVEMENT_TYPES,
+  STOCK_PRICE_INVALID_MESSAGE,
+  STOCK_QTY_INVALID_MESSAGE,
+  STOCK_QTY_POSITIVE_MESSAGE,
+  STOCK_UNIT_LOCKED_MESSAGE,
+  SUPPLIER_IN_USE_MESSAGE,
+  SUPPLIER_NAME_REQUIRED_MESSAGE,
+  SUPPLIER_NAME_TAKEN_MESSAGE,
+  SUPPLIER_NOT_FOUND_MESSAGE,
+  SUPPLIER_PAYMENT_AMOUNT_MESSAGE,
+  SUPPLIER_PAYMENT_NOT_FOUND_MESSAGE,
+  nextAvgCost,
+  productInRecipesMessage,
+  roundStockCost,
+  roundStockQty,
+  stockNotEnoughMessage,
 } from '@hardweb-pos/shared';
 import type {
   CashSummary,
@@ -56,13 +81,21 @@ import type {
   OrderItem,
   OrderTotals,
   OrderVoidedPayload,
+  PaginatedMovements,
   Payment,
   PaymentMethod,
   PaymentMethodKind,
   PosSettings,
   PrinterStatus,
+  Product,
+  Purchase,
   Receipt,
+  RecipeItem,
   SplitOrderResult,
+  StockMovement,
+  StockMovementType,
+  Supplier,
+  SupplierPayment,
   TopItem,
   User,
   VoidLog,
@@ -195,6 +228,46 @@ interface MockMenuItem {
   favorite: boolean;
   ingredients: string | null;
 }
+// ---- Sklad (ombor) — server products / recipe_items / purchases / suppliers / supplier_payments /
+// stock_movements jadvallari kabi (0.3.3) ----
+interface MockProduct {
+  id: string;
+  name: string;
+  unit: ProductUnit;
+  stock: number; // 3 xona
+  minStock: number;
+  avgCost: number; // o'rtacha og'irlikdagi birlik tannarxi (4 xona)
+}
+/** Taom retsepti qatori: 1 birlik taomga ketadigan mahsulot miqdori */
+interface MockRecipeItem { id: string; menuItemId: string; productId: string; amount: number }
+interface MockSupplier { id: string; name: string; phone: string | null; note: string | null; createdAt: string }
+/** Kirim (quantity > 0) yoki ta'minotchiga vozvrat (quantity < 0, total < 0) */
+interface MockPurchase {
+  id: string;
+  productId: string;
+  productName: string; // snapshot
+  unit: ProductUnit;
+  supplier: string; // ta'minotchi nomi (snapshot; ta'minotchi qayta nomlansa — yangilanadi)
+  supplierId: string | null;
+  quantity: number;
+  unitPrice: number;
+  total: number; // butun so'm
+  note: string | null;
+  createdAt: string;
+}
+interface MockSupplierPayment {
+  id: string;
+  supplierId: string | null;
+  supplier: string; // nom (snapshot; qayta nomlansa — yangilanadi)
+  amount: number;
+  note: string | null;
+  userName: string | null;
+  createdAt: string;
+}
+/** Ombor harakati (jurnal qatori) — userId faqat ichkarida saqlanadi */
+interface MockMovement extends StockMovement {
+  userId: string | null;
+}
 type CashKind = 'kirim' | 'chiqim';
 interface MockExpense {
   id: string;
@@ -256,12 +329,14 @@ let categories: MockCategory[] = [];
 let stations: MockStation[] = [];
 let menu: MockMenuItem[] = [];
 let tables: MockTable[] = [];
-let products: any[] = [];
-// recipe_items: { id, menuItemId, productId, amount } — 1 birlik taomga
-let recipeItems: any[] = [];
-// Kirimlar (ta'minot) tarixi
-let purchases: any[] = [];
-let supplierPayments: { id: string; supplier: string; amount: number; note: string | null; createdAt: string }[] = [];
+// Sklad (ombor): mahsulotlar, retseptlar (1 birlik taomga), ta'minotchilar, kirim/vozvratlar,
+// ta'minotchiga to'lovlar va harakatlar jurnali (qoldiqning HAR BIR o'zgarishi — applyMovement orqali)
+let products: MockProduct[] = [];
+let recipeItems: MockRecipeItem[] = [];
+let suppliers: MockSupplier[] = [];
+let purchases: MockPurchase[] = [];
+let supplierPayments: MockSupplierPayment[] = [];
+let movements: MockMovement[] = [];
 let users: MockUser[] = [];
 let settings: MockSettings = defaultSettings();
 let terminals: any[] = [];
@@ -352,31 +427,6 @@ function ensureSeeded(): void {
     ...[7, 8, 9, 10].map((n) => ({ id: uid(), number: n, hall: 'VIP zal', capacity: 6, status: TableStatus.Free })),
   ];
 
-  // Sklad (ombor): mahsulotlar + retseptlar
-  products = [
-    { id: uid(), name: 'Guruch', unit: ProductUnit.Kg, stock: 50, minStock: 10 },
-    { id: uid(), name: 'Go‘sht (mol)', unit: ProductUnit.Kg, stock: 30, minStock: 8 },
-    { id: uid(), name: 'Sabzi', unit: ProductUnit.Kg, stock: 25, minStock: 5 },
-    { id: uid(), name: 'Piyoz', unit: ProductUnit.Kg, stock: 20, minStock: 5 },
-    { id: uid(), name: 'Yog‘', unit: ProductUnit.Litr, stock: 15, minStock: 3 },
-    { id: uid(), name: 'Un', unit: ProductUnit.Kg, stock: 40, minStock: 10 },
-  ];
-  const prodId = (name: string) => products.find((p) => p.name === name)!.id;
-  recipeItems = [];
-  const addRecipe = (menuIdx: number, lines: [string, number][]) => {
-    const mid = menu[menuIdx]?.id;
-    if (!mid) return;
-    lines.forEach(([pname, amount]) =>
-      recipeItems.push({ id: uid(), menuItemId: mid, productId: prodId(pname), amount }),
-    );
-  };
-  // menu: 0 Osh, 1 Lag'mon, 3 Qovurilgan go'sht (kg)
-  addRecipe(0, [['Guruch', 0.2], ['Go‘sht (mol)', 0.15], ['Sabzi', 0.1], ['Yog‘', 0.05]]);
-  addRecipe(1, [['Un', 0.15], ['Go‘sht (mol)', 0.1], ['Sabzi', 0.1]]);
-  addRecipe(3, [['Go‘sht (mol)', 1], ['Yog‘', 0.05], ['Piyoz', 0.1]]);
-  purchases = [];
-  supplierPayments = [];
-
   // Real seed bilan bir xil xodimlar (ism, PIN, ruxsatlar — 0.3.0 ma'lumot yangilanishlaridan keyingi
   // holat: kassir — 'waiter' va 'void', administrator — 'void'); demo paroli hammada '1234'
   const u = (n: number, name: string, role: UserRole, login: string, pin: string, permissions: string[]): MockUser => ({
@@ -394,6 +444,10 @@ function ensureSeeded(): void {
     u(9, 'Direktor', UserRole.Director, 'direktor', '0000', []),
     u(10, 'Super Admin (vendor)', UserRole.SuperAdmin, 'superadmin', '7777', []),
   ];
+
+  // Sklad (ombor): ta'minotchilar, mahsulotlar, retseptlar, kirimlar va to'lovlar (xodimlardan keyin —
+  // harakatlarda kim bajargani yoziladi)
+  seedInventory();
 
   // Demo uchun: sozlamalar, terminallar (in-memory)
   settings = defaultSettings();
@@ -415,6 +469,112 @@ function ensureSeeded(): void {
   recentRequests = new Map();
 
   seedOrders();
+  // Bugungi yopilgan cheklar — to'lovdagidek sotuv harakatlari (sklad jurnalida ko'rinadi)
+  seedSales();
+}
+
+/**
+ * Demo sklad (real restoranga o'xshash): 4 ta ta'minotchi, 9 ta mahsulot (o'rtacha tannarx va
+ * boshlang'ich qoldiq harakati bilan), 6 ta taom retsepti, kirimlar, ta'minotchiga vozvrat,
+ * inventarizatsiya, hisobdan chiqarish va to'lovlar. Har qoldiq o'zgarishi applyMovement orqali —
+ * jurnal (balanceAfter) va qoldiq bir-biriga mos. Vaqtlar: kechagi yozuvlar 20:00 gacha, bugungilar —
+ * oxirgi 4 soat ichida (yarim tunda ochilsa ham har mahsulot jurnali vaqt tartibida qoladi).
+ */
+function seedInventory(): void {
+  const P = ProductUnit;
+  const admin = users.find((x) => x.role === UserRole.Admin) ?? null;
+  const director = users.find((x) => x.role === UserRole.Director) ?? null;
+  const daysAgoAt = (days: number, h: number, m = 0) => {
+    const d = new Date();
+    d.setDate(d.getDate() - days);
+    d.setHours(h, m, 0, 0);
+    return d.toISOString();
+  };
+  const minAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+  const by = (u: MockUser | null, at: string, extra: Partial<MoveCtx> = {}): MoveCtx => ({
+    userId: u?.id ?? null,
+    userName: u?.name ?? null,
+    at,
+    ...extra,
+  });
+
+  movements = [];
+  purchases = [];
+  supplierPayments = [];
+  suppliers = [
+    { id: uid(), name: 'Baraka Go‘sht', phone: '+998 90 111 22 33', note: 'Mol go‘shti — har kuni ertalab olib keladi', createdAt: daysAgoAt(40, 10) },
+    { id: uid(), name: 'Oltin Don', phone: '+998 71 200 30 40', note: 'Guruch, un, yog‘ (ulgurji)', createdAt: daysAgoAt(40, 10, 5) },
+    { id: uid(), name: 'Dehqon bozori', phone: null, note: 'Sabzavotlar, naqd pulga', createdAt: daysAgoAt(40, 10, 10) },
+    { id: uid(), name: 'Ichimliklar ulgurji', phone: '+998 93 555 44 22', note: null, createdAt: daysAgoAt(20, 12) },
+  ];
+
+  // [nom, birlik, boshlang'ich qoldiq, minimal qoldiq, birlik tannarxi (so'm)]
+  const list: [string, ProductUnit, number, number, number][] = [
+    ['Guruch', P.Kg, 40, 10, 21_000],
+    ['Go‘sht (mol)', P.Kg, 12, 8, 92_000],
+    ['Sabzi', P.Kg, 10, 5, 6_000],
+    ['Piyoz', P.Kg, 8, 5, 4_500],
+    ['Yog‘', P.Litr, 6, 3, 24_000],
+    ['Un', P.Kg, 15, 10, 7_500],
+    ['Pomidor', P.Kg, 4, 5, 12_000], // minimaldan kam — "kam qolgan" ogohlantirishi ko'rinsin
+    ['Ko‘k choy', P.Gram, 2000, 300, 180],
+    ['Coca-Cola 0,5 l', P.Dona, 24, 12, 6_500],
+  ];
+  products = [];
+  const opening = daysAgoAt(3, 8);
+  for (const [name, unit, stock, minStock, avgCost] of list) {
+    const p: MockProduct = { id: uid(), name, unit, stock: 0, minStock, avgCost };
+    products.push(p);
+    applyMovement(p, 'initial', { delta: stock }, avgCost, by(null, opening, { note: INITIAL_STOCK_NOTE }));
+  }
+  const prod = (name: string) => products.find((p) => p.name === name)!;
+  const sup = (name: string) => suppliers.find((s) => s.name === name)!;
+
+  // Retseptlar — 1 birlik taomga (Qovurilgan go'sht — 1 kg ga); Shashlik, Sezar va Pivo retseptsiz
+  // (retseptsiz taom skladga ta'sir qilmaydi)
+  recipeItems = [];
+  const addRecipe = (dishName: string, lines: [string, number][]) => {
+    const mid = menu.find((m) => m.name === dishName)?.id;
+    if (!mid) return;
+    lines.forEach(([pname, amount]) => recipeItems.push({ id: uid(), menuItemId: mid, productId: prod(pname).id, amount }));
+  };
+  addRecipe('Osh', [['Guruch', 0.2], ['Go‘sht (mol)', 0.15], ['Sabzi', 0.1], ['Yog‘', 0.05]]);
+  addRecipe('Lag‘mon', [['Un', 0.15], ['Go‘sht (mol)', 0.1], ['Sabzi', 0.1]]);
+  addRecipe('Qovurilgan go‘sht', [['Go‘sht (mol)', 1], ['Yog‘', 0.05], ['Piyoz', 0.1]]);
+  addRecipe('Achchiq-chuchuk', [['Pomidor', 0.2], ['Piyoz', 0.05]]);
+  addRecipe('Choy', [['Ko‘k choy', 5]]);
+  addRecipe('Coca-Cola', [['Coca-Cola 0,5 l', 1]]);
+
+  // Kirimlar, vozvrat, inventarizatsiya, chiqim va to'lovlar — vaqt tartibida
+  recordPurchase(prod('Go‘sht (mol)'), sup('Baraka Go‘sht'), 20, 98_000, null, by(admin, daysAgoAt(2, 9, 30)));
+  recordPurchase(prod('Sabzi'), sup('Dehqon bozori'), 30, 6_500, null, by(admin, daysAgoAt(2, 10, 15)));
+  recordPurchase(prod('Piyoz'), sup('Dehqon bozori'), 20, 5_000, null, by(admin, daysAgoAt(2, 10, 20)));
+  recordPurchase(prod('Coca-Cola 0,5 l'), sup('Ichimliklar ulgurji'), 48, 6_800, '2 quti', by(admin, daysAgoAt(2, 14)));
+  recordPurchase(prod('Guruch'), sup('Oltin Don'), 25, 23_000, 'Devzira', by(admin, daysAgoAt(1, 9)));
+  recordPurchase(prod('Un'), sup('Oltin Don'), 50, 7_800, null, by(admin, daysAgoAt(1, 9, 5)));
+  recordPurchase(prod('Yog‘'), sup('Oltin Don'), 10, 25_000, null, by(admin, daysAgoAt(1, 9, 10)));
+  recordSupplierPayment(sup('Baraka Go‘sht'), 1_500_000, 'Naqd', by(director, daysAgoAt(1, 10)));
+  recordReturn(prod('Piyoz'), sup('Dehqon bozori'), 3, 5_000, 'Chirigan', by(admin, daysAgoAt(1, 16)));
+  recordSupplierPayment(sup('Dehqon bozori'), 280_000, null, by(director, daysAgoAt(1, 17)));
+  // Kechki inventarizatsiya: unda 0,5 kg kam chiqdi
+  const un = prod('Un');
+  applyMovement(un, 'count', { absolute: un.stock - 0.5 }, un.avgCost,
+    by(admin, daysAgoAt(1, 19, 30), { reference: uid(), referenceLabel: COUNT_LABEL }));
+  // Bugun: sifatsiz sabzi hisobdan chiqarildi, Oltin Don'ga qisman to'lov
+  const sabzi = prod('Sabzi');
+  applyMovement(sabzi, 'writeoff', { delta: -1.5 }, sabzi.avgCost, by(admin, minAgo(240), { note: 'Chirigan, sifatsiz' }));
+  recordSupplierPayment(sup('Oltin Don'), 1_000_000, 'Bank o‘tkazmasi', by(director, minAgo(200)));
+}
+
+/** Seed'dagi yopilgan cheklar — to'lov paytidagidek sotuv harakatlari (yopilgan vaqti tartibida) */
+function seedSales(): void {
+  orders
+    .filter((o) => o.status === OrderStatus.Closed && o.closedAt)
+    .sort((a, b) => Date.parse(a.closedAt!) - Date.parse(b.closedAt!))
+    .forEach((o) => {
+      const last = orderPayments(o.id).pop();
+      writeSaleMovements(o, last?.cashierId ?? null, o.closedAt!);
+    });
 }
 
 // Prezentatsiya uchun tayyor ma'lumot (bugun): yopilgan hisoblar (stol, olib ketish, yetkazish, qarzga,
@@ -634,7 +794,7 @@ function localBound(value: string | undefined | null, end: boolean): number | nu
 const toSecond = (ms: number) => Math.floor(ms / 1000) * 1000;
 
 // ---- Hisobot sanalari (server reports/report-dates.ts bilan bir xil qoida va xabarlar) ----
-const DATE_INVALID_MESSAGE = 'Sana noto‘g‘ri (YYYY-MM-DD)';
+const DATE_INVALID_MESSAGE = 'Sana noto‘g‘ri (YYYY-MM-DD yoki YYYY-MM-DDTHH:MM)';
 const RANGE_INVALID_MESSAGE = 'Sana oralig‘i noto‘g‘ri';
 const RANGE_TOO_LONG_MESSAGE = 'Sana oralig‘i juda katta (1 yilgacha)';
 const RANGE_MAX_DAYS = 366;
@@ -1023,6 +1183,7 @@ function toPosSettings(): PosSettings {
     deliveryFeeDefault: normalizeFee(settings.deliveryFeeDefault ?? 0),
     paymentMethods: paymentMethods(),
     hallOrder: normalizeHallList(settings.hallOrder),
+    skladEnabled: products.length > 0,
   };
 }
 
@@ -1392,16 +1553,115 @@ function issueFiscal(o: MockOrder, total: number): { fiscalNumber: string; qr: s
   return doc;
 }
 
-// Taom(lar) sotilganda mahsulotlarni skladdan ayirish
-function deductStock(items: { menuItemId: string; quantity: number }[]) {
-  items.forEach((it) => {
-    recipeItems
-      .filter((r) => r.menuItemId === it.menuItemId)
-      .forEach((r) => {
-        const p = products.find((x) => x.id === r.productId);
-        if (p) p.stock = Number(p.stock) - Number(r.amount) * Number(it.quantity);
-      });
-  });
+// =============================================================================================
+// Sklad (ombor) — 0.3.3 shartnomasi: qoldiqning har bir o'zgarishi jurnalga yoziladi
+// =============================================================================================
+
+const COUNT_LABEL = 'Inventarizatsiya';
+const PRODUCTION_LABEL = 'Ishlab chiqarish';
+/** Boshlang'ich qoldiq harakatining izohi (server bilan aynan bir xil) */
+const INITIAL_STOCK_NOTE = 'Sklad jurnali boshlanishidagi qoldiq';
+const PRODUCT_UNITS = Object.values(ProductUnit) as string[];
+// Server xabarlari (inventory-rules.ts, dto.ts, reports/report-dates.ts) — shared'da yo'q
+const PRODUCT_UNIT_INVALID_MESSAGE = 'O‘lchov birligi noto‘g‘ri (kg, g, l, ml yoki dona)';
+const STOCK_TEXT_INVALID_MESSAGE = 'Matn noto‘g‘ri';
+const ADJUST_TYPE_INVALID_MESSAGE = 'Harakat turi noto‘g‘ri (writeoff yoki adjust)';
+const STOCK_DATE_INVALID_MESSAGE = 'Sana noto‘g‘ri (YYYY-MM-DD yoki YYYY-MM-DDTHH:MM)';
+
+/** Harakat konteksti (server applyMovements ctx): kim, qaysi hujjat, izoh; at — faqat demo seed uchun */
+interface MoveCtx {
+  userId: string | null;
+  userName: string | null;
+  reference?: string | null;
+  referenceLabel?: string | null;
+  note?: string | null;
+  at?: string;
+}
+
+/**
+ * Qoldiqni o'zgartirishning YAGONA yo'li (server applyMovements): qoldiq yangilanadi (3 xona; count —
+ * mutlaq qiymat), yangi qoldiq harakatga balanceAfter bo'lib yoziladi.
+ */
+function applyMovement(
+  p: MockProduct,
+  type: StockMovementType,
+  change: { delta: number } | { absolute: number },
+  unitCost: number,
+  ctx: MoveCtx,
+): MockMovement {
+  const before = roundStockQty(p.stock);
+  const absolute = 'absolute' in change;
+  const after = absolute ? roundStockQty(change.absolute) : roundStockQty(before + change.delta);
+  p.stock = after;
+  const m: MockMovement = {
+    id: uid(),
+    productId: p.id,
+    productName: p.name,
+    unit: p.unit,
+    type,
+    quantity: absolute ? roundStockQty(after - before) : roundStockQty(change.delta),
+    balanceAfter: after,
+    unitCost: roundStockCost(unitCost),
+    reference: ctx.reference ?? null,
+    referenceLabel: ctx.referenceLabel ?? null,
+    note: ctx.note ?? null,
+    userId: ctx.userId,
+    userName: ctx.userName,
+    createdAt: ctx.at ?? nowIso(),
+  };
+  movements.push(m);
+  return m;
+}
+
+/**
+ * Buyurtmaning sklad jurnalidagi nomi (server orderStockLabel): orderDisplayName ("Olib ketish #12",
+ * "Stol 5 · Hisob 2"), stolga buyurtmada esa kunlik raqam ham — "Stol 5 · №12".
+ */
+function orderRefLabel(o: MockOrder): string {
+  const dto = toDto(o);
+  const name = orderDisplayName(dto);
+  const n = Number(dto.queueNumber);
+  return orderTypeOf(dto) === OrderType.DineIn && Number.isInteger(n) && n > 0 ? `${name} · №${n}` : name;
+}
+
+/**
+ * Sotuv (server deductForOrder, to'lov tranzaksiyasida): retseptli taomlar bo'yicha har mahsulotga
+ * bitta 'sale' harakati, o'rtacha tannarx bilan. Qoldiq manfiyga tushishi mumkin — sotuv to'lovda
+ * hech qachon to'xtatilmaydi. Retseptsiz buyurtma — hech narsa yozilmaydi.
+ */
+function writeSaleMovements(o: MockOrder, userId: string | null, at?: string): void {
+  const need = sumNeed(o.items.map((it) => ({ menuItemId: it.menuItemId, quantity: Number(it.quantity) })));
+  if (need.size === 0) return;
+  const ctx: MoveCtx = { userId, userName: userName(userId), reference: o.id, referenceLabel: orderRefLabel(o), at };
+  for (const [productId, amount] of need) {
+    const p = products.find((x) => x.id === productId);
+    const qty = roundStockQty(amount);
+    if (!p || !(qty > 0)) continue;
+    applyMovement(p, 'sale', { delta: -qty }, p.avgCost, ctx);
+  }
+}
+
+/**
+ * Vozvrat (returnStock, server returnSaleStock): chekning 'sale' harakatlari aynan teskarisiga — o'sha
+ * mahsulotlar, miqdorlar va tannarx bilan 'refund' (+). Sotuv harakati yo'q — hech narsa; ikkinchi marta yo'q.
+ */
+function writeRefundMovements(o: MockOrder, actor: MockUser): void {
+  if (movements.some((m) => m.type === 'refund' && m.reference === o.id)) return;
+  const byProduct = new Map<string, { qty: number; cost: number }>();
+  for (const s of movements) {
+    if (s.type !== 'sale' || s.reference !== o.id) continue;
+    const cur = byProduct.get(s.productId) ?? { qty: 0, cost: 0 };
+    cur.qty += -s.quantity;
+    cur.cost += -s.quantity * s.unitCost;
+    byProduct.set(s.productId, cur);
+  }
+  if (byProduct.size === 0) return;
+  const ctx: MoveCtx = { userId: actor.id, userName: actor.name, reference: o.id, referenceLabel: `Vozvrat: ${orderRefLabel(o)}` };
+  for (const [productId, v] of byProduct) {
+    const p = products.find((x) => x.id === productId);
+    const qty = roundStockQty(v.qty);
+    if (p && qty !== 0) applyMovement(p, 'refund', { delta: qty }, v.qty ? v.cost / v.qty : 0, ctx);
+  }
 }
 
 // Retsept bo'yicha kerakli mahsulot miqdorlari (productId -> amount)
@@ -1427,10 +1687,7 @@ function stockShortage(newItems: { menuItemId: string; quantity: number }[]): st
     const p = products.find((x) => x.id === pid);
     if (!p) continue;
     const available = Number(p.stock) - (reserved.get(pid) || 0);
-    if (needed > available + 1e-6) {
-      const av = Math.max(0, Math.round(available * 1000) / 1000);
-      return `Omborda yetarli emas: ${p.name} — mavjud ${av} ${p.unit}`;
-    }
+    if (needed > available + 1e-6) return stockNotEnoughMessage(p.name, available, p.unit);
   }
   return null;
 }
@@ -2485,8 +2742,8 @@ function finishPayment(
     order.closedAt = createdAt;
     // Stol bo'shaydi — shu stolda boshqa ochiq hisob qolmagan bo'lsa
     if (orderTypeOf(order) === OrderType.DineIn && order.tableId) settleTable(order.tableId);
-    // Sotildi — taomlarga ketgan mahsulotlarni skladdan ayiramiz
-    deductStock(order.items.map((it) => ({ menuItemId: it.menuItemId, quantity: Number(it.quantity) })));
+    // Sotildi — taomlarga ketgan mahsulotlar skladdan ayiriladi ('sale' harakatlari, chek nomi bilan)
+    writeSaleMovements(order, args.cashierId, createdAt);
     issueFiscal(order, total);
   }
   const allPayments = [...args.prior, ...saved].map((p) => paymentView(p, args.methods));
@@ -3075,94 +3332,8 @@ function route(method: string, fullPath: string, body: any, token?: string | nul
     const i = stations.findIndex((x) => x.id === seg[1]); if (i >= 0) stations.splice(i, 1); return ok({ ok: true });
   }
 
-  // Sklad (ombor)
-  if (path === '/inventory/products' && method === 'GET') return ok([...products]);
-  if (path === '/inventory/products' && method === 'POST') {
-    const p = { id: uid(), name: body.name, unit: body.unit ?? ProductUnit.Kg, stock: Number(body.stock) || 0, minStock: Number(body.minStock) || 0 };
-    products.push(p); return ok(p);
-  }
-  if (seg[0] === 'inventory' && seg[1] === 'products' && seg[2] && seg[3] === 'adjust' && method === 'POST') {
-    const p = products.find((x) => x.id === seg[2]);
-    if (p) p.stock = Number(p.stock) + Number(body.delta || 0);
-    return ok(p);
-  }
-  if (seg[0] === 'inventory' && seg[1] === 'products' && seg[2] && method === 'PATCH') {
-    const p = products.find((x) => x.id === seg[2]); if (p) Object.assign(p, body); return ok(p);
-  }
-  if (seg[0] === 'inventory' && seg[1] === 'products' && seg[2] && method === 'DELETE') {
-    const i = products.findIndex((x) => x.id === seg[2]); if (i >= 0) products.splice(i, 1);
-    // Bog'liq retseptlarni ham o'chiramiz
-    for (let k = recipeItems.length - 1; k >= 0; k--) if (recipeItems[k].productId === seg[2]) recipeItems.splice(k, 1);
-    return ok({ ok: true });
-  }
-  if (path === '/inventory/purchases' && method === 'GET') {
-    const pid = params.get('productId');
-    const list = pid ? purchases.filter((p) => p.productId === pid) : purchases;
-    return ok([...list].reverse());
-  }
-  if (path === '/inventory/supplier-balances' && method === 'GET') {
-    const m = new Map<string, { supplier: string; purchased: number; paid: number; count: number }>();
-    const g = (name: string) => {
-      const key = (name || '').trim() || '—';
-      let c = m.get(key);
-      if (!c) { c = { supplier: key, purchased: 0, paid: 0, count: 0 }; m.set(key, c); }
-      return c;
-    };
-    for (const p of purchases) { const c = g(p.supplier); c.purchased += Number(p.total); c.count += 1; }
-    for (const pay of supplierPayments) { g(pay.supplier).paid += Number(pay.amount); }
-    return ok([...m.values()].map((c) => ({ ...c, debt: c.purchased - c.paid })).sort((a, b) => b.debt - a.debt));
-  }
-  if (path === '/inventory/supplier-payments' && method === 'POST') {
-    const pay = { id: uid(), supplier: (body.supplier || '').trim(), amount: Number(body.amount) || 0, note: body.note?.trim() || null, createdAt: new Date().toISOString() };
-    supplierPayments.push(pay);
-    return ok(pay);
-  }
-  if (path === '/inventory/purchases' && method === 'POST') {
-    const p = products.find((x) => x.id === body.productId);
-    if (!p) return fail('Mahsulot topilmadi');
-    const quantity = Number(body.quantity) || 0;
-    const unitPrice = Number(body.unitPrice) || 0;
-    if (quantity <= 0) return fail('Miqdor 0 dan katta bo‘lishi kerak');
-    const pur = {
-      id: uid(), productId: p.id, productName: p.name, unit: p.unit,
-      supplier: (body.supplier || '').trim(), quantity, unitPrice,
-      total: Math.round(quantity * unitPrice * 100) / 100,
-      note: body.note?.trim() || null, createdAt: new Date().toISOString(),
-    };
-    purchases.push(pur);
-    p.stock = Number(p.stock) + quantity;
-    return ok(pur);
-  }
-  if (path === '/inventory/returns' && method === 'POST') {
-    const p = products.find((x) => x.id === body.productId);
-    if (!p) return fail('Mahsulot topilmadi');
-    const quantity = Number(body.quantity) || 0;
-    const unitPrice = Number(body.unitPrice) || 0;
-    if (quantity <= 0) return fail('Miqdor 0 dan katta bo‘lishi kerak');
-    const ret = {
-      id: uid(), productId: p.id, productName: p.name, unit: p.unit,
-      supplier: (body.supplier || '').trim(), quantity: -quantity, unitPrice,
-      total: -(Math.round(quantity * unitPrice * 100) / 100),
-      note: '↩️ Vozvrat', createdAt: new Date().toISOString(),
-    };
-    purchases.push(ret);
-    p.stock = Number(p.stock) - quantity;
-    return ok(ret);
-  }
-  if (seg[0] === 'inventory' && seg[1] === 'recipe' && seg[2] && method === 'GET') {
-    const rows = recipeItems.filter((r) => r.menuItemId === seg[2]).map((r) => {
-      const p = products.find((x) => x.id === r.productId);
-      return { ...r, productName: p?.name, productUnit: p?.unit };
-    });
-    return ok(rows);
-  }
-  if (seg[0] === 'inventory' && seg[1] === 'recipe' && seg[2] && method === 'PUT') {
-    for (let k = recipeItems.length - 1; k >= 0; k--) if (recipeItems[k].menuItemId === seg[2]) recipeItems.splice(k, 1);
-    (body.items || []).filter((i: any) => i.productId && Number(i.amount) > 0).forEach((i: any) =>
-      recipeItems.push({ id: uid(), menuItemId: seg[2], productId: i.productId, amount: Number(i.amount) }),
-    );
-    return ok(recipeItems.filter((r) => r.menuItemId === seg[2]));
-  }
+  // Sklad (ombor) — 0.3.3
+  if (seg[0] === 'inventory') return inventoryRoute(method, path, seg, params, body, actor);
 
   // ---- Xodimlar ----
   if (path === '/users/waiters' && method === 'GET') {
@@ -3637,6 +3808,602 @@ function menuRoute(method: string, path: string, seg: string[], body: any, actor
   return fail(`Mock: yo‘l topilmadi (${method} ${path})`, 404);
 }
 
+// =============================================================================================
+// Sklad (ombor) marshrutlari — /inventory/* (server inventory controller va servislari, 0.3.3)
+// =============================================================================================
+
+/** Sklad ma'lumotlarini o'qish (har qanday GET /inventory/*): 'inventory' yoki 'menu' ruxsati, yoki administrator / direktor */
+const canReadInventory = (u: MockUser) => can(u, 'inventory') || can(u, 'menu') || isAdminRole(u);
+/** Sklad amallari: 'inventory' ruxsati yoki administrator / direktor (alohida "skladchi" ham to'liq ishlaydi) */
+const canWriteInventory = (u: MockUser) => can(u, 'inventory') || isAdminRole(u);
+/** Taom retseptini saqlash: 'menu' yoki 'inventory' ruxsati, yoki administrator / direktor */
+const canEditRecipes = (u: MockUser) => can(u, 'menu') || can(u, 'inventory') || isAdminRole(u);
+
+/** Nom: chetidagi bo'shliqlarsiz, ichidagi ketma-ket bo'shliqlar bitta (server cleanName) */
+const cleanName = (v: unknown) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ') : '');
+/** Nom kaliti — katta-kichik harf va bo'shliqlar farqi hisobga olinmaydi: "Baraka" = " baraka " */
+const nameKey = (v: unknown) => cleanName(v).toLowerCase();
+/** Ixtiyoriy matn (izoh, telefon): chetidagi bo'shliqlarsiz; bo'sh yoki matn emas — null */
+const optionalText = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
+/** JSON'dagi son; satr, NaN va Infinity — noto'g'ri (NaN) */
+const finiteOrNaN = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : NaN);
+
+/** Musbat miqdor (3 xona) — aks holda 400 */
+function positiveQty(v: unknown, message: string): number {
+  const q = roundStockQty(finiteOrNaN(v));
+  if (!(q > 0)) throw bad(message);
+  return q;
+}
+/** 0 yoki musbat miqdor (qoldiq, minimal qoldiq, sanalgan qoldiq) — aks holda 400 */
+function nonNegativeQty(v: unknown, message: string): number {
+  const n = finiteOrNaN(v);
+  if (!(n >= 0)) throw bad(message);
+  return roundStockQty(n);
+}
+/** Narx / tannarx: 0 yoki musbat (4 xona) — aks holda 400 */
+function nonNegativeCost(v: unknown): number {
+  const n = finiteOrNaN(v);
+  if (!(n >= 0)) throw bad(STOCK_PRICE_INVALID_MESSAGE);
+  return roundStockCost(n);
+}
+/** DTO tur tekshiruvi (server dto.ts): berilgan (null emas) maydon matn bo'lishi shart */
+function assertText(b: any, key: string, message = STOCK_TEXT_INVALID_MESSAGE): void {
+  if (b[key] != null && typeof b[key] !== 'string') throw bad(message);
+}
+
+const findProduct = (id: unknown) => (typeof id === 'string' && id ? products.find((p) => p.id === id) : undefined);
+function productOr404(id: unknown): MockProduct {
+  const p = findProduct(id);
+  if (!p) throw notFound(PRODUCT_NOT_FOUND_MESSAGE);
+  return p;
+}
+const productNameTaken = (name: string, exceptId?: string) =>
+  products.some((p) => p.id !== exceptId && nameKey(p.name) === nameKey(name));
+/** Mahsulot ishlatilgan taomlar soni (menyuda bor taomlar; o'chirilgan taomning qolib ketgan qatori hisobga olinmaydi) */
+function recipeCountOf(productId: string): number {
+  const dishes = new Set(recipeItems.filter((r) => r.productId === productId).map((r) => r.menuItemId));
+  return [...dishes].filter((id) => menu.some((m) => m.id === id)).length;
+}
+/** Harakatlari bormi ('initial'dan boshqa harakat yoki kirim/vozvrat) — bor bo'lsa o'lchov birligi o'zgarmaydi */
+const hasHistoryOf = (productId: string) =>
+  movements.some((m) => m.productId === productId && m.type !== 'initial') || purchases.some((x) => x.productId === productId);
+
+function productView(p: MockProduct): Product {
+  return {
+    id: p.id,
+    name: p.name,
+    unit: p.unit,
+    stock: roundStockQty(p.stock),
+    minStock: roundStockQty(p.minStock),
+    avgCost: roundStockCost(p.avgCost),
+    recipeCount: recipeCountOf(p.id),
+    hasHistory: hasHistoryOf(p.id),
+  };
+}
+
+/** Omborda yetarli bo'lishi shart (chiqim, vozvrat, ishlab chiqarish) */
+function assertEnoughStock(p: MockProduct, qty: number): void {
+  const available = roundStockQty(p.stock);
+  if (qty - available > QTY_EPS) throw bad(stockNotEnoughMessage(p.name, available, p.unit));
+}
+
+function movementView(m: MockMovement): StockMovement {
+  return {
+    id: m.id,
+    productId: m.productId,
+    productName: m.productName,
+    unit: m.unit,
+    type: m.type,
+    quantity: m.quantity,
+    balanceAfter: m.balanceAfter,
+    unitCost: m.unitCost,
+    reference: m.reference ?? null,
+    referenceLabel: m.referenceLabel ?? null,
+    note: m.note ?? null,
+    userName: m.userName ?? null,
+    createdAt: m.createdAt,
+  };
+}
+
+function purchaseView(x: MockPurchase): Purchase {
+  return {
+    id: x.id,
+    productId: x.productId,
+    productName: x.productName,
+    unit: x.unit,
+    supplier: x.supplier,
+    supplierId: x.supplierId,
+    quantity: x.quantity,
+    unitPrice: x.unitPrice,
+    total: x.total,
+    note: x.note,
+    createdAt: x.createdAt,
+  };
+}
+
+const supplierPaymentView = (x: MockSupplierPayment): SupplierPayment => ({
+  id: x.id,
+  supplierId: x.supplierId,
+  supplierName: x.supplier,
+  amount: x.amount,
+  note: x.note,
+  userName: x.userName,
+  createdAt: x.createdAt,
+});
+
+/**
+ * Ta'minotchi balansi: olingan = kirimlar summasi (vozvrat — manfiy qator), to'langan = to'lovlar,
+ * qarz = farq (butun so'm). purchasesCount va lastPurchaseAt — faqat kirimlar (vozvratlarsiz).
+ */
+function supplierView(s: MockSupplier): Supplier {
+  let purchased = 0;
+  let purchasesCount = 0;
+  let lastPurchaseAt: string | null = null;
+  for (const x of purchases) {
+    if (x.supplierId !== s.id) continue;
+    purchased += x.total;
+    if (x.quantity <= 0) continue;
+    purchasesCount += 1;
+    if (!lastPurchaseAt || Date.parse(x.createdAt) > Date.parse(lastPurchaseAt)) lastPurchaseAt = x.createdAt;
+  }
+  const paid = roundSum(supplierPayments.filter((x) => x.supplierId === s.id).reduce((sum, x) => sum + x.amount, 0));
+  purchased = roundSum(purchased);
+  return { id: s.id, name: s.name, phone: s.phone, note: s.note, purchased, paid, debt: purchased - paid, purchasesCount, lastPurchaseAt };
+}
+
+/** Ta'minotchilar balansi bilan: qarzi kattasi birinchi, keyin nomi bo'yicha */
+const supplierList = () =>
+  suppliers.map(supplierView).sort((a, b) => b.debt - a.debt || a.name.localeCompare(b.name, 'uz'));
+
+/** Eng yangisi birinchi; bir vaqtdagilar — yozilish tartibining teskarisi (server ORDER BY created_at, rowid DESC) */
+const newestFirst = <T extends { createdAt: string }>(rows: T[]): T[] =>
+  [...rows].reverse().sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+
+/** ?from=&to= — mahalliy 'YYYY-MM-DD' yoki sana+vaqt (chegaralar kiradi); noto'g'ri sana — 400 (server applyDateRange) */
+function dateRangeOf(params: URLSearchParams): { from: number | null; to: number | null } {
+  const raw = (k: string) => {
+    const v = params.get(k);
+    return v != null && v.trim() ? v.trim() : undefined;
+  };
+  const fromRaw = raw('from');
+  const toRaw = raw('to');
+  const from = fromRaw ? localBound(fromRaw, false) : null;
+  const to = toRaw ? localBound(toRaw, true) : null;
+  if ((fromRaw && from === null) || (toRaw && to === null)) throw bad(STOCK_DATE_INVALID_MESSAGE);
+  return { from, to };
+}
+const inDateRange = (iso: string, r: { from: number | null; to: number | null }) => {
+  const t = toSecond(Date.parse(iso));
+  return (r.from === null || t >= r.from) && (r.to === null || t <= r.to);
+};
+
+/** GET /inventory/movements — jurnal: mahsulot, tur (vergul bilan bir nechta), sana; sahifalab, eng yangisi birinchi */
+function listMovements(params: URLSearchParams): PaginatedMovements {
+  const str = (k: string) => {
+    const v = params.get(k);
+    return v != null && v.trim() ? v.trim() : undefined;
+  };
+  const page = positiveInt(str('page'), 1, 1_000_000);
+  const limit = positiveInt(str('limit'), 50, 100);
+  const productId = str('productId');
+  const types = (str('type') ?? '').split(',').map((t) => t.trim()).filter(Boolean);
+  const range = dateRangeOf(params);
+  const list = newestFirst(
+    movements.filter(
+      (m) => (!productId || m.productId === productId) && (!types.length || types.includes(m.type)) && inDateRange(m.createdAt, range),
+    ),
+  );
+  return {
+    items: list.slice((page - 1) * limit, page * limit).map(movementView),
+    total: list.length,
+    page,
+    limit,
+    hasMore: page * limit < list.length,
+  };
+}
+
+/** GET /inventory/purchases — kirim va vozvratlar: mahsulot, ta'minotchi, sana; eng yangisi birinchi (200 ta, 500 gacha) */
+function listPurchases(params: URLSearchParams): Purchase[] {
+  const str = (k: string) => {
+    const v = params.get(k);
+    return v != null && v.trim() ? v.trim() : undefined;
+  };
+  const productId = str('productId');
+  const supplierId = str('supplierId');
+  const limit = positiveInt(str('limit'), 200, 500);
+  const range = dateRangeOf(params);
+  return newestFirst(
+    purchases.filter(
+      (x) => (!productId || x.productId === productId) && (!supplierId || x.supplierId === supplierId) && inDateRange(x.createdAt, range),
+    ),
+  )
+    .slice(0, limit)
+    .map(purchaseView);
+}
+
+/** Taom retsepti (mahsulot nomi va birligi bilan) */
+function recipeView(menuItemId: string): RecipeItem[] {
+  return recipeItems
+    .filter((r) => r.menuItemId === menuItemId)
+    .map((r) => {
+      const p = findProduct(r.productId);
+      return { id: r.id, menuItemId: r.menuItemId, productId: r.productId, amount: r.amount, productName: p?.name, productUnit: p?.unit };
+    });
+}
+
+/**
+ * Ta'minotchini aniqlash (kirim, vozvrat, to'lov): supplierId (bo'lishi shart — aks holda 404) YOKI nom —
+ * mavjudi katta-kichik harf / bo'shliqlarsiz topiladi, yo'q bo'lsa yaratiladi. Ikkalasi bo'sh — ta'minotchisiz
+ * (required bo'lsa — 400). Barcha boshqa tekshiruvlardan KEYIN chaqiriladi (tranzaksiya kabi: xato bo'lsa
+ * yangi ta'minotchi yaratilib qolmaydi).
+ */
+function resolveSupplier(b: any, required: boolean): MockSupplier | null {
+  const supplierId = typeof b.supplierId === 'string' ? b.supplierId.trim() : '';
+  if (supplierId) {
+    const found = suppliers.find((s) => s.id === supplierId);
+    if (!found) throw notFound(SUPPLIER_NOT_FOUND_MESSAGE);
+    return found;
+  }
+  const name = cleanName(b.supplier);
+  if (!name) {
+    if (required) throw bad(SUPPLIER_NAME_REQUIRED_MESSAGE);
+    return null;
+  }
+  const existing = suppliers.find((s) => nameKey(s.name) === nameKey(name));
+  if (existing) return existing;
+  const created: MockSupplier = { id: uid(), name, phone: null, note: null, createdAt: nowIso() };
+  suppliers.push(created);
+  return created;
+}
+
+/** Kirim (bitta tranzaksiya): kirim qatori, o'rtacha tannarx (nextAvgCost), 'purchase' harakati kirim narxida */
+function recordPurchase(
+  p: MockProduct,
+  supplier: MockSupplier | null,
+  quantity: number,
+  unitPrice: number,
+  note: string | null,
+  ctx: MoveCtx,
+): MockPurchase {
+  const at = ctx.at ?? nowIso();
+  const name = supplier?.name ?? '';
+  const row: MockPurchase = {
+    id: uid(), productId: p.id, productName: p.name, unit: p.unit, supplier: name, supplierId: supplier?.id ?? null,
+    quantity, unitPrice, total: Math.round(quantity * unitPrice), note, createdAt: at,
+  };
+  purchases.push(row);
+  p.avgCost = nextAvgCost(p.stock, p.avgCost, quantity, unitPrice);
+  applyMovement(p, 'purchase', { delta: quantity }, unitPrice, {
+    ...ctx, at, reference: row.id, referenceLabel: name ? `Kirim: ${name}` : 'Kirim', note,
+  });
+  return row;
+}
+
+/** Ta'minotchiga vozvrat: MANFIY kirim qatori (qarz kamayadi) va 'return' harakati; o'rtacha tannarx o'zgarmaydi */
+function recordReturn(
+  p: MockProduct,
+  supplier: MockSupplier | null,
+  quantity: number,
+  unitPrice: number,
+  note: string | null,
+  ctx: MoveCtx,
+): MockPurchase {
+  const at = ctx.at ?? nowIso();
+  const name = supplier?.name ?? '';
+  const row: MockPurchase = {
+    id: uid(), productId: p.id, productName: p.name, unit: p.unit, supplier: name, supplierId: supplier?.id ?? null,
+    quantity: -quantity, unitPrice, total: 0 - Math.round(quantity * unitPrice),
+    note: `↩️ Vozvrat${note ? ` · ${note}` : ''}`, createdAt: at,
+  };
+  purchases.push(row);
+  applyMovement(p, 'return', { delta: -quantity }, unitPrice, {
+    ...ctx, at, reference: row.id, referenceLabel: name ? `Vozvrat: ${name}` : 'Vozvrat', note,
+  });
+  return row;
+}
+
+/** Ta'minotchiga to'lov (qarzni kamaytiradi); kim kiritgani saqlanadi */
+function recordSupplierPayment(s: MockSupplier, amount: number, note: string | null, ctx: MoveCtx): MockSupplierPayment {
+  const row: MockSupplierPayment = {
+    id: uid(), supplierId: s.id, supplier: s.name, amount, note, userName: ctx.userName, createdAt: ctx.at ?? nowIso(),
+  };
+  supplierPayments.push(row);
+  return row;
+}
+
+function inventoryRoute(method: string, path: string, seg: string[], params: URLSearchParams, rawBody: any, actor: MockUser): Promise<unknown> {
+  const sub = seg[1];
+  const id = seg[2];
+  const tail = seg[3];
+  const notRoute = () => fail(`Mock: yo‘l topilmadi (${method} ${path})`, 404);
+  // Tana — JSON orqali kelgandek (server kabi): NaN/Infinity -> null, undefined maydonlar yo'q
+  const b: any = clone(rawBody) ?? {};
+  const by = (extra: Partial<MoveCtx> = {}): MoveCtx => ({ userId: actor.id, userName: actor.name, ...extra });
+
+  // ---- O'qish: 'inventory' / 'menu' ruxsati yoki administrator / direktor ----
+  if (method === 'GET') {
+    if (!canReadInventory(actor)) throw forbidden();
+    if (seg.length === 2) {
+      if (sub === 'products') return ok([...products].sort((x, y) => x.name.localeCompare(y.name, 'uz')).map(productView));
+      if (sub === 'movements') return ok(listMovements(params));
+      if (sub === 'purchases') return ok(listPurchases(params));
+      if (sub === 'suppliers') return ok(supplierList());
+      // To'lovlar: eng yangisi birinchi, ixtiyoriy ta'minotchi bo'yicha; limit ≤ 500 (standart 200)
+      if (sub === 'supplier-payments') {
+        const supplierId = params.get('supplierId')?.trim();
+        const limit = positiveInt(params.get('limit')?.trim(), 200, 500);
+        return ok(
+          newestFirst(supplierPayments.filter((x) => !supplierId || x.supplierId === supplierId))
+            .slice(0, limit)
+            .map(supplierPaymentView),
+        );
+      }
+      // Eski (0.3.3 gacha) ko'rinish — /suppliers bilan bir xil raqamlar
+      if (sub === 'supplier-balances') {
+        return ok(supplierList().map((s) => ({ supplier: s.name, purchased: s.purchased, paid: s.paid, debt: s.debt, count: s.purchasesCount })));
+      }
+    }
+    if (sub === 'recipe' && id && !tail) return ok(recipeView(id));
+    return notRoute();
+  }
+
+  // ---- Taom retsepti: 'menu' yoki 'inventory' ruxsati, yoki administrator / direktor ----
+  // To'liq almashtiriladi: 0 / bo'sh qatorlar tashlab ketiladi, bir mahsulot ikki marta — qo'shiladi,
+  // yo'q mahsulot — 404 (eski retsept o'zgarmaydi)
+  if (sub === 'recipe' && id && !tail && method === 'PUT') {
+    if (!Array.isArray(b.items)) throw bad('items must be an array'); // server SetRecipeDto (IsArray)
+    if (!canEditRecipes(actor)) throw forbidden();
+    const lines = new Map<string, number>();
+    for (const it of b.items) {
+      const amount = roundStockQty(it?.amount);
+      if (!it?.productId || !(amount > 0)) continue;
+      const pid = String(it.productId);
+      lines.set(pid, roundStockQty((lines.get(pid) ?? 0) + amount));
+    }
+    if ([...lines.keys()].some((pid) => !findProduct(pid))) throw notFound(PRODUCT_NOT_FOUND_MESSAGE);
+    recipeItems = recipeItems.filter((r) => r.menuItemId !== id);
+    for (const [productId, amount] of lines) recipeItems.push({ id: uid(), menuItemId: id, productId, amount });
+    return ok(recipeView(id));
+  }
+
+  // ---- Ta'minotchiga to'lovni o'chirish (pul yozuvi) — faqat administrator / direktor ----
+  if (sub === 'supplier-payments' && id && !tail && method === 'DELETE') {
+    if (!isAdminRole(actor)) throw forbidden();
+    if (!supplierPayments.some((x) => x.id === id)) throw notFound(SUPPLIER_PAYMENT_NOT_FOUND_MESSAGE);
+    supplierPayments = supplierPayments.filter((x) => x.id !== id);
+    return ok({ ok: true });
+  }
+
+  // ---- Qolgan yozish amallari: 'inventory' ruxsati yoki administrator / direktor ----
+  if (!canWriteInventory(actor)) throw forbidden();
+
+  // Mahsulot qo'shish: boshlang'ich qoldiq > 0 bo'lsa — 'initial' harakati
+  if (sub === 'products' && !id && method === 'POST') {
+    assertText(b, 'name', PRODUCT_NAME_REQUIRED_MESSAGE);
+    const name = cleanName(b.name);
+    if (!name) throw bad(PRODUCT_NAME_REQUIRED_MESSAGE);
+    if (!PRODUCT_UNITS.includes(b.unit)) throw bad(PRODUCT_UNIT_INVALID_MESSAGE);
+    const stock = b.stock != null ? nonNegativeQty(b.stock, STOCK_QTY_INVALID_MESSAGE) : 0;
+    const minStock = b.minStock != null ? nonNegativeQty(b.minStock, STOCK_QTY_INVALID_MESSAGE) : 0;
+    const avgCost = b.unitCost != null ? nonNegativeCost(b.unitCost) : 0;
+    if (productNameTaken(name)) throw bad(PRODUCT_NAME_TAKEN_MESSAGE);
+    const p: MockProduct = { id: uid(), name, unit: b.unit, stock: 0, minStock, avgCost };
+    products.push(p);
+    // Server kabi: yangi mahsulotning boshlang'ich qoldig'i izohsiz (izoh — faqat jurnal boshlanishidagi qoldiqda)
+    if (stock > 0) applyMovement(p, 'initial', { delta: stock }, avgCost, by());
+    return ok(productView(p));
+  }
+
+  // Mahsulotni tahrirlash: nom, birlik, minimal qoldiq. `stock` qabul qilinmaydi — faqat harakatlar orqali
+  if (sub === 'products' && id && !tail && method === 'PATCH') {
+    assertText(b, 'name', PRODUCT_NAME_REQUIRED_MESSAGE);
+    if (b.unit != null && !PRODUCT_UNITS.includes(b.unit)) throw bad(PRODUCT_UNIT_INVALID_MESSAGE);
+    if (b.minStock != null && !isNum(b.minStock)) throw bad(STOCK_QTY_INVALID_MESSAGE);
+    const p = productOr404(id);
+    let name: string | undefined;
+    if (b.name != null) {
+      name = cleanName(b.name);
+      if (!name) throw bad(PRODUCT_NAME_REQUIRED_MESSAGE);
+      if (productNameTaken(name, p.id)) throw bad(PRODUCT_NAME_TAKEN_MESSAGE);
+    }
+    const minStock = b.minStock != null ? nonNegativeQty(b.minStock, STOCK_QTY_INVALID_MESSAGE) : undefined;
+    // Birlik — faqat harakatlari yo'q va qoldig'i 0 mahsulotda (eski miqdorlar boshqa birlikda qolmasin)
+    const unitChanged = b.unit != null && b.unit !== p.unit;
+    if (unitChanged && (hasHistoryOf(p.id) || roundStockQty(p.stock) !== 0)) throw bad(STOCK_UNIT_LOCKED_MESSAGE);
+    if (name !== undefined) p.name = name;
+    if (unitChanged) p.unit = b.unit;
+    if (minStock !== undefined) p.minStock = minStock;
+    return ok(productView(p));
+  }
+
+  // O'chirish: retseptlarda ishlatilgan bo'lsa — yo'q. Harakatlar va kirimlar qoladi (nom nusxasi bilan)
+  if (sub === 'products' && id && !tail && method === 'DELETE') {
+    const p = findProduct(id);
+    if (!p) return ok({ ok: true });
+    const used = recipeCountOf(p.id);
+    if (used > 0) throw bad(productInRecipesMessage(used));
+    products = products.filter((x) => x.id !== p.id);
+    // O'chirilgan taomlardan qolib ketgan retsept qatorlari
+    recipeItems = recipeItems.filter((r) => r.productId !== p.id);
+    return ok({ ok: true });
+  }
+
+  // Chiqim (hisobdan chiqarish) yoki qo'lda tuzatish
+  if (sub === 'products' && id && tail === 'adjust' && !seg[4] && method === 'POST') {
+    if (b.delta != null && !isNum(b.delta)) throw bad(STOCK_QTY_INVALID_MESSAGE);
+    if (b.type != null && b.type !== 'writeoff' && b.type !== 'adjust') throw bad(ADJUST_TYPE_INVALID_MESSAGE);
+    assertText(b, 'note');
+    const delta = roundStockQty(finiteOrNaN(b.delta));
+    if (delta === 0) throw bad(STOCK_QTY_INVALID_MESSAGE);
+    const type: StockMovementType = b.type ?? (delta > 0 ? 'adjust' : 'writeoff');
+    if (type === 'writeoff' && delta > 0) throw bad(STOCK_QTY_INVALID_MESSAGE);
+    const p = productOr404(id);
+    // Chiqim — qoldiq yetarli bo'lsa; tuzatish (adjust) qoldiqni tekshirmaydi
+    if (type === 'writeoff') assertEnoughStock(p, -delta);
+    applyMovement(p, type, { delta }, p.avgCost, by({ note: optionalText(b.note) }));
+    return ok(productView(p));
+  }
+
+  // Inventarizatsiya: sanalgan haqiqiy qoldiq (mutlaq), bitta partiya; farq 0 — harakat yo'q. Takror
+  // yuborilsa — hech narsa o'zgarmaydi; bir mahsulot ikki marta kelsa — oxirgi qiymat olinadi
+  if (sub === 'count' && !id && method === 'POST') {
+    if (b.items != null && !Array.isArray(b.items)) throw bad(COUNT_ITEMS_REQUIRED_MESSAGE);
+    assertText(b, 'note');
+    const items: any[] = Array.isArray(b.items) ? b.items : [];
+    if (items.length === 0) throw bad(COUNT_ITEMS_REQUIRED_MESSAGE);
+    const actual = new Map<string, number>();
+    for (const raw of items) {
+      const item = raw && typeof raw === 'object' ? raw : {};
+      const value = nonNegativeQty(item.actual, COUNT_VALUE_INVALID_MESSAGE);
+      if (typeof item.productId !== 'string' || !item.productId) throw notFound(PRODUCT_NOT_FOUND_MESSAGE);
+      actual.set(item.productId, value);
+    }
+    const lines = [...actual].map(([productId, value]) => ({ p: productOr404(productId), value }));
+    const ctx = by({ reference: uid(), referenceLabel: COUNT_LABEL, note: optionalText(b.note), at: nowIso() });
+    const made: MockMovement[] = [];
+    for (const { p, value } of lines) {
+      if (roundStockQty(value - roundStockQty(p.stock)) === 0) continue;
+      made.push(applyMovement(p, 'count', { absolute: value }, p.avgCost, ctx));
+    }
+    return ok({ changed: made.length, movements: made.map(movementView) });
+  }
+
+  // Ishlab chiqarish: ketgan mahsulotlar (−, o'z tannarxida) -> tayyor mahsulot (+, yig'ilgan tannarxda)
+  if (sub === 'production' && !id && method === 'POST') {
+    if (b.outputProductId != null && typeof b.outputProductId !== 'string') throw bad(PRODUCTION_OUTPUT_REQUIRED_MESSAGE);
+    if (b.outputQty != null && !isNum(b.outputQty)) throw bad(PRODUCTION_OUTPUT_REQUIRED_MESSAGE);
+    if (b.inputs != null && !Array.isArray(b.inputs)) throw bad(PRODUCTION_INPUTS_REQUIRED_MESSAGE);
+    assertText(b, 'note');
+    const outputId = typeof b.outputProductId === 'string' ? b.outputProductId : '';
+    const outputQty = roundStockQty(finiteOrNaN(b.outputQty));
+    if (!outputId || !(outputQty > 0)) throw bad(PRODUCTION_OUTPUT_REQUIRED_MESSAGE);
+    // Ketgan mahsulotlar: miqdori 0 qator (formadagi bo'sh qator) tashlab ketiladi, manfiy yoki son
+    // emas — 400; bir mahsulot ikki marta kelsa — qo'shiladi
+    const need = new Map<string, number>();
+    for (const raw of Array.isArray(b.inputs) ? b.inputs : []) {
+      const line = raw && typeof raw === 'object' ? raw : {};
+      const q = nonNegativeQty(line.quantity, STOCK_QTY_POSITIVE_MESSAGE);
+      if (q === 0) continue;
+      if (typeof line.productId !== 'string' || !line.productId) throw notFound(PRODUCT_NOT_FOUND_MESSAGE);
+      need.set(line.productId, roundStockQty((need.get(line.productId) ?? 0) + q));
+    }
+    if (need.size === 0) throw bad(PRODUCTION_INPUTS_REQUIRED_MESSAGE);
+    if (need.has(outputId)) throw bad(PRODUCTION_SELF_MESSAGE);
+    const output = findProduct(outputId);
+    if (!output) throw bad(PRODUCTION_OUTPUT_REQUIRED_MESSAGE);
+    const inputs = [...need].map(([pid, q]) => ({ p: productOr404(pid), q }));
+    for (const { p, q } of inputs) assertEnoughStock(p, q);
+    const unitCost = roundStockCost(inputs.reduce((sum, { p, q }) => sum + q * p.avgCost, 0) / outputQty);
+    const ctx = by({ reference: uid(), referenceLabel: PRODUCTION_LABEL, note: optionalText(b.note), at: nowIso() });
+    const made = inputs.map(({ p, q }) => applyMovement(p, 'production_out', { delta: -q }, p.avgCost, ctx));
+    output.avgCost = nextAvgCost(output.stock, output.avgCost, outputQty, unitCost);
+    made.push(applyMovement(output, 'production_in', { delta: outputQty }, unitCost, ctx));
+    return ok({ movements: made.map(movementView) });
+  }
+
+  // Kirim (ta'minotchidan)
+  if (sub === 'purchases' && !id && method === 'POST') {
+    assertText(b, 'productId', 'productId must be a string');
+    assertText(b, 'supplierId', 'supplierId must be a string');
+    assertText(b, 'supplier', SUPPLIER_NAME_REQUIRED_MESSAGE);
+    assertText(b, 'note');
+    if (b.quantity != null && !isNum(b.quantity)) throw bad(STOCK_QTY_POSITIVE_MESSAGE);
+    if (b.unitPrice != null && !isNum(b.unitPrice)) throw bad(STOCK_PRICE_INVALID_MESSAGE);
+    const quantity = positiveQty(b.quantity, STOCK_QTY_POSITIVE_MESSAGE);
+    const unitPrice = nonNegativeCost(b.unitPrice);
+    const p = productOr404(b.productId);
+    const supplier = resolveSupplier(b, false);
+    return ok(purchaseView(recordPurchase(p, supplier, quantity, unitPrice, optionalText(b.note), by())));
+  }
+
+  // Ta'minotchiga vozvrat: narx berilmasa (yoki ≤ 0) — o'rtacha tannarx
+  if (sub === 'returns' && !id && method === 'POST') {
+    assertText(b, 'productId', 'productId must be a string');
+    assertText(b, 'supplierId', 'supplierId must be a string');
+    assertText(b, 'supplier', SUPPLIER_NAME_REQUIRED_MESSAGE);
+    assertText(b, 'note');
+    if (b.quantity != null && !isNum(b.quantity)) throw bad(STOCK_QTY_POSITIVE_MESSAGE);
+    if (b.unitPrice != null && !isNum(b.unitPrice)) throw bad(STOCK_PRICE_INVALID_MESSAGE);
+    const quantity = positiveQty(b.quantity, STOCK_QTY_POSITIVE_MESSAGE);
+    const p = productOr404(b.productId);
+    assertEnoughStock(p, quantity);
+    const supplier = resolveSupplier(b, false);
+    const price = isNum(b.unitPrice) && b.unitPrice > 0 ? roundStockCost(b.unitPrice) : roundStockCost(p.avgCost);
+    return ok(purchaseView(recordReturn(p, supplier, quantity, price, optionalText(b.note), by())));
+  }
+
+  // Ta'minotchilar
+  if (sub === 'suppliers' && !id && method === 'POST') {
+    assertText(b, 'name', SUPPLIER_NAME_REQUIRED_MESSAGE);
+    assertText(b, 'phone');
+    assertText(b, 'note');
+    const name = cleanName(b.name);
+    if (!name) throw bad(SUPPLIER_NAME_REQUIRED_MESSAGE);
+    if (suppliers.some((s) => nameKey(s.name) === nameKey(name))) throw bad(SUPPLIER_NAME_TAKEN_MESSAGE);
+    const s: MockSupplier = { id: uid(), name, phone: optionalText(b.phone), note: optionalText(b.note), createdAt: nowIso() };
+    suppliers.push(s);
+    return ok(supplierView(s));
+  }
+  if (sub === 'suppliers' && id && !tail && method === 'PATCH') {
+    assertText(b, 'name', SUPPLIER_NAME_REQUIRED_MESSAGE);
+    assertText(b, 'phone');
+    assertText(b, 'note');
+    const s = suppliers.find((x) => x.id === id);
+    if (!s) throw notFound(SUPPLIER_NOT_FOUND_MESSAGE);
+    let name: string | undefined;
+    if (b.name != null) {
+      name = cleanName(b.name);
+      if (!name) throw bad(SUPPLIER_NAME_REQUIRED_MESSAGE);
+      if (suppliers.some((x) => x.id !== s.id && nameKey(x.name) === nameKey(name))) throw bad(SUPPLIER_NAME_TAKEN_MESSAGE);
+    }
+    if (name !== undefined && name !== s.name) {
+      const newName = name;
+      s.name = newName;
+      // Nom nusxasi kirim/to'lov qatorlarida va jurnaldagi kirim/vozvrat yorliqlarida ham yangilanadi
+      const own = new Set<string>();
+      purchases.forEach((x) => {
+        if (x.supplierId !== s.id) return;
+        x.supplier = newName;
+        own.add(x.id);
+      });
+      supplierPayments.forEach((x) => {
+        if (x.supplierId === s.id) x.supplier = newName;
+      });
+      movements.forEach((m) => {
+        if ((m.type === 'purchase' || m.type === 'return') && m.reference && own.has(m.reference)) {
+          m.referenceLabel = m.type === 'purchase' ? `Kirim: ${newName}` : `Vozvrat: ${newName}`;
+        }
+      });
+    }
+    if (b.phone !== undefined) s.phone = optionalText(b.phone);
+    if (b.note !== undefined) s.note = optionalText(b.note);
+    return ok(supplierView(s));
+  }
+  if (sub === 'suppliers' && id && !tail && method === 'DELETE') {
+    const s = suppliers.find((x) => x.id === id);
+    if (!s) return ok({ ok: true });
+    if (purchases.some((x) => x.supplierId === s.id) || supplierPayments.some((x) => x.supplierId === s.id)) {
+      throw bad(SUPPLIER_IN_USE_MESSAGE);
+    }
+    suppliers = suppliers.filter((x) => x.id !== s.id);
+    return ok({ ok: true });
+  }
+
+  // Ta'minotchiga to'lov (ta'minotchi majburiy: ro'yxatdan yoki nomi bilan)
+  if (sub === 'supplier-payments' && !id && method === 'POST') {
+    assertText(b, 'supplierId', 'supplierId must be a string');
+    assertText(b, 'supplier', SUPPLIER_NAME_REQUIRED_MESSAGE);
+    assertText(b, 'note');
+    if (b.amount != null && !isNum(b.amount)) throw bad(SUPPLIER_PAYMENT_AMOUNT_MESSAGE);
+    const amount = roundSum(finiteOrNaN(b.amount));
+    if (!(amount > 0)) throw bad(SUPPLIER_PAYMENT_AMOUNT_MESSAGE);
+    const s = resolveSupplier(b, true)!;
+    return ok(supplierPaymentView(recordSupplierPayment(s, amount, optionalText(b.note), by())));
+  }
+
+  return notRoute();
+}
+
 // ---- Buyurtmalar ----
 function ordersRoute(method: string, path: string, seg: string[], params: URLSearchParams, body: any, actor: MockUser): Promise<unknown> {
   const id = seg[1];
@@ -3831,6 +4598,7 @@ function ordersRoute(method: string, path: string, seg: string[], params: URLSea
     }
     case 'refund': {
       if (body.reason != null && typeof body.reason !== 'string') throw bad('Vozvrat sababi matn bo‘lishi kerak');
+      if (body.returnStock != null && typeof body.returnStock !== 'boolean') throw bad('Skladga qaytarish belgisi noto‘g‘ri');
       if (!can(actor, 'refund')) throw forbidden('Vozvrat qilish ruxsati yo‘q');
       const o = findEntity(id);
       if (o.status !== OrderStatus.Closed) throw bad('Faqat to‘langan (yopilgan) chek qaytariladi');
@@ -3839,6 +4607,8 @@ function ordersRoute(method: string, path: string, seg: string[], params: URLSea
       o.refundReason = String(body.reason ?? '').trim() || null;
       o.refundedAt = nowIso();
       o.refundedBy = actor.id;
+      // Mahsulotlar skladga qaytarilsin (ixtiyoriy; odatda ovqat qaytmaydi): sotuv harakatlari teskarisiga
+      if (body.returnStock === true) writeRefundMovements(o, actor);
       return ok(toDto(o));
     }
     case 'pay': {

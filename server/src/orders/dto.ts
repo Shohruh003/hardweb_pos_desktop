@@ -306,11 +306,17 @@ export class ChangeOrderTypeDto {
   address?: string;
 }
 
-// Vozvrat (to'langan chekni qaytarish) sababi
+// Vozvrat (to'langan chekni qaytarish): sabab va (ixtiyoriy) mahsulotlarni skladga qaytarish
 export class RefundDto {
   @IsOptional()
   @IsString({ message: 'Vozvrat sababi matn bo‘lishi kerak' })
   reason?: string;
+
+  // true — chekdagi taomlar retsepti bo'yicha ayirilgan mahsulotlar skladga qaytadi (standart: yo'q —
+  // tayyor taom odatda skladga qaytmaydi)
+  @IsOptional()
+  @IsBoolean({ message: 'Skladga qaytarish belgisi noto‘g‘ri' })
+  returnStock?: boolean;
 }
 
 export class ExciseCodeItemDto {

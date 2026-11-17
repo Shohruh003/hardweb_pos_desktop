@@ -18,6 +18,7 @@ export const DEFAULT_POS_SETTINGS: FullPosSettings = {
   deliveryFeeDefault: 0,
   paymentMethods: DEFAULT_PAYMENT_METHODS,
   hallOrder: [],
+  skladEnabled: false,
 };
 
 const METHOD_KINDS = ['cash', 'card', 'online', 'debt', 'other'];
@@ -69,6 +70,7 @@ function normalize(raw: Partial<PosSettings> | null | undefined): FullPosSetting
     deliveryFeeDefault: Math.max(0, Math.round(Number(raw?.deliveryFeeDefault) || 0)),
     paymentMethods: normalizeMethods(raw?.paymentMethods),
     hallOrder: Array.isArray(raw?.hallOrder) ? raw!.hallOrder.filter((h) => typeof h === 'string') : [],
+    skladEnabled: raw?.skladEnabled === true,
   };
 }
 

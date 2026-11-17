@@ -78,6 +78,12 @@ export interface Product {
   unit: ProductUnit; // o'lchov birligi (kg, g, l, ml, dona)
   stock: number; // ombordagi qoldiq
   minStock: number; // minimal qoldiq (kam qolganda ogohlantirish)
+  /** o'rtacha og'irlikdagi birlik tannarxi (so'm, 4 xonagacha) — server hisoblaydi (0.3.3) */
+  avgCost?: number;
+  /** nechta taom retseptida ishlatiladi (o'chirish va ko'rsatish uchun) */
+  recipeCount?: number;
+  /** harakatlari bormi — bor bo'lsa o'lchov birligi o'zgarmaydi */
+  hasHistory?: boolean;
 }
 
 /** customers — mijozlar (CRM) */
@@ -95,7 +101,8 @@ export interface Purchase {
   productId: string;
   productName: string; // nom (kirim paytидаги)
   unit: ProductUnit; // o'lchov birligi
-  supplier: string; // ta'minotchi (kim/qayerdan)
+  supplier: string; // ta'minotchi nomi (kim/qayerdan)
+  supplierId?: string | null; // ta'minotchi (0.3.3 — ro'yxatdan)
   quantity: number; // olingan miqdor
   unitPrice: number; // birlik narxi (so'm)
   total: number; // umumiy summa (quantity * unitPrice)
@@ -256,6 +263,8 @@ export interface PosSettings {
   deliveryFeeDefault?: number; // yangi yetkazish buyurtmasi uchun standart yetkazish narxi (so'm; 0 = yo'q)
   paymentMethods?: PaymentMethod[]; // faol to'lov usullari (to'lov oynasida shu tartibda)
   hallOrder: string[]; // zallar tartibi (ofitsiant/kassa ekranida shu tartibda chiqadi)
+  /** restoran Sklad (ombor) ishlatadimi — kamida bitta mahsulot bor (vozvratda "skladga qaytarish" belgisi) */
+  skladEnabled?: boolean;
 }
 
 /**

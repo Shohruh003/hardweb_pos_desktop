@@ -30,7 +30,7 @@ import { Modal } from './Modal';
 import { Select } from './Select';
 import { formatQty } from './numeric';
 import { api } from '../lib/api';
-import { sortHalls, usePosSettings } from '../lib/posSettings';
+import { refreshPosSettings, sortHalls, usePosSettings } from '../lib/posSettings';
 import { useAuth } from '../state/auth';
 import { Sheet, SheetError, Spinner } from './waiter/Sheet';
 import { IconPrinter, IconSearch, IconUndo } from './waiter/icons';
@@ -1085,6 +1085,16 @@ function CheckDetailSheet({
   const [err, setErr] = useState('');
   const [voids, setVoids] = useState<VoidReport | null>(null);
   const showVoids = canSeeVoids(user);
+  // Vozvratda mahsulotlarni skladga qaytarish (standart — YO'Q: taom odatda omborga qaytmaydi).
+  // Belgi faqat restoran Sklad ishlatsa (kamida bitta mahsulot) chiqadi — POS sozlamasidan (skladEnabled):
+  // vozvrat qiluvchida Sklad ruxsati bo'lmasa ham to'g'ri bilinadi, qo'shimcha so'rov yo'q.
+  const [returnStock, setReturnStock] = useState(false);
+  const usesSklad = !!pos.skladEnabled;
+  // Oyna ochilganda POS sozlamasi yangilanadi (xotiradagi nusxa 60 s gacha eski bo'lishi mumkin —
+  // Sklad yaqinda yoqilgan bo'lsa ham belgi darhol chiqsin)
+  useEffect(() => {
+    if (refundOpen) void refreshPosSettings().catch(() => undefined);
+  }, [refundOpen]);
 
   // Shu chekning otkazlari — faqat otkazlar hisobotini ko'ra oladigan xodimga (xato bo'lsa — jim)
   useEffect(() => {
@@ -1106,7 +1116,8 @@ function CheckDetailSheet({
     setBusy(true);
     setErr('');
     try {
-      const updated = await api.post<Order>(`/orders/${o.id}/refund`, { reason: reason.trim() });
+      const body = usesSklad && returnStock ? { reason: reason.trim(), returnStock: true } : { reason: reason.trim() };
+      const updated = await api.post<Order>(`/orders/${o.id}/refund`, body);
       onRefunded(updated && typeof updated === 'object' ? updated : { ...o, refunded: true, refundReason: reason.trim() });
       setRefundOpen(false);
       setReason('');
@@ -1276,9 +1287,37 @@ function CheckDetailSheet({
             data-testid="refund-reason"
             className="w-full px-3 py-2 rounded-xl bg-surface border border-border outline-none focus:border-danger text-[15px]"
           />
+          {usesSklad && (
+            <label
+              className="mt-2 mb-2 flex items-start gap-3 min-h-[48px] rounded-xl border border-border bg-surface px-3 py-2.5 cursor-pointer select-none"
+              data-testid="refund-return-stock"
+            >
+              <input
+                type="checkbox"
+                checked={returnStock}
+                onChange={(e) => setReturnStock(e.target.checked)}
+                disabled={busy}
+                className="mt-0.5 w-5 h-5 accent-primary shrink-0"
+              />
+              <span className="min-w-0">
+                <span className="block font-bold text-text">Mahsulotlarni skladga qaytarish</span>
+                <span className="block text-xs text-muted">
+                  Taom tayyorlanmagan bo‘lsa belgilang — sotuvda retsept bo‘yicha ayirilgan mahsulotlar omborga qaytadi.
+                </span>
+              </span>
+            </label>
+          )}
           <SheetError>{err}</SheetError>
           <div className="flex gap-2 mt-2">
-            <button type="button" onClick={() => setRefundOpen(false)} disabled={busy} className="flex-1 h-12 rounded-xl border border-border font-bold text-text">
+            <button
+              type="button"
+              onClick={() => {
+                setRefundOpen(false);
+                setReturnStock(false);
+              }}
+              disabled={busy}
+              className="flex-1 h-12 rounded-xl border border-border font-bold text-text"
+            >
               Bekor
             </button>
             <button

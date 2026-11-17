@@ -268,6 +268,7 @@ export class OrdersController {
   }
 
   // Vozvrat — 'refund' ruxsatiga ega xodim (Direktor/SuperAdmin avtomatik ega).
+  // returnStock: true — sotuvda ayirilgan mahsulotlar skladga qaytadi (standart: yo'q).
   @Post(':id/refund')
   refund(
     @Param('id') id: string,
@@ -277,7 +278,7 @@ export class OrdersController {
     if (!can(req?.user, 'refund')) {
       throw new ForbiddenException('Vozvrat qilish ruxsati yo‘q');
     }
-    return this.orders.refund(id, dto?.reason ?? '', req.user.id, req.user.name);
+    return this.orders.refund(id, dto?.reason ?? '', req.user.id, req.user.name, dto?.returnStock === true);
   }
 
   // Kassa: to'lov (bo'lib to'lash — qisman yoki to'liq). To'liq bo'lganda chek chiqadi.

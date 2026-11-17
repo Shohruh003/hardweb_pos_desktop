@@ -1,357 +1,341 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, In, Repository } from 'typeorm';
+import { Brackets, DataSource, EntityManager, In, Repository } from 'typeorm';
 import {
-  ProductEntity,
-  PurchaseEntity,
-  RecipeItemEntity,
-  SupplierPaymentEntity,
-} from '../entities';
-import { Product, Purchase, RecipeItem } from '@hardweb-pos/shared';
+  PRODUCT_NAME_REQUIRED_MESSAGE,
+  PRODUCT_NAME_TAKEN_MESSAGE,
+  PRODUCT_NOT_FOUND_MESSAGE,
+  Product,
+  RecipeItem,
+  STOCK_QTY_INVALID_MESSAGE,
+  STOCK_UNIT_LOCKED_MESSAGE,
+  StockMovement,
+  productInRecipesMessage,
+  roundStockCost,
+  roundStockQty,
+  stockNotEnoughMessage,
+} from '@hardweb-pos/shared';
+import { MenuItemEntity, ProductEntity, RecipeItemEntity } from '../entities';
+import { CreateProductDto, RecipeLineDto, UpdateProductDto } from './dto';
+import { InventoryActor } from './inventory-access';
+import {
+  PRODUCT_UNIT_INVALID_MESSAGE,
+  cleanName,
+  isProductUnit,
+  nameKey,
+  nonNegativeCost,
+  nonNegativeQty,
+  productOr404,
+} from './inventory-rules';
+import { MovementContext, StockLedgerService } from './stock-ledger.service';
 
-export interface CreateProductInput {
-  name: string;
-  unit: Product['unit'];
-  stock?: number;
-  minStock?: number;
-}
-
-export interface CreatePurchaseInput {
-  productId: string;
-  supplier: string;
+/** Buyurtmadagi taom: retsept bo'yicha ayirish va band qilish hisobi uchun */
+export interface OrderLine {
+  menuItemId: string;
   quantity: number;
-  unitPrice: number;
-  note?: string;
 }
 
+/**
+ * Sklad (ombor) — mahsulotlar, taom retseptlari va buyurtmalar bilan bog'liqlik: to'lovda sotuv
+ * harakatlari, chek vozvratida qaytarish, buyurtmada ortiqcha sotishni tekshirish. Sklad ixtiyoriy:
+ * mahsuloti yoki retsepti yo'q restoran uchun bu yerdagi hech bir tekshiruv va ayirish ishlamaydi.
+ * Kirim, vozvrat, chiqim, inventarizatsiya, ishlab chiqarish — StockOperationsService.
+ */
 @Injectable()
 export class InventoryService {
   constructor(
+    private readonly dataSource: DataSource,
     @InjectRepository(ProductEntity)
     private readonly products: Repository<ProductEntity>,
     @InjectRepository(RecipeItemEntity)
     private readonly recipes: Repository<RecipeItemEntity>,
-    @InjectRepository(PurchaseEntity)
-    private readonly purchases: Repository<PurchaseEntity>,
-    @InjectRepository(SupplierPaymentEntity)
-    private readonly supplierPayments: Repository<SupplierPaymentEntity>,
+    private readonly ledger: StockLedgerService,
   ) {}
 
-  // Ta'minotchiga to'lov qo'shish (qarzни kamaytiradi)
-  async addSupplierPayment(supplier: string, amount: number, note?: string) {
-    const row = this.supplierPayments.create({
-      supplier: supplier?.trim() || '',
-      amount,
-      note: note?.trim() || null,
-    });
-    return this.supplierPayments.save(row);
+  // =============================================================================================
+  // Mahsulotlar
+  // =============================================================================================
+
+  async listProducts(): Promise<Product[]> {
+    const list = await this.products.find();
+    const views = await this.productViews(this.products.manager, list, true);
+    return views.sort((a, b) => a.name.localeCompare(b.name, 'uz'));
   }
 
-  // Ta'minotchilar balansi: olingan (kirim) - to'langan = qarz
-  async getSupplierBalances() {
-    const [purchases, payments] = await Promise.all([
-      this.purchases.find(),
-      this.supplierPayments.find(),
-    ]);
-    const map = new Map<string, { supplier: string; purchased: number; paid: number; count: number }>();
-    const get = (name: string) => {
-      const key = name?.trim() || '—';
-      let cur = map.get(key);
-      if (!cur) {
-        cur = { supplier: key, purchased: 0, paid: 0, count: 0 };
-        map.set(key, cur);
+  /** Yangi mahsulot. Boshlang'ich qoldiq > 0 bo'lsa — 'initial' harakati (jurnal shundan boshlanadi) */
+  async createProduct(dto: CreateProductDto, actor: InventoryActor): Promise<Product> {
+    const name = cleanName(dto.name);
+    if (!name) throw new BadRequestException(PRODUCT_NAME_REQUIRED_MESSAGE);
+    if (!isProductUnit(dto.unit)) throw new BadRequestException(PRODUCT_UNIT_INVALID_MESSAGE);
+    const unit = dto.unit;
+    const stock = dto.stock == null ? 0 : nonNegativeQty(dto.stock, STOCK_QTY_INVALID_MESSAGE);
+    const minStock = dto.minStock == null ? 0 : nonNegativeQty(dto.minStock, STOCK_QTY_INVALID_MESSAGE);
+    const avgCost = dto.unitCost == null ? 0 : nonNegativeCost(dto.unitCost);
+    return this.dataSource.transaction(async (m) => {
+      await assertProductNameFree(m, name);
+      const product = await m.save(m.create(ProductEntity, { name, unit, stock: 0, minStock, avgCost }));
+      if (stock > 0) {
+        await this.ledger.applyMovements(m, [{ productId: product.id, type: 'initial', delta: stock }], {
+          userId: actor.id,
+          userName: actor.name,
+        });
       }
-      return cur;
-    };
-    for (const p of purchases) {
-      const c = get(p.supplier);
-      c.purchased += Number(p.total);
-      c.count += 1;
-    }
-    for (const pay of payments) {
-      get(pay.supplier).paid += Number(pay.amount);
-    }
-    return [...map.values()]
-      .map((c) => ({ ...c, debt: c.purchased - c.paid }))
-      .sort((a, b) => b.debt - a.debt);
+      return this.productView(m, product.id);
+    });
   }
 
-  private toProduct(p: ProductEntity): Product {
-    return {
+  /**
+   * Nom, birlik, minimal qoldiq. Qoldiq bu yerda O'ZGARMAYDI (faqat harakatlar orqali). Birlik — faqat
+   * harakatlari yo'q va qoldig'i 0 mahsulotda (aks holda eski miqdorlar boshqa birlikda bo'lib qoladi).
+   */
+  async updateProduct(id: string, dto: UpdateProductDto): Promise<Product> {
+    return this.dataSource.transaction(async (m) => {
+      const product = await productOr404(m, id);
+      const patch: Partial<ProductEntity> = {};
+      if (dto.name != null) {
+        const name = cleanName(dto.name);
+        if (!name) throw new BadRequestException(PRODUCT_NAME_REQUIRED_MESSAGE);
+        if (name !== product.name) {
+          await assertProductNameFree(m, name, id);
+          patch.name = name;
+        }
+      }
+      if (dto.minStock != null) patch.minStock = nonNegativeQty(dto.minStock, STOCK_QTY_INVALID_MESSAGE);
+      if (dto.unit != null && dto.unit !== product.unit) {
+        if (!isProductUnit(dto.unit)) throw new BadRequestException(PRODUCT_UNIT_INVALID_MESSAGE);
+        const [view] = await this.productViews(m, [product]);
+        if (view.hasHistory || view.stock !== 0) throw new BadRequestException(STOCK_UNIT_LOCKED_MESSAGE);
+        patch.unit = dto.unit;
+      }
+      if (Object.keys(patch).length) await m.update(ProductEntity, id, patch);
+      return this.productView(m, id);
+    });
+  }
+
+  /**
+   * Retseptda ishlatilgan mahsulot o'chirilmaydi. Harakatlari va kirimlari qoladi (nom nusxasi bilan).
+   * Yo'q mahsulotni o'chirish ham — ok.
+   */
+  async deleteProduct(id: string): Promise<{ ok: true }> {
+    return this.dataSource.transaction(async (m) => {
+      const dishes = (await recipeDishCounts(m, [id])).get(id) ?? 0;
+      if (dishes > 0) throw new BadRequestException(productInRecipesMessage(dishes));
+      // Qolgan retsept qatorlari — o'chirilgan taomlarniki (yetim): ular ham tozalanadi
+      await m.delete(RecipeItemEntity, { productId: id });
+      await m.delete(ProductEntity, { id });
+      return { ok: true as const };
+    });
+  }
+
+  /** Bitta mahsulot javob shaklida (tranzaksiya ichida ham) yoki 404 */
+  async productView(m: EntityManager, id: string): Promise<Product> {
+    const [view] = await this.productViews(m, [await productOr404(m, id)]);
+    return view;
+  }
+
+  /**
+   * Mahsulotlar javob shaklida: o'rtacha tannarx, nechta (mavjud) taom retseptida ishlatilgani va
+   * harakatlari borligi ('initial'dan boshqa harakat yoki kirim). all=true — butun ro'yxat (IN'siz).
+   */
+  private async productViews(m: EntityManager, list: ProductEntity[], all = false): Promise<Product[]> {
+    if (!list.length) return [];
+    const ids = all ? null : list.map((p) => p.id);
+    const dishes = await recipeDishCounts(m, ids);
+    const history = await productsWithHistory(m, ids);
+    return list.map((p) => ({
       id: p.id,
       name: p.name,
       unit: p.unit,
-      stock: Number(p.stock),
-      minStock: Number(p.minStock),
-    };
+      stock: roundStockQty(p.stock),
+      minStock: roundStockQty(p.minStock),
+      avgCost: roundStockCost(p.avgCost),
+      recipeCount: dishes.get(p.id) ?? 0,
+      hasHistory: history.has(p.id),
+    }));
   }
 
-  async listProducts(): Promise<Product[]> {
-    const list = await this.products.find({ order: { name: 'ASC' } });
-    return list.map((p) => this.toProduct(p));
+  // =============================================================================================
+  // Retseptlar
+  // =============================================================================================
+
+  // Bir taomning retsepti (mahsulot nomi/birligi bilan)
+  async getRecipe(menuItemId: string): Promise<RecipeItem[]> {
+    const items = await this.recipes.find({ where: { menuItemId } });
+    if (items.length === 0) return [];
+    const prods = await this.products.find({ where: { id: In(items.map((r) => r.productId)) } });
+    const byId = new Map(prods.map((p) => [p.id, p]));
+    return items.map((r) => ({
+      id: r.id,
+      menuItemId: r.menuItemId,
+      productId: r.productId,
+      amount: roundStockQty(r.amount),
+      productName: byId.get(r.productId)?.name,
+      productUnit: byId.get(r.productId)?.unit,
+    }));
   }
 
-  async createProduct(dto: CreateProductInput): Promise<Product> {
-    const p = this.products.create({
-      name: dto.name,
-      unit: dto.unit,
-      stock: dto.stock ?? 0,
-      minStock: dto.minStock ?? 0,
+  /**
+   * Taom retseptini to'liq almashtirish — bitta tranzaksiyada (yarim saqlangan retsept qolmasin).
+   * 0 / bo'sh qatorlar tashlab ketiladi, bir mahsulot ikki marta kelsa — miqdorlari qo'shiladi.
+   * Yo'q mahsulot — 404.
+   */
+  async setRecipe(menuItemId: string, items: RecipeLineDto[]): Promise<RecipeItem[]> {
+    const lines = new Map<string, number>();
+    for (const it of items || []) {
+      const amount = roundStockQty(it?.amount);
+      if (!it?.productId || !(amount > 0)) continue;
+      lines.set(it.productId, roundStockQty((lines.get(it.productId) ?? 0) + amount));
+    }
+    await this.dataSource.transaction(async (m) => {
+      if (lines.size) {
+        const found = await m.count(ProductEntity, { where: { id: In([...lines.keys()]) } });
+        if (found !== lines.size) throw new NotFoundException(PRODUCT_NOT_FOUND_MESSAGE);
+      }
+      await m.delete(RecipeItemEntity, { menuItemId });
+      if (lines.size) {
+        await m.save(
+          [...lines].map(([productId, amount]) => m.create(RecipeItemEntity, { menuItemId, productId, amount })),
+        );
+      }
     });
-    return this.toProduct(await this.products.save(p));
+    return this.getRecipe(menuItemId);
   }
 
-  async updateProduct(
-    id: string,
-    dto: Partial<CreateProductInput>,
-  ): Promise<Product> {
-    const p = await this.products.findOne({ where: { id } });
-    if (!p) throw new NotFoundException('Mahsulot topilmadi');
-    Object.assign(p, dto);
-    return this.toProduct(await this.products.save(p));
-  }
+  // =============================================================================================
+  // Buyurtmalar bilan bog'liqlik
+  // =============================================================================================
 
-  async deleteProduct(id: string): Promise<{ ok: boolean }> {
-    // Bu mahsulotga bog'liq retsept qatorlarini ham o'chiramiz
-    await this.recipes.delete({ productId: id });
-    await this.products.delete(id);
-    return { ok: true };
-  }
-
-  // Ombor qoldig'ini o'zgartirish (kirim +, chiqim -)
-  async adjustStock(id: string, delta: number): Promise<Product> {
-    const found = await this.products.findOne({ where: { id }, select: { id: true } });
-    if (!found) throw new NotFoundException('Mahsulot topilmadi');
-    await addStock(this.products.manager, id, Number(delta) || 0);
-    const p = await this.products.findOne({ where: { id } });
-    if (!p) throw new NotFoundException('Mahsulot topilmadi');
-    return this.toProduct(p);
-  }
-
-  // --- Kirim (ta'minot) ---
-  private toPurchase(p: PurchaseEntity): Purchase {
-    return {
-      id: p.id,
-      productId: p.productId,
-      productName: p.productName,
-      unit: p.unit,
-      supplier: p.supplier,
-      quantity: Number(p.quantity),
-      unitPrice: Number(p.unitPrice),
-      total: Number(p.total),
-      note: p.note,
-      createdAt: p.createdAt?.toISOString?.() ?? String(p.createdAt),
-    };
-  }
-
-  async listPurchases(productId?: string): Promise<Purchase[]> {
-    const where = productId ? { productId } : {};
-    const list = await this.purchases.find({
-      where,
-      order: { createdAt: 'DESC' },
-      take: 200,
-    });
-    return list.map((p) => this.toPurchase(p));
-  }
-
-  // Kirim qo'shish — mahsulot ombori shu miqdorga oshadi + kirim tarixga yoziladi
-  async createPurchase(dto: CreatePurchaseInput): Promise<Purchase> {
-    const product = await this.products.findOne({ where: { id: dto.productId } });
-    if (!product) throw new NotFoundException('Mahsulot topilmadi');
-    const quantity = Number(dto.quantity) || 0;
-    const unitPrice = Number(dto.unitPrice) || 0;
-    if (quantity <= 0) throw new BadRequestException('Miqdor 0 dan katta bo‘lishi kerak');
-
-    const purchase = this.purchases.create({
-      productId: product.id,
-      productName: product.name,
-      unit: product.unit,
-      supplier: (dto.supplier || '').trim(),
-      quantity,
-      unitPrice,
-      total: Math.round(quantity * unitPrice * 100) / 100,
-      note: dto.note?.trim() || null,
-    });
-    const saved = await this.purchases.save(purchase);
-    // Ombor qoldig'ini oshiramiz (bitta SQL — parallel sotuv/tuzatish yo'qolmaydi)
-    await addStock(this.products.manager, product.id, quantity);
-    return this.toPurchase(saved);
-  }
-
-  // Vozvrat — ta'minotchiga qaytarish: ombor kamayadi + qarz kamayadi
-  // (manfiy kirim sifatida yoziladi, shuning uchun balansda "olingan" kamayadi).
-  async createReturn(dto: CreatePurchaseInput): Promise<Purchase> {
-    const product = await this.products.findOne({ where: { id: dto.productId } });
-    if (!product) throw new NotFoundException('Mahsulot topilmadi');
-    const quantity = Number(dto.quantity) || 0;
-    const unitPrice = Number(dto.unitPrice) || 0;
-    if (quantity <= 0) throw new BadRequestException('Miqdor 0 dan katta bo‘lishi kerak');
-
-    const ret = this.purchases.create({
-      productId: product.id,
-      productName: product.name,
-      unit: product.unit,
-      supplier: (dto.supplier || '').trim(),
-      quantity: -quantity,
-      unitPrice,
-      total: -Math.round(quantity * unitPrice * 100) / 100,
-      note: `↩️ Vozvrat${dto.note ? ' · ' + dto.note.trim() : ''}`,
-    });
-    const saved = await this.purchases.save(ret);
-    await addStock(this.products.manager, product.id, -quantity);
-    return this.toPurchase(saved);
-  }
-
-  // Ombor yetarliligini tekshirish (ortiqcha sotishни oldini olish).
-  // newItems — yangi qo'shilayotgan taomlar; reservedItems — barcha ochiq
-  // buyurtmalarda band qilingan taomlar (hali to'lanmagan). Yetmasa xato beradi.
-  async assertStockAvailable(
-    newItems: { menuItemId: string; quantity: number }[],
-    reservedItems: { menuItemId: string; quantity: number }[],
-  ): Promise<void> {
-    const allMenuIds = [
-      ...new Set(
-        [...newItems, ...reservedItems].map((i) => i.menuItemId),
-      ),
-    ];
+  /**
+   * Ortiqcha sotishni oldini olish (buyurtma yaratishda): yangi taomlarga kerakli mahsulot qoldiq
+   * minus ochiq buyurtmalarda band qilinganidan oshmasin. Faqat retseptli taomlar — retseptsiz taom
+   * va mahsulotsiz restoran uchun tekshiruv yo'q.
+   */
+  async assertStockAvailable(newItems: OrderLine[], reservedItems: OrderLine[]): Promise<void> {
+    const allMenuIds = [...new Set([...newItems, ...reservedItems].map((i) => i.menuItemId))];
     if (allMenuIds.length === 0) return;
-    const recipes = await this.recipes.find({
-      where: { menuItemId: In(allMenuIds) },
-    });
+    const recipes = await this.recipes.find({ where: { menuItemId: In(allMenuIds) } });
     if (recipes.length === 0) return; // retseptsiz taomlar — cheklovsiz
 
-    const recByMenu = new Map<string, RecipeItemEntity[]>();
-    for (const r of recipes) {
-      const arr = recByMenu.get(r.menuItemId) ?? [];
-      arr.push(r);
-      recByMenu.set(r.menuItemId, arr);
-    }
-    const sumNeed = (items: { menuItemId: string; quantity: number }[]) => {
-      const m = new Map<string, number>();
-      for (const it of items) {
-        const rs = recByMenu.get(it.menuItemId);
-        if (!rs) continue;
-        for (const r of rs) {
-          m.set(
-            r.productId,
-            (m.get(r.productId) || 0) + Number(r.amount) * Number(it.quantity),
-          );
-        }
-      }
-      return m;
-    };
-
-    const need = sumNeed(newItems);
+    const need = needByProduct(recipes, newItems);
     if (need.size === 0) return;
-    const reserved = sumNeed(reservedItems);
+    const reserved = needByProduct(recipes, reservedItems);
 
-    const products = await this.products.find({
-      where: { id: In([...need.keys()]) },
-    });
+    const products = await this.products.find({ where: { id: In([...need.keys()]) } });
     const byId = new Map(products.map((p) => [p.id, p]));
     for (const [productId, needed] of need) {
       const p = byId.get(productId);
       if (!p) continue;
       const available = Number(p.stock) - (reserved.get(productId) || 0);
       if (needed > available + 1e-6) {
-        const av = Math.max(0, Math.round(available * 1000) / 1000);
-        throw new BadRequestException(
-          `Omborda yetarli emas: ${p.name} — mavjud ${av} ${p.unit}`,
-        );
+        throw new BadRequestException(stockNotEnoughMessage(p.name, available, p.unit));
       }
     }
   }
 
-  // Bir taomning retsepti (mahsulot nomi/birligi bilan)
-  async getRecipe(menuItemId: string): Promise<RecipeItem[]> {
-    const items = await this.recipes.find({ where: { menuItemId } });
-    if (items.length === 0) return [];
-    const prods = await this.products.find({
-      where: { id: In(items.map((r) => r.productId)) },
-    });
-    const byId = new Map(prods.map((p) => [p.id, p]));
-    return items.map((r) => ({
-      id: r.id,
-      menuItemId: r.menuItemId,
-      productId: r.productId,
-      amount: Number(r.amount),
-      productName: byId.get(r.productId)?.name,
-      productUnit: byId.get(r.productId)?.unit,
-    }));
-  }
-
-  // Taom retseptini to'liq almashtirish (eskilarini o'chirib, yangilarini yozamiz)
-  async setRecipe(
-    menuItemId: string,
-    items: { productId: string; amount: number }[],
-  ): Promise<RecipeItem[]> {
-    await this.recipes.delete({ menuItemId });
-    const valid = (items || []).filter(
-      (i) => i.productId && Number(i.amount) > 0,
-    );
-    if (valid.length) {
-      await this.recipes.save(
-        valid.map((i) =>
-          this.recipes.create({
-            menuItemId,
-            productId: i.productId,
-            amount: Number(i.amount),
-          }),
-        ),
-      );
-    }
-    return this.getRecipe(menuItemId);
-  }
-
-  // Taom(lar) sotilganda mahsulotlarni skladdan ayirish (to'lov tranzaksiyasida).
-  // items: buyurtmadagi taomlar (menuItemId + quantity).
-  async deductForOrder(
-    manager: EntityManager,
-    items: { menuItemId: string; quantity: number }[],
-  ): Promise<void> {
+  /**
+   * Sotuv (to'lov tranzaksiyasida): taomlar retsepti bo'yicha har mahsulotga bitta 'sale' harakati
+   * (tannarx — o'rtacha). Qoldiq manfiyga tushishi mumkin: to'lov hech qachon sklad sababli to'xtamaydi.
+   * ctx: kassir, reference = buyurtma id, referenceLabel = buyurtma nomi (orderStockLabel).
+   */
+  async deductForOrder(manager: EntityManager, items: OrderLine[], ctx: MovementContext): Promise<StockMovement[]> {
     const menuIds = [...new Set((items || []).map((i) => i.menuItemId))];
-    if (menuIds.length === 0) return;
-    const recipes = await manager.find(RecipeItemEntity, {
-      where: { menuItemId: In(menuIds) },
-    });
-    if (recipes.length === 0) return;
+    if (menuIds.length === 0) return [];
+    const recipes = await manager.find(RecipeItemEntity, { where: { menuItemId: In(menuIds) } });
+    if (recipes.length === 0) return [];
+    const entries = [...needByProduct(recipes, items)].map(([productId, amount]) => ({
+      productId,
+      type: 'sale' as const,
+      delta: -roundStockQty(amount),
+    }));
+    return this.ledger.applyMovements(manager, entries, ctx);
+  }
 
-    // Har mahsulot bo'yicha jami ayiriladigan miqdorni yig'amiz
-    const need = new Map<string, number>();
-    for (const it of items) {
-      const qty = Number(it.quantity) || 0;
-      for (const r of recipes) {
-        if (r.menuItemId !== it.menuItemId) continue;
-        need.set(
-          r.productId,
-          (need.get(r.productId) || 0) + Number(r.amount) * qty,
-        );
-      }
+  /**
+   * Chek vozvratida mahsulotlarni skladga qaytarish (returnStock): buyurtmaning 'sale' harakatlari aynan
+   * teskari 'refund' harakatlari bilan — o'sha mahsulotlar, miqdorlar va tannarx. Sotuv harakati yo'q
+   * (retseptsiz taomlar yoki jurnaldan oldingi chek) — hech narsa. Ikkinchi marta qaytarilmaydi.
+   */
+  async returnSaleStock(manager: EntityManager, orderId: string, ctx: MovementContext): Promise<StockMovement[]> {
+    if ((await this.ledger.findByReference(manager, orderId, 'refund')).length) return [];
+    const sales = await this.ledger.findByReference(manager, orderId, 'sale');
+    const byProduct = new Map<string, { qty: number; cost: number }>();
+    for (const s of sales) {
+      const qty = -Number(s.quantity) || 0;
+      const cur = byProduct.get(s.productId) ?? { qty: 0, cost: 0 };
+      cur.qty += qty;
+      cur.cost += qty * (Number(s.unitCost) || 0);
+      byProduct.set(s.productId, cur);
     }
-    if (need.size === 0) return;
+    const entries = [...byProduct].map(([productId, v]) => ({
+      productId,
+      type: 'refund' as const,
+      delta: roundStockQty(v.qty),
+      unitCost: v.qty ? v.cost / v.qty : 0,
+    }));
+    return this.ledger.applyMovements(manager, entries, ctx);
+  }
+}
 
-    for (const [productId, amount] of need) {
-      if (amount) await addStock(manager, productId, -amount);
+// ---- Yordamchilar ----
+
+/** Retseptlar bo'yicha har mahsulotga kerakli miqdor (taom soni × retsept miqdori, yig'indi) */
+function needByProduct(recipes: RecipeItemEntity[], items: OrderLine[]): Map<string, number> {
+  const byMenu = new Map<string, RecipeItemEntity[]>();
+  for (const r of recipes) {
+    const arr = byMenu.get(r.menuItemId);
+    if (arr) arr.push(r);
+    else byMenu.set(r.menuItemId, [r]);
+  }
+  const need = new Map<string, number>();
+  for (const it of items || []) {
+    const qty = Number(it.quantity) || 0;
+    for (const r of byMenu.get(it.menuItemId) ?? []) {
+      need.set(r.productId, (need.get(r.productId) || 0) + Number(r.amount) * qty);
     }
+  }
+  return need;
+}
+
+/** Mahsulot nomi band emas (katta-kichik harf va bo'shliqlarsiz) — aks holda 400 */
+async function assertProductNameFree(m: EntityManager, name: string, exceptId?: string): Promise<void> {
+  const key = nameKey(name);
+  const rows = await m.find(ProductEntity, { select: { id: true, name: true } });
+  if (rows.some((p) => p.id !== exceptId && nameKey(p.name) === key)) {
+    throw new BadRequestException(PRODUCT_NAME_TAKEN_MESSAGE);
   }
 }
 
 /**
- * Qoldiqni o'zgartirish — bitta atomar SQL (UPDATE ... SET stock = stock + d). Oldin "o'qish — hisoblash —
- * yozish" edi: sklad tuzatishi va to'lovdagi ayirish bir vaqtda bo'lsa, bittasi yo'qolardi.
- * Miqdor 3 xonagacha yaxlitlanadi (ustun shkalasi — 0.1 + 0.2 qoldiqlari to'planmasin).
+ * Mahsulot nechta taom retseptida ishlatilgan — faqat mavjud taomlar (o'chirilgan taomning qolib ketgan
+ * retsept qatorlari hisobga olinmaydi). ids = null — barcha mahsulotlar.
  */
-async function addStock(manager: EntityManager, productId: string, delta: number): Promise<void> {
-  if (!Number.isFinite(delta) || delta === 0) return;
-  await manager
-    .createQueryBuilder()
-    .update(ProductEntity)
-    .set({ stock: () => 'ROUND(COALESCE(stock, 0) + :stockDelta, 3)' })
-    .setParameter('stockDelta', delta)
-    .where('id = :productId', { productId })
-    .execute();
+async function recipeDishCounts(m: EntityManager, ids: string[] | null): Promise<Map<string, number>> {
+  if (ids && !ids.length) return new Map();
+  const qb = m
+    .createQueryBuilder(RecipeItemEntity, 'r')
+    .innerJoin(MenuItemEntity, 'mi', 'mi.id = r.menuItemId')
+    .select('r.productId', 'productId')
+    .addSelect('COUNT(DISTINCT r.menuItemId)', 'dishes')
+    .groupBy('r.productId');
+  if (ids) qb.where('r.productId IN (:...ids)', { ids });
+  const rows = await qb.getRawMany<{ productId: string; dishes: number | string }>();
+  return new Map(rows.map((r) => [r.productId, Number(r.dishes) || 0]));
+}
+
+/** Harakatlari bor mahsulotlar: 'initial'dan boshqa harakat yoki kirim/vozvrat qatori. ids = null — hammasi */
+async function productsWithHistory(m: EntityManager, ids: string[] | null): Promise<Set<string>> {
+  if (ids && !ids.length) return new Set();
+  const qb = m
+    .createQueryBuilder(ProductEntity, 'p')
+    .select('p.id', 'id')
+    .where(
+      new Brackets((w) =>
+        w
+          .where("EXISTS (SELECT 1 FROM stock_movements sm WHERE sm.product_id = p.id AND sm.type <> 'initial')")
+          .orWhere('EXISTS (SELECT 1 FROM purchases pu WHERE pu.product_id = p.id)'),
+      ),
+    );
+  if (ids) qb.andWhere('p.id IN (:...ids)', { ids });
+  const rows = await qb.getRawMany<{ id: string }>();
+  return new Set(rows.map((r) => r.id));
 }

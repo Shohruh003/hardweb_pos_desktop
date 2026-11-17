@@ -7,3 +7,4 @@ export * from './reports';
 export * from './sync';
 export * from './money';
 export * from './orderFlow';
+export * from './inventory';

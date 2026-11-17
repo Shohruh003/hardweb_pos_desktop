@@ -8,6 +8,7 @@ import { In, Raw, Repository } from 'typeorm';
 import {
   ExpenseEntity,
   OrderEntity,
+  ProductEntity,
   SettingsEntity,
 } from '../entities';
 import {
@@ -16,6 +17,7 @@ import {
   OrderStatus,
   OrderType,
   SETTABLE_ORDER_STATUSES,
+  formatStockQty,
   roundSum,
 } from '@hardweb-pos/shared';
 import type { CashSummary, OrderVoidedPayload, VoidReport, WaiterShareReport } from '@hardweb-pos/shared';
@@ -72,6 +74,7 @@ const TELEGRAM_TEXT_LIMIT = 3900;
 const REPORT_REFUNDS_MAX = 10;
 const REPORT_VOIDS_MAX = 8;
 const REPORT_WAITERS_MAX = 15;
+const REPORT_LOW_STOCK_MAX = 10;
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -391,6 +394,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
             this.reports.waiterShares(reportDay, sharePercent),
           )
         : null;
+    const lowStock = (await this.optionalPart('kam qolgan mahsulotlar', () => this.lowStockLine())) ?? '';
 
     // Vozvratlar — mahsulotlari va umumiy summasi bilan
     const refundedOrders = await this.orders.find({
@@ -506,6 +510,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       voidHead +
       (details ? voidDetail() : '') +
       shareBlock +
+      lowStock +
       `━━━━━━━━━━━━\n` +
       `✅ Sof (rasxodsiz): <b>${som(revenue - expenseTotal)}</b>` +
       (openCount > 0
@@ -516,6 +521,24 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     // Telegram 4096 belgidan uzun xabarni rad etadi — sig'masa tafsilot ro'yxatlarisiz
     const full = build(true);
     return full.length <= TELEGRAM_TEXT_LIMIT ? full : build(false);
+  }
+
+  /**
+   * Sklad (ixtiyoriy): qoldig'i minimal darajada yoki undan kam mahsulotlar (minimal qoldiq > 0) —
+   * "⚠️ Kam qolgan: Guruch 2 kg, Go‘sht 0,5 kg …" (10 tagacha). Bunday mahsulot yo'q — bo'sh.
+   */
+  private async lowStockLine(): Promise<string> {
+    const rows = await this.orders.manager
+      .createQueryBuilder(ProductEntity, 'p')
+      .where('p.minStock > 0 AND p.stock <= p.minStock')
+      .getMany();
+    if (!rows.length) return '';
+    rows.sort((a, b) => a.name.localeCompare(b.name, 'uz'));
+    const list = rows
+      .slice(0, REPORT_LOW_STOCK_MAX)
+      .map((p) => `${escapeHtml(p.name)} ${formatStockQty(p.stock)} ${p.unit}`)
+      .join(', ');
+    return `\n⚠️ <b>Kam qolgan:</b> ${list}${rows.length > REPORT_LOW_STOCK_MAX ? ' …' : ''}\n`;
   }
 }
 

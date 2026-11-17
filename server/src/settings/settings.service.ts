@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PaymentMethod, PosSettings, clampPercent, roundSum } from '@hardweb-pos/shared';
-import { SettingsEntity } from '../entities';
+import { ProductEntity, SettingsEntity } from '../entities';
 import { normalizeHallList } from '../tables/hall-order';
 import { DELIVERY_FEE_MAX, normalizePaymentMethods } from '../orders/order-rules';
 
@@ -41,6 +41,8 @@ export class SettingsService {
   constructor(
     @InjectRepository(SettingsEntity)
     private readonly repo: Repository<SettingsEntity>,
+    @InjectRepository(ProductEntity)
+    private readonly products: Repository<ProductEntity>,
   ) {}
 
   async get(): Promise<SettingsEntity> {
@@ -80,7 +82,9 @@ export class SettingsService {
   /** POS ekranlari uchun ochiq sozlamalar (GET /settings/pos) — maxfiy maydonlarsiz */
   async getPos(): Promise<PosSettings> {
     const s = await this.get();
-    return toPosSettings(s);
+    // Sklad ixtiyoriy modul: mahsulot qo'shilgan bo'lsa — ishlatiladi (xodimning ruxsatidan qat'i nazar ma'lum)
+    const skladEnabled = (await this.products.count()) > 0;
+    return { ...toPosSettings(s), skladEnabled };
   }
 
   /** GET /settings — sozlamalar qatori, xaritalar/ro'yxatlar toza ko'rinishda (to'lov usullari — doim ro'yxat) */

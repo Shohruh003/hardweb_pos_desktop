@@ -67,7 +67,6 @@ export function MenuTab() {
   // Retsept serverdan yuklandimi — yuklanmagan retsept saqlashda o'chib ketmasin
   const [recipeLoaded, setRecipeLoaded] = useState(true);
   const [stations, setStations] = useState<Station[]>([]);
-  const [purchases, setPurchases] = useState<{ productId: string; total: number; quantity: number }[]>([]);
   // Qatordagi tez amallar (rasm, mavjud, sevimli) holati va xabarlari
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
   const [actionError, setActionError] = useState('');
@@ -78,18 +77,16 @@ export function MenuTab() {
 
   async function load() {
     try {
-      const [c, i, p, st, pur] = await Promise.all([
+      const [c, i, p, st] = await Promise.all([
         api.get<Category[]>('/menu/categories'),
         api.get<MenuItem[]>('/menu/all-items'),
         api.get<Product[]>('/inventory/products').catch(() => [] as Product[]),
         api.get<Station[]>('/stations').catch(() => [] as Station[]),
-        api.get<{ productId: string; total: number; quantity: number }[]>('/inventory/purchases').catch(() => []),
       ]);
       setCategories(c);
       setItems(i);
-      setProducts(p);
+      setProducts(Array.isArray(p) ? p : []);
       setStations(st);
-      setPurchases(pur);
       setLoadError('');
     } catch (e) {
       setLoadError((e as Error)?.message || 'Menyu yuklanmadi');
@@ -115,19 +112,12 @@ export function MenuTab() {
     };
   }, []);
 
-  // O'rtacha tannarx (себестоимость ср.) — kirimlardan og'irlashgan o'rtacha narx
-  const avgCost = useMemo(() => {
-    const agg = new Map<string, { sum: number; qty: number }>();
-    for (const pr of purchases) {
-      const a = agg.get(pr.productId) || { sum: 0, qty: 0 };
-      a.sum += Number(pr.total);
-      a.qty += Number(pr.quantity);
-      agg.set(pr.productId, a);
-    }
-    const m = new Map<string, number>();
-    for (const [pid, a] of agg) m.set(pid, a.qty > 0 ? a.sum / a.qty : 0);
-    return m;
-  }, [purchases]);
+  // Mahsulotning o'rtacha tannarxi (себестоимость ср.) — server hisoblaydi (kirim, ishlab chiqarish;
+  // vozvrat va sotuv o'zgartirmaydi). Kirimlar ro'yxatidan qayta hisoblanmaydi.
+  const avgCost = useMemo(
+    () => new Map(products.map((p) => [p.id, Math.max(0, Number(p.avgCost) || 0)] as const)),
+    [products],
+  );
 
   const categoryName = useMemo(() => new Map(categories.map((c) => [c.id, c.name] as const)), [categories]);
 
@@ -226,9 +216,17 @@ export function MenuTab() {
         const rows = recipe
           .filter((r) => r.productId && Number(r.amount) > 0)
           .map((r) => ({ productId: r.productId, amount: Number(r.amount) }));
-        await api.put(`/inventory/recipe/${menuItemId}`, { items: rows }).catch(() => {
-          flashOk('Taom saqlandi, lekin retsept saqlanmadi — qayta urinib ko‘ring');
-        });
+        try {
+          await api.put(`/inventory/recipe/${menuItemId}`, { items: rows });
+        } catch (re) {
+          // Taom saqlandi, retsept — yo'q. Oyna ochiq qoladi (kiritilgan retsept yo'qolmasin) va endi
+          // tahrirlash rejimida: qayta "Saqlash" taomni ikkinchi marta yaratmaydi, retseptni yana yuboradi.
+          // (Avval ogohlantirish darrov "saqlandi ✓" bilan almashib, ko'rinmay qolardi.)
+          setForm((f) => (f ? { ...f, id: menuItemId } : f));
+          setFormError(`Taom saqlandi, lekin retsept saqlanmadi: ${errText(re, 'xato')}. «Saqlash»ni qayta bosing.`);
+          void load();
+          return;
+        }
       }
       setForm(null);
       setRecipe([]);
