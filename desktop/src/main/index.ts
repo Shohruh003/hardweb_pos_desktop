@@ -37,6 +37,17 @@ import {
 } from './printer';
 import type { Order, Receipt } from '@hardweb-pos/shared';
 
+// DEMO (mock) build — o'z papkasi (0.3.3): real o'rnatmaning sozlamalari (server manzili, printer,
+// GPU) va "bitta nusxa" qulfi bilan aralashmasin — kassada adashib DEMO ochilsa ham server ishlayveradi.
+// Hamma narsadan OLDIN (userData birinchi marta o'qilishidan oldin) o'rnatiladi.
+if (__MOCK__) {
+  try {
+    app.setPath('userData', join(app.getPath('appData'), 'DasturXon-DEMO'));
+  } catch {
+    /* ignore */
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Diagnostika logi: userData/launch-debug.log (ishga tushish, server holati, xatolar)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -776,13 +787,17 @@ function stopEmbeddedServer(): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Bazaning zaxira nusxalari: userData/data/backups/dasturxon-YYYYMMDD-HHMMSS.db (eng yangi 14 tasi).
+// Bazaning zaxira nusxalari: userData/data/backups/dasturxon-YYYYMMDD-HHMMSS.db. Saqlanadi: eng yangi
+// BACKUP_KEEP_RECENT tasi + zaxirasi bor oxirgi BACKUP_KEEP_DAYS kunning har biridan eng yangisi (0.3.3:
+// oldin faqat 14 ta — kompyuter kuniga bir necha marta qayta yoqilsa, bir necha kunlik zaxira qolardi).
+// Kassadan tashqari nusxa — server har kuni Telegram'ga yuboradi (TelegramBackupService).
 // 1) Har ishga tushishda server KO'TARILISHIDAN OLDIN fayl nusxalanadi (sxema sinxronlash yoki
 //    yangilanishdagi xatodan sug'urta; kassa har kuni yoqilsa — kunlik zaxira).
 // 2) Kassa kechayu kunduz yoqiq tursa — tunda (03:00–05:59) server ishlab turgan paytda SQLite
 //    "online backup" bilan (bundled node.exe + better-sqlite3), oxirgi zaxiradan 20 soat o'tgan bo'lsa.
 // ─────────────────────────────────────────────────────────────────────────────
-const BACKUP_KEEP = 14;
+const BACKUP_KEEP_RECENT = 7;
+const BACKUP_KEEP_DAYS = 14;
 const BACKUP_NAME_RE = /^dasturxon-\d{8}-\d{6}\.db$/;
 // SQLite yordamchi fayllari (yarim qolgan tranzaksiya jurnali / WAL) — bo'lsa bazaga qo'shib saqlanadi
 const DB_SIDE_FILES = ['-journal', '-wal', '-shm'];
@@ -808,14 +823,28 @@ function removeQuietly(file: string): void {
 }
 
 /**
- * Eng yangi BACKUP_KEEP tasidan eskilarini (yordamchi fayllari bilan) o'chiradi; uzilib qolgan
+ * Saqlanadigan zaxiralar (nomlar vaqt bo'yicha o'sib boradi): eng yangi BACKUP_KEEP_RECENT tasi va
+ * zaxirasi bor oxirgi BACKUP_KEEP_DAYS kunning har biridan eng yangisi. Qolganlari o'chiriladi.
+ */
+export function backupsToKeep(names: string[]): Set<string> {
+  const files = names.filter((f) => BACKUP_NAME_RE.test(f)).sort(); // eskisi oldinda
+  const keep = new Set(files.slice(-BACKUP_KEEP_RECENT));
+  const newestOfDay = new Map<string, string>();
+  for (const f of files) newestOfDay.set(f.slice('dasturxon-'.length, 'dasturxon-'.length + 8), f);
+  const days = [...newestOfDay.keys()].sort().slice(-BACKUP_KEEP_DAYS);
+  for (const d of days) keep.add(newestOfDay.get(d)!);
+  return keep;
+}
+
+/**
+ * Saqlanmaydigan zaxiralarni (yordamchi fayllari bilan) o'chiradi — backupsToKeep; uzilib qolgan
  * nusxalarning qoldiqlarini (eski ".part" va asosiy fayli yo'q yordamchi fayllar) tozalaydi.
  */
 function pruneBackups(dir: string): void {
   try {
     const all = readdirSync(dir);
-    const files = all.filter((f) => BACKUP_NAME_RE.test(f)).sort(); // nomdagi vaqt bo'yicha — eskisi oldinda
-    for (const f of files.slice(0, Math.max(0, files.length - BACKUP_KEEP))) {
+    const keep = backupsToKeep(all);
+    for (const f of all.filter((x) => BACKUP_NAME_RE.test(x) && !keep.has(x))) {
       for (const suffix of ['', ...DB_SIDE_FILES]) removeQuietly(join(dir, f + suffix));
     }
     const now = Date.now();

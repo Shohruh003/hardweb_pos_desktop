@@ -254,7 +254,10 @@ export function PrintFailedToasts({
               {!compact && (
                 <div className="text-xs text-muted mt-1">
                   {formatTime(t.at)}
-                  {t.host ? ` · printer ${t.host}` : ''} · printer yoqilganini, qog‘oz va kabelni tekshiring
+                  {/* Printer manzili yo'q — bo'lim o'chirilgan (printer emas, menyu sozlamasi muammosi) */}
+                  {t.host
+                    ? ` · printer ${t.host} · printer yoqilganini, qog‘oz va kabelni tekshiring`
+                    : ' · Menyu → taomning bo‘limini tekshiring'}
                 </div>
               )}
             </div>

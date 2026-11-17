@@ -1,63 +1,77 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { OrderRequestEntity } from '../entities';
+import { sqliteUtc } from '../reports/report-dates';
 
-// Ma'lumotlarni saqlash siyosati: cheklar/buyurtmalar tarixidan faqat
-// oxirgi 2 oyliknikini saqlaymiz, undan eskisi avtomatik o'chiriladi.
+// Texnik tozalash (0.3.3). BIZNES MA'LUMOTLARI HECH QACHON O'CHIRILMAYDI: buyurtmalar, taomlar, to'lovlar,
+// fiskal cheklar, aksiz kodlari, rasxodlar — ega istalgan kungi chekni istalgan vaqtda ko'ra olishi kerak
+// (0.3.2 gacha 2 oydan eskilari har kuni o'chirilardi). Bu yerda faqat yordamchi jadvallar tozalanadi:
+//  • order_requests — takroriy so'rov (clientRequestId) yozuvlari: OrdersService ularni 24 soat ishlatadi,
+//    48 soatdan eskilari o'chiriladi.
+// print_jobs (bo'lim cheklari navbati) bu yerda TOZALANMAYDI: StationPrintService o'zi kuniga bir marta
+// 7 kundan eski chiqqan / bekor qilingan / muddati o'tgan cheklarni o'chiradi (navbatdagi va chop
+// etilayotgan cheklarga tegmaydi) — ikkinchi tozalash faqat takror bo'lardi.
+
+/** Server ishga tushgach birinchi tozalash */
+const FIRST_RUN_MS = 10_000;
+/** Keyin — kuniga bir marta */
+const EVERY_MS = 24 * 60 * 60_000;
+/** order_requests yozuvlari shuncha saqlanadi (ishlatilishi — 24 soat) */
+const ORDER_REQUEST_KEEP_MS = 48 * 60 * 60_000;
+
+const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
 @Injectable()
-export class MaintenanceService implements OnModuleInit {
+export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger('Maintenance');
-  private readonly RETENTION_MONTHS = 2;
+  private firstTimer: NodeJS.Timeout | null = null;
+  private interval: NodeJS.Timeout | null = null;
+  private running = false;
 
   constructor(private readonly dataSource: DataSource) {}
 
   onModuleInit() {
-    // Boshda bir marta + keyin har 24 soatda
-    setTimeout(() => this.cleanup(), 10 * 1000);
-    setInterval(() => this.cleanup(), 24 * 60 * 60 * 1000);
+    this.firstTimer = setTimeout(() => {
+      this.firstTimer = null;
+      void this.housekeeping();
+    }, FIRST_RUN_MS);
+    this.firstTimer.unref?.();
+    this.interval = setInterval(() => void this.housekeeping(), EVERY_MS);
+    this.interval.unref?.();
   }
 
-  async cleanup() {
-    const cutoff = new Date();
-    cutoff.setMonth(cutoff.getMonth() - this.RETENTION_MONTHS);
-    const iso = cutoff.toISOString();
-    // Eski buyurtmalar — LEKIN qaytarilmagan qarzi ("Qarzga") bor cheklar saqlanadi (B34): aks holda
-    // 2 oydan eski qarz chek bilan birga qarzlar ro'yxatidan jimgina yo'qolardi
-    const oldOrders = `SELECT id FROM orders WHERE opened_at < ? AND id NOT IN (
-      SELECT p.order_id FROM payments p WHERE p.debtor_name IS NOT NULL AND p.debt_repaid_at IS NULL)`;
+  onModuleDestroy() {
+    if (this.firstTimer) clearTimeout(this.firstTimer);
+    if (this.interval) clearInterval(this.interval);
+    this.firstTimer = this.interval = null;
+  }
+
+  /**
+   * Bitta tozalash o'tishi. Hech qachon reject qilmaydi — xato faqat jurnalga yoziladi (server yiqilmaydi).
+   * Hozir bitta DELETE — o'zi atomar. Bu yerda dataSource.transaction() ATAYLAB ishlatilmaydi: SQLite'da
+   * TypeORM bitta ulanish (bitta query runner) bilan ishlaydi va fondagi tranzaksiya shu payt ochiq
+   * turgan boshqa tranzaksiya (masalan buyurtma yaratish) ichiga SAVEPOINT bo'lib kirib qolardi — biri
+   * bekor qilinsa (rollback), ikkinchisining yarim ishi saqlanib qolishi mumkin. Bir nechta bog'liq
+   * amal kerak bo'lsa — bitta SQL ifodasiga birlashtiring yoki OrdersService navbati orqali bajaring.
+   */
+  async housekeeping(now: Date = new Date()): Promise<void> {
+    if (this.running) return;
+    this.running = true;
     try {
-      // Bog'liq jadvallardan boshlab, keyin buyurtmalarni o'chiramiz (FK tartibi)
-      await this.dataSource.query(
-        `DELETE FROM excise_codes WHERE order_item_id IN (
-           SELECT oi.id FROM order_items oi WHERE oi.order_id IN (${oldOrders}))`,
-        [iso],
-      );
-      await this.dataSource.query(
-        `DELETE FROM fiscal_docs WHERE order_id IN (${oldOrders})`,
-        [iso],
-      );
-      await this.dataSource.query(
-        `DELETE FROM payments WHERE order_id IN (${oldOrders})`,
-        [iso],
-      );
-      await this.dataSource.query(
-        `DELETE FROM order_items WHERE order_id IN (${oldOrders})`,
-        [iso],
-      );
-      const res = await this.dataSource.query(
-        `DELETE FROM orders WHERE id IN (${oldOrders})`,
-        [iso],
-      );
-      const count = Array.isArray(res) ? res.length : res?.affected ?? 0;
-      // Eski rasxodlarni ham tozalaymiz
-      await this.dataSource.query(
-        `DELETE FROM expenses WHERE created_at < ?`,
-        [iso],
-      );
-      this.logger.log(
-        `Tozalash: 2 oydan eski ma'lumotlar o'chirildi (buyurtmalar ~${count})`,
-      );
+      const cutoff = sqliteUtc(new Date(now.getTime() - ORDER_REQUEST_KEEP_MS));
+      const res = await this.dataSource
+        .createQueryBuilder()
+        .delete()
+        .from(OrderRequestEntity)
+        .where('datetime(created_at) < datetime(:cutoff)', { cutoff })
+        .execute();
+      if (res.affected) {
+        this.logger.log(`Tozalash: 48 soatdan eski ${res.affected} ta takroriy so‘rov yozuvi o‘chirildi`);
+      }
     } catch (e) {
-      this.logger.warn(`Tozalash xatosi: ${(e as Error).message}`);
+      this.logger.warn(`Tozalash xatosi: ${errorText(e)}`);
+    } finally {
+      this.running = false;
     }
   }
 }

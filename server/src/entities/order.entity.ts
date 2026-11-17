@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   OneToMany,
   PrimaryGeneratedColumn,
 } from 'typeorm';
@@ -15,7 +16,20 @@ import { OrderItemEntity } from './order-item.entity';
 //  • check_no (stoldagi hisob raqami), bill_printed_at (schot berilgan vaqt) — NULL bo'lishi mumkin;
 //  • delivery_fee — DEFAULT 0 (eski buyurtmalarda yetkazish narxi yo'q).
 // Yangi ustunlar faqat nullable yoki DEFAULT bilan qo'shiladi — aks holda eski baza bilan server ishga tushmaydi.
+//
+// Indekslar (0.3.3 — buyurtmalar endi o'chirilmaydi, jadval yildan-yilga o'sadi). Tarkibiy (composite)
+// indekslar ataylab: SQLite statistikasiz (ANALYZE'siz) faqat `status` indeksini tanlab, hisobotlarda
+// deyarli butun jadvalni aylanib chiqardi; faqat `opened_at` indeksi esa faol buyurtmalar ro'yxatini
+// (status != 'yopildi' ORDER BY opened_at) sekinlashtirardi. 110 ming buyurtmali sinov bazasida o'lchangan.
+//  • (status, closed_at) — hisobotlar va sinxronlash: yopilgan cheklar sana oralig'ida;
+//  • (opened_at, status) — cheklar tarixi sahifalari (opened_at bo'yicha) va faol buyurtmalar;
+//  • refunded_at — vozvratlar (vozvrat kuni bo'yicha hisob);
+//  • (table_id, status) — stoldagi ochiq hisoblar (har buyurtma yaratish / to'lov / stol ko'chirishda).
+// Hammasi oddiy (unique emas) — synchronize mavjud bazaga faqat CREATE INDEX qo'shadi.
 @Entity('orders')
+@Index(['status', 'closedAt'])
+@Index(['openedAt', 'status'])
+@Index(['tableId', 'status'])
 export class OrderEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -98,6 +112,7 @@ export class OrderEntity {
   @Column({ name: 'refund_reason', type: 'text', nullable: true })
   refundReason: string | null;
 
+  @Index()
   @Column({ name: 'refunded_at', type: 'datetime', nullable: true })
   refundedAt: Date | null;
 

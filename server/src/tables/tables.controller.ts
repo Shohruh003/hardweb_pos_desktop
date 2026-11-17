@@ -28,6 +28,8 @@ const HALL_NAME_MESSAGE = 'Zal nomini kiriting';
 const HALL_LIST_MESSAGE = 'Zallar ro‘yxati noto‘g‘ri';
 const RANGE_MESSAGE = 'Stol raqamlari oralig‘i noto‘g‘ri';
 const HALL_PERCENT_MESSAGE = 'Foiz 0 dan 100 gacha bo‘lishi kerak';
+/** Bitta zalda bir xil raqamli ikkita stol bo'lmaydi (ofitsiant/kassa qaysi biri ekanini ajrata olmaydi) */
+const duplicateTableMessage = (n: number) => `Bu zalda ${n}-stol allaqachon bor`;
 
 /** Foiz qiymati to'g'rimi (0..100, chekli son) */
 const validPercent = (v: unknown): v is number =>
@@ -205,21 +207,42 @@ export class TablesController {
     return { ok: true, created: rows.length };
   }
 
+  // Bitta stol. Zal nomi chetidagi bo'shliqlarsiz saqlanadi (bulk bilan bir xil); shu zalda shu raqamli
+  // stol bo'lsa — 400
   @UseGuards(RolesGuard)
   @Roles(...ADMIN_ROLES)
   @Post()
-  create(@Body() dto: TableDto) {
-    return this.tables.save(this.tables.create(dto));
+  async create(@Body() dto: TableDto) {
+    const hall = (dto.hall ?? '').trim();
+    if (!hall) throw new BadRequestException(HALL_NAME_MESSAGE);
+    await this.assertNumberFree(hall, dto.number);
+    return this.tables.save(this.tables.create({ ...dto, hall }));
   }
 
+  // Raqam yoki zal o'zgarsa — yangi (zal, raqam) juftligi boshqa stolda band bo'lmasligi kerak.
+  // Juftlik o'zgarmasa (masalan faqat o'rindiqlar soni) tekshirilmaydi — eski takror stol ham tahrirlanadi.
   @UseGuards(RolesGuard)
   @Roles(...ADMIN_ROLES)
   @Patch(':id')
   async update(@Param('id') id: string, @Body() dto: TablePatchDto) {
+    // null — "o'zgarmaydi" (ustunlar NOT NULL)
     const patch: Partial<TableEntity> = {};
-    if (dto.number !== undefined) patch.number = dto.number;
-    if (dto.hall !== undefined) patch.hall = dto.hall;
-    if (dto.capacity !== undefined) patch.capacity = dto.capacity;
+    if (dto.number != null) patch.number = dto.number;
+    if (dto.hall != null) {
+      patch.hall = dto.hall.trim();
+      if (!patch.hall) throw new BadRequestException(HALL_NAME_MESSAGE);
+    }
+    if (dto.capacity != null) patch.capacity = dto.capacity;
+    if (patch.number !== undefined || patch.hall !== undefined) {
+      const current = await this.tables.findOne({ where: { id } });
+      if (current) {
+        const hall = patch.hall ?? current.hall;
+        const number = patch.number ?? current.number;
+        if (hall !== current.hall || number !== current.number) {
+          await this.assertNumberFree(hall, number, id);
+        }
+      }
+    }
     // Bo'sh tana — o'zgarish yo'q (TypeORM bo'sh update'da xato beradi)
     if (Object.keys(patch).length > 0) await this.tables.update(id, patch);
     return this.tables.findOne({ where: { id } });
@@ -236,6 +259,14 @@ export class TablesController {
     if (open > 0) throw new BadRequestException('Stolda ochiq buyurtma bor');
     await this.tables.delete(id);
     return { ok: true };
+  }
+
+  /** Shu zalda shu raqamli boshqa stol bormi (exceptId — tahrirlanayotgan stolning o'zi hisobga olinmaydi) -> 400 */
+  private async assertNumberFree(hall: string, number: number, exceptId?: string): Promise<void> {
+    const taken = await this.tables.exists({
+      where: { hall, number, ...(exceptId ? { id: Not(exceptId) } : {}) },
+    });
+    if (taken) throw new BadRequestException(duplicateTableMessage(number));
   }
 
   /** Mavjud zallar nomlari (takrorsiz) */

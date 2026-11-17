@@ -1,6 +1,8 @@
 // Navbat ekrani (mijozlar uchun tablo) — TZ 7-bo'lim.
 // Mustaqil web-sahifa: istalgan TV/brauzerda http://<kassa-IP>:3100/queue da ochiladi.
 // socket.io klienti serverning o'zidan (/socket.io/socket.io.js) yuklanadi — CDN/internet kerak emas.
+// Tablo tokensiz ulanadi (OrdersGateway PUBLIC_ROOM): unga faqat yuksiz 'queue:changed' signali keladi,
+// ma'lumot esa doim GET /queue/data dan (shaxsiy ma'lumotsiz, summalarsiz) o'qiladi.
 // Kartochka: olib ketish / yetkazish — "Olib ketish" / "Yetkazish" + "#12", stolga — "Stol" + "5".
 
 export const QUEUE_HTML = /* html */ `<!doctype html>
@@ -101,21 +103,31 @@ export const QUEUE_HTML = /* html */ `<!doctype html>
       document.getElementById(id).innerHTML = html;
     }
 
-    function upsert(o) { if (o) { orders[o.id] = o; render(); } }
-    function remove(o) { if (o && orders[o.id]) { delete orders[o.id]; render(); } }
-
-    // To'liq ro'yxat (boshida va har qayta ulanishda — aloqa uzilgan paytdagi o'zgarishlar yo'qolmasin)
+    // To'liq ro'yxat (boshida, har signalda va har qayta ulanishda). Faqat eng oxirgi so'rov
+    // javobi qo'llanadi — kech kelgan eski javob yangisining ustiga yozilmasin.
+    var loadSeq = 0;
     function load() {
-      fetch('/queue/data').then(function (r) { return r.json(); }).then(function (data) {
+      var seq = ++loadSeq;
+      fetch('/queue/data', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (data) {
+        if (seq !== loadSeq) return;
         var next = {};
-        (data || []).forEach(function (o) { next[o.id] = o; });
+        (Array.isArray(data) ? data : []).forEach(function (o) { next[o.id] = o; });
         orders = next;
         render();
       }).catch(function () {});
     }
     load();
 
-    // Real-time
+    // Ketma-ket signallar (masalan oshxona bir nechta buyurtmani birdan "tayyor" qilsa) — bitta so'rov
+    var loadTimer = null;
+    function scheduleLoad() {
+      if (loadTimer) return;
+      loadTimer = setTimeout(function () { loadTimer = null; load(); }, 300);
+    }
+
+    // Real-time: tablo login'siz ochiladi, shuning uchun server unga buyurtmalarning o'zini emas, faqat
+    // yuksiz "queue:changed" signalini yuboradi (mijoz telefoni/manzili va summalar bu yerga kelmaydi) —
+    // ro'yxat har signalda /queue/data dan qayta o'qiladi.
     var socket = io();
     var conn = document.getElementById('conn');
     var connectedOnce = false;
@@ -125,9 +137,9 @@ export const QUEUE_HTML = /* html */ `<!doctype html>
       connectedOnce = true;
     });
     socket.on('disconnect', function () { conn.textContent = 'Aloqa uzildi...'; });
-    socket.on('order:created', function (p) { upsert(p.order); });
-    socket.on('order:updated', function (p) { upsert(p.order); });
-    socket.on('order:closed', function (p) { remove(p.order); });
+    socket.on('queue:changed', scheduleLoad);
+    // Zaxira: signal yo'qolgan bo'lsa ham tablo bir daqiqada o'zini tuzatadi
+    setInterval(load, 60000);
 
     // Soat
     function tick() {

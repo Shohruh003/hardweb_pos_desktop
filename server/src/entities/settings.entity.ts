@@ -21,6 +21,15 @@ export class SettingsEntity {
   @Column({ name: 'daily_report_time', type: 'varchar', default: '23:59' })
   dailyReportTime: string;
 
+  // Har kuni (hisobot vaqtidan keyin) bazaning zaxira nusxasini Telegram'ga yuborish (0.3.3) —
+  // kassa kompyuterining diski buzilsa ham savdo tarixi yo'qolmasin. Telegram sozlanmagan bo'lsa — hech narsa.
+  @Column({ name: 'telegram_backup', type: 'boolean', default: true })
+  telegramBackup: boolean;
+
+  // Oxirgi muvaffaqiyatli Telegram zaxira nusxasi vaqti (foydalanuvchi o'zgartirmaydi)
+  @Column({ name: 'telegram_backup_at', type: 'datetime', nullable: true })
+  telegramBackupAt: Date | null;
+
   // Stolga (zaldagi) yangi buyurtmalarga avtomatik qo'yiladigan xizmat haqi foizi (0..100).
   // Olib ketish / yetkazishda xizmat haqi yo'q.
   @Column({ name: 'service_dine_in_percent', type: 'decimal', precision: 5, scale: 2, default: 0 })

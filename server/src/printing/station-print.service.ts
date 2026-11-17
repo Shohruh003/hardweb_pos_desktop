@@ -371,8 +371,8 @@ export class StationPrintService implements OnModuleInit, OnModuleDestroy {
     }
     if (groups.size === 0) return [];
 
-    // 2) Bo'limlar va ularning printerlari
-    const stations = await this.loadStations(groups);
+    // 2) Bo'limlar va ularning printerlari (o'chirilgan bo'lim — kassaga 'failed')
+    const stations = await this.loadStations(groups, { orderId: order?.id, tableNumber, orderName });
     if (!stations) {
       // Baza vaqtincha band va h.k. — kassada ogohlantirish chiqsin (jim qolmasin)
       return [...groups.entries()].map(([stationId, list]) => {
@@ -543,6 +543,16 @@ export class StationPrintService implements OnModuleInit, OnModuleDestroy {
     }
     const stations = await this.stations.find({ where: { id: In([...groups.keys()]) } });
     stations.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name));
+    // Buyurtmadan keyin o'chirilgan bo'lim — OTKAZ cheki chiqmaydi, kassa oshxonaga og'zaki aytsin
+    const found = new Set(stations.map((s) => s.id));
+    for (const [stationId, list] of groups) {
+      if (found.has(stationId)) continue;
+      this.reportMissingStation('void', stationId, list, {
+        orderId: params.orderId,
+        tableNumber: dineIn ? params.tableNumber ?? null : null,
+        orderName,
+      });
+    }
 
     const createdAt = new Date();
     const prepared: Array<{ job: PrintJobEntity; target: JobTarget }> = [];
@@ -757,8 +767,15 @@ export class StationPrintService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Bo'limlar (tartib bilan); topilmaganlari jurnalga yoziladi. Baza xatosi — null. */
-  private async loadStations(groups: Map<string, ResolvedItem[]>): Promise<StationEntity[] | null> {
+  /**
+   * Bo'limlar (tartib bilan). Topilmagan (o'chirilgan) bo'lim taomlari hech qayerga chiqmaydi — jurnal
+   * va 'failed' (kassa qizil ogohlantirish ko'rsatadi: taom oshxonaga og'zaki yetkazilsin, menyu
+   * tuzatilsin). Baza xatosi — null.
+   */
+  private async loadStations(
+    groups: Map<string, ResolvedItem[]>,
+    ctx: { orderId?: string; tableNumber: number | null; orderName: string },
+  ): Promise<StationEntity[] | null> {
     let rows: StationEntity[];
     try {
       rows = await this.stations.find({ where: { id: In([...groups.keys()]) } });
@@ -769,13 +786,51 @@ export class StationPrintService implements OnModuleInit, OnModuleDestroy {
     const found = new Set(rows.map((s) => s.id));
     for (const [stationId, list] of groups) {
       if (found.has(stationId)) continue;
-      const name = list.find((x) => x.stationName)?.stationName ?? stationId;
-      this.logger.warn(
-        `Bo‘lim topilmadi (o‘chirilgan bo‘lishi mumkin): ${name} — ${list.length} ta taom chop etilmadi`,
-      );
+      this.reportMissingStation('order', stationId, list, ctx);
     }
     rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name));
     return rows;
+  }
+
+  /**
+   * Taom(lar)ning bo'limi bazada yo'q (o'chirilgan) — chek chiqmaydi: jurnalga va kassaga ('failed',
+   * printer manzilisiz). kind: 'order' — yangi taomlar cheki (menyudagi taom o'chirilgan bo'limga
+   * bog'langan), 'void' — OTKAZ cheki (bo'lim buyurtmadan keyin o'chirilgan).
+   * Bo'lim nomi — buyurtma paytidagi nusxadan, faqat shu bo'lim taomning ASOSIY bo'limi bo'lsa
+   * (qo'shimcha printer nusxasida taomning nusxa nomi boshqa bo'limniki); bo'lmasa bo'sh ("Bo'lim").
+   */
+  private reportMissingStation(
+    kind: 'order' | 'void',
+    stationId: string,
+    items: Array<{ name: string; stationId?: string | null; stationName?: string | null }>,
+    ctx: { orderId?: string | null; tableNumber?: number | null; orderName: string },
+  ): void {
+    const main = items.filter((x) => x.stationId === stationId);
+    const station = main.find((x) => x.stationName)?.stationName ?? '';
+    // Xabar ixcham bo'lsin: ko'pi bilan 5 ta taom nomi
+    const names = [...new Set(items.map((x) => x.name))];
+    const shown = names.slice(0, 5).join(', ') + (names.length > 5 ? '…' : '');
+    let message: string;
+    if (kind === 'void') {
+      message = `OTKAZ cheki chiqmadi — taomning bo‘limi o‘chirilgan: ${shown}. Oshxonaga og‘zaki ayting`;
+    } else if (main.length === 0) {
+      // Faqat qo'shimcha printer (nusxa) — taomning asosiy cheki o'z bo'limidan chiqqan
+      message = `Qo‘shimcha printer bo‘limi o‘chirilgan — nusxa chiqmadi: ${shown}. Menyuda taomning qo‘shimcha printerlarini tuzating`;
+    } else {
+      message = `Taomning bo‘limi o‘chirilgan — chek chiqmadi: ${shown}. Oshxonaga og‘zaki ayting va menyuda taomga bo‘lim tanlang`;
+    }
+    this.logger.warn(
+      `Bo‘lim topilmadi (o‘chirilgan bo‘lishi mumkin): ${station || stationId} — ${items.length} ta taom ` +
+        `${kind === 'void' ? 'OTKAZ cheki' : 'cheki'} chiqmadi (${ctx.orderName})`,
+    );
+    this.emitFailed({
+      orderId: ctx.orderId ?? undefined,
+      tableNumber: ctx.tableNumber,
+      orderName: ctx.orderName,
+      station,
+      host: '',
+      message,
+    });
   }
 
   /**

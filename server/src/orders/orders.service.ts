@@ -25,6 +25,7 @@ import {
   MenuItemEntity,
   OrderEntity,
   OrderItemEntity,
+  OrderRequestEntity,
   PaymentEntity,
   SettingsEntity,
   StationEntity,
@@ -342,7 +343,7 @@ interface CreateInput {
 interface RememberedRequest {
   orderId: string;
   at: number;
-  snapshot: Order; // buyurtma keyin o'chirilgan bo'lsa ham javob shu bo'ladi
+  snapshot: Order | null; // buyurtma keyin o'chirilgan bo'lsa ham javob shu bo'ladi (bazada bo'sh bo'lishi mumkin)
 }
 
 /** Otkaz qilingan qator (jurnal, OTKAZ cheki, KDS, Telegram uchun) */
@@ -415,7 +416,8 @@ export class OrdersService {
   // olib ketish va yetkazish (ish kuni, keyin kunlik raqam bo'yicha). KDS/navbat ekrani o'zi saralaydi.
   async findActive(type?: string): Promise<Order[]> {
     const filter = parseOrderType(type);
-    const where: FindOptionsWhere<OrderEntity> = { status: Not(OrderStatus.Closed) };
+    // IN (ochiq holatlar) — (status, closed_at) indeksidan foydalanadi; "!= yopildi" butun jadvalni aylanardi
+    const where: FindOptionsWhere<OrderEntity> = { status: In(SETTABLE_ORDER_STATUSES) };
     if (filter) where.type = filter;
     const list = await this.orders.find({ where, order: { openedAt: 'ASC' } });
     if (list.length === 0) return [];
@@ -526,7 +528,7 @@ export class OrdersService {
 
     const status = queryStr(query.status);
     if (status === 'open') {
-      qb.andWhere('o.status != :closedStatus', { closedStatus: OrderStatus.Closed });
+      qb.andWhere('o.status IN (:...openStatuses)', { openStatuses: SETTABLE_ORDER_STATUSES });
     } else if (status) {
       qb.andWhere('o.status = :status', { status });
     }
@@ -760,12 +762,15 @@ export class OrdersService {
     const requestId = typeof dto.clientRequestId === 'string' ? dto.clientRequestId.trim() : '';
     return this.serial(async () => {
       // Takroriy so'rov (oflayn navbat qayta yubordi / tarmoq uzildi) — yangi narsa yaratilmaydi
+      // (server qayta ishga tushgan bo'lsa ham: yozuv bazada — order_requests)
       if (requestId) {
-        const prev = this.recalledRequest(requestId);
+        const prev = await this.recalledRequest(requestId);
         if (prev) {
           const existing = await this.orders.findOne({ where: { id: prev.orderId } });
           this.logger.log(`Takroriy so‘rov (${requestId}) — avvalgi natija qaytarildi`);
-          return existing ? this.fullDto(existing) : prev.snapshot;
+          if (existing) return this.fullDto(existing);
+          if (prev.snapshot) return prev.snapshot;
+          throw new NotFoundException(ORDER_NOT_FOUND_MESSAGE);
         }
       }
       const out = await this.createLocked(
@@ -774,7 +779,7 @@ export class OrdersService {
         { type, appendTo, phone, address, deliveryFee },
         actor,
       );
-      if (requestId) this.rememberRequest(requestId, out);
+      if (requestId) await this.rememberRequest(requestId, out);
       return out;
     });
   }
@@ -872,7 +877,7 @@ export class OrdersService {
     // 4) Ombor yetarliligini tekshiramiz — ochiq (to'lanmagan) buyurtmalar band
     // hisoblanadi, shuning uchun 20 ta cola bo'lsa 20 tadan ortiq sotib bo'lmaydi.
     const openOrders = await this.orders.find({
-      where: { status: Not(OrderStatus.Closed) },
+      where: { status: In(SETTABLE_ORDER_STATUSES) },
     });
     const reservedItems = openOrders.flatMap((o) =>
       (o.items || []).map((it) => ({
@@ -1060,25 +1065,52 @@ export class OrdersService {
     return run;
   }
 
-  /** Eslab qolingan takroriy so'rov (24 soat ichida) */
-  private recalledRequest(id: string): RememberedRequest | null {
+  /**
+   * Eslab qolingan takroriy so'rov (24 soat ichida): avval xotira, keyin baza (order_requests) — server
+   * qayta ishga tushgandan keyin kelgan takroriy so'rov ham yangi buyurtma va oshxona cheki yaratmaydi.
+   * Bazani o'qib bo'lmasa — jurnalga yoziladi va so'rov yangi deb hisoblanadi (oflayn navbat to'xtab qolmasin).
+   */
+  private async recalledRequest(id: string): Promise<RememberedRequest | null> {
+    const now = Date.now();
     const r = this.recentRequests.get(id);
-    if (!r) return null;
-    if (Date.now() - r.at > REQUEST_ID_TTL_MS) {
+    if (r) {
+      if (now - r.at <= REQUEST_ID_TTL_MS) return r;
+      // Xotiradagi yozuv eskirgan — bazadagisi ham (ikkalasi birga yoziladi)
       this.recentRequests.delete(id);
       return null;
     }
-    return r;
+    try {
+      const row = await this.dataSource.getRepository(OrderRequestEntity).findOne({ where: { requestId: id } });
+      const at = row?.createdAt instanceof Date ? row.createdAt.getTime() : NaN;
+      if (!row || !Number.isFinite(at) || now - at > REQUEST_ID_TTL_MS) return null;
+      return { orderId: row.orderId, at, snapshot: row.snapshot ?? null };
+    } catch (e) {
+      this.logger.warn(`Takroriy so‘rov yozuvini bazadan o‘qib bo‘lmadi (${id}): ${(e as Error).message}`);
+      return null;
+    }
   }
 
-  /** So'rov natijasini eslab qolish; eskirganlari (Map tartibi — eng eskisi boshida) tozalanadi */
-  private rememberRequest(id: string, order: Order): void {
+  /**
+   * So'rov natijasini eslab qolish — xotirada va bazada (navbat ichida, javobdan oldin). Xotiradagi
+   * eskirganlar (Map tartibi — eng eskisi boshida) tozalanadi; bazadagilarni MaintenanceService o'chiradi.
+   * Bazaga upsert: shu id bilan eskirgan (24 soatdan eski, hali o'chirilmagan) yozuv bo'lsa — yangilanadi,
+   * takroriy kalit xatosi bo'lmaydi. Yozib bo'lmasa — buyurtma baribir yaratilgan: javob qaytadi,
+   * xotiradagi yozuv shu jarayon davomida himoya qiladi.
+   */
+  private async rememberRequest(id: string, order: Order): Promise<void> {
     const now = Date.now();
     this.recentRequests.delete(id);
     this.recentRequests.set(id, { orderId: order.id, at: now, snapshot: order });
     for (const [key, r] of this.recentRequests) {
       if (now - r.at <= REQUEST_ID_TTL_MS && this.recentRequests.size <= REQUEST_ID_MAX) break;
       this.recentRequests.delete(key);
+    }
+    try {
+      await this.dataSource
+        .getRepository(OrderRequestEntity)
+        .upsert({ requestId: id, orderId: order.id, snapshot: order, createdAt: new Date(now) }, ['requestId']);
+    } catch (e) {
+      this.logger.warn(`Takroriy so‘rov yozuvini bazaga saqlab bo‘lmadi (${id}): ${(e as Error).message}`);
     }
   }
 

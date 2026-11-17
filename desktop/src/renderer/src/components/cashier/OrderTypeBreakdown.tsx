@@ -12,10 +12,13 @@ export function OrderTypeBreakdown({ data, className = '' }: { data: ByType | un
   if (!Array.isArray(data)) return null;
   const rows = ORDER_TYPES.map((type) => {
     const r = data.find((x) => x?.type === type);
-    return { type, count: Math.max(0, Number(r?.count) || 0), amount: Math.max(0, roundSum(r?.amount)) };
+    // Vozvrat kuni (0.3.3) summa/son manfiy bo'lishi mumkin — raqam qanday bo'lsa shunday, ulush esa
+    // faqat musbat tushumdan
+    return { type, count: Number(r?.count) || 0, amount: roundSum(r?.amount) };
   });
   const totalAmount = rows.reduce((s, r) => s + r.amount, 0);
   const totalCount = rows.reduce((s, r) => s + r.count, 0);
+  const positiveTotal = rows.reduce((s, r) => s + Math.max(0, r.amount), 0);
 
   return (
     <div className={`bg-surface border border-border rounded-2xl p-4 sm:p-5 ${className}`} data-testid="order-type-breakdown">
@@ -28,8 +31,8 @@ export function OrderTypeBreakdown({ data, className = '' }: { data: ByType | un
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {rows.map((r) => {
           const style = TYPE_STYLE[r.type as OrderType];
-          const share = totalAmount > 0 ? (r.amount / totalAmount) * 100 : 0;
-          const shareText = totalAmount > 0 ? `${share >= 10 || share === 0 ? Math.round(share) : share.toFixed(1)}%` : '0%';
+          const share = positiveTotal > 0 && r.amount > 0 ? (r.amount / positiveTotal) * 100 : 0;
+          const shareText = `${share >= 10 || share === 0 ? Math.round(share) : share.toFixed(1)}%`;
           return (
             <div key={r.type} className="rounded-xl border border-border bg-bg p-3.5" data-testid={`order-type-${r.type}`}>
               <div className="flex items-center gap-2.5">
@@ -42,7 +45,7 @@ export function OrderTypeBreakdown({ data, className = '' }: { data: ByType | un
                 </div>
                 <div className="ml-auto text-lg font-extrabold text-text">{shareText}</div>
               </div>
-              <div className="mt-3 text-xl font-extrabold text-text truncate">{formatSum(r.amount)}</div>
+              <div className={`mt-3 text-xl font-extrabold truncate ${r.amount < 0 ? 'text-danger' : 'text-text'}`}>{formatSum(r.amount)}</div>
               <div
                 className="mt-2 h-2.5 rounded-full bg-surface border border-border overflow-hidden"
                 role="meter"

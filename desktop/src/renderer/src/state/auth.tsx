@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from '@hardweb-pos/shared';
 import { api, getToken, setToken, SESSION_EXPIRED_EVENT } from '../lib/api';
+import { syncSocketAuth } from '../lib/socket';
 
 interface AuthState {
   user: User | null;
@@ -84,6 +85,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
     return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
   }, [setUser]);
+
+  // Kirish / chiqish / sessiya tugashi — token o'zgardi: real-time ulanish yangi token bilan qayta
+  // ochiladi va server xonani qayta belgilaydi (tokensiz ulanishga buyurtma va chek hodisalari kelmaydi).
+  // Token har doim foydalanuvchi bilan birga o'zgaradi; token o'zgarmagan bo'lsa chaqiruv hech narsa qilmaydi.
+  useEffect(() => {
+    syncSocketAuth();
+  }, [user]);
 
   const startSession = useCallback(
     (res: LoginResponse) => {

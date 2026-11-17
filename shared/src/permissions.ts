@@ -12,7 +12,7 @@ export interface Capability {
 
 export const CAPABILITIES: Capability[] = [
   // Operatsion
-  { key: 'waiter', label: 'Ofitsiantlik (zakaz)', group: 'ops', icon: '🧑‍🍳' },
+  { key: 'waiter', label: 'Ofitsiantlik (zakaz)', group: 'ops', icon: '🍽️' },
   { key: 'kitchen', label: 'Oshxona (KDS)', group: 'ops', icon: '🍳' },
   { key: 'cashier', label: 'Kassa (to‘lov)', group: 'ops', icon: '💵' },
   { key: 'revenue', label: 'Tushum / statistikani ko‘rish', group: 'ops', icon: '📈' },

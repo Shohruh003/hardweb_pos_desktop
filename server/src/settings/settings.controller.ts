@@ -26,6 +26,7 @@ import { Roles } from '../auth/roles.decorator';
 import { PaymentMethod, PosSettings, UserRole } from '@hardweb-pos/shared';
 import { SettingsService } from './settings.service';
 import { TelegramService } from '../telegram/telegram.service';
+import { TelegramBackupService } from '../backup/telegram-backup.service';
 import { validatePaymentMethods } from '../orders/order-rules';
 import { isLocalRequest, LOCAL_SETTING_ONLY_MESSAGE } from '../auth/local-request';
 
@@ -39,6 +40,10 @@ class SettingsDto {
   @IsOptional() @IsString() telegramToken?: string;
   @IsOptional() @IsString() telegramChatId?: string;
   @IsOptional() @IsString() dailyReportTime?: string;
+  // Kunlik zaxira nusxani Telegram'ga yuborish (yoqilgan / o'chirilgan)
+  @IsOptional()
+  @IsBoolean({ message: 'Zaxira nusxa sozlamasi noto‘g‘ri (true yoki false)' })
+  telegramBackup?: boolean;
 
   // Stolga buyurtmalarga avtomatik xizmat haqi foizi (masalan 6)
   @IsOptional()
@@ -87,6 +92,7 @@ export class SettingsController {
   constructor(
     private readonly settings: SettingsService,
     private readonly telegram: TelegramService,
+    private readonly backup: TelegramBackupService,
   ) {}
 
   // localRequest (B35) — so'rov server kompyuterining o'zidanmi: "Direktor faqat server
@@ -118,9 +124,22 @@ export class SettingsController {
   async detectChat(@Body() body: { token?: string }) {
     const chatId = await this.telegram.detectChatId(body?.token);
     if (chatId) {
-      await this.settings.update({ telegramChatId: chatId });
+      // Yangi qabul qiluvchi ro'yxatga QO'SHILADI — avvalgilar (ega, boshqa direktor) o'chib ketmasin
+      const current = String((await this.settings.get()).telegramChatId ?? '')
+        .split(/[\s,;]+/)
+        .map((c) => c.trim())
+        .filter(Boolean);
+      if (!current.includes(chatId)) {
+        await this.settings.update({ telegramChatId: [...current, chatId].join(', ') });
+      }
     }
     return { chatId };
+  }
+
+  // Bazaning zaxira nusxasini hoziroq Telegram'ga yuborish (sinov / qo'lda)
+  @Post('telegram-backup')
+  async sendBackup() {
+    return this.backup.run();
   }
 
   // Telegram ulanishini tekshirish — sinov xabari yuboradi

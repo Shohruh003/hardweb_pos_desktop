@@ -124,10 +124,12 @@ export class InventoryService {
 
   // Ombor qoldig'ini o'zgartirish (kirim +, chiqim -)
   async adjustStock(id: string, delta: number): Promise<Product> {
+    const found = await this.products.findOne({ where: { id }, select: { id: true } });
+    if (!found) throw new NotFoundException('Mahsulot topilmadi');
+    await addStock(this.products.manager, id, Number(delta) || 0);
     const p = await this.products.findOne({ where: { id } });
     if (!p) throw new NotFoundException('Mahsulot topilmadi');
-    p.stock = Number(p.stock) + Number(delta);
-    return this.toProduct(await this.products.save(p));
+    return this.toProduct(p);
   }
 
   // --- Kirim (ta'minot) ---
@@ -175,9 +177,8 @@ export class InventoryService {
       note: dto.note?.trim() || null,
     });
     const saved = await this.purchases.save(purchase);
-    // Ombor qoldig'ini oshiramiz
-    product.stock = Number(product.stock) + quantity;
-    await this.products.save(product);
+    // Ombor qoldig'ini oshiramiz (bitta SQL — parallel sotuv/tuzatish yo'qolmaydi)
+    await addStock(this.products.manager, product.id, quantity);
     return this.toPurchase(saved);
   }
 
@@ -201,8 +202,7 @@ export class InventoryService {
       note: `↩️ Vozvrat${dto.note ? ' · ' + dto.note.trim() : ''}`,
     });
     const saved = await this.purchases.save(ret);
-    product.stock = Number(product.stock) - quantity;
-    await this.products.save(product);
+    await addStock(this.products.manager, product.id, -quantity);
     return this.toPurchase(saved);
   }
 
@@ -334,12 +334,24 @@ export class InventoryService {
     }
     if (need.size === 0) return;
 
-    const products = await manager.find(ProductEntity, {
-      where: { id: In([...need.keys()]) },
-    });
-    for (const p of products) {
-      p.stock = Number(p.stock) - (need.get(p.id) || 0);
-      await manager.save(p);
+    for (const [productId, amount] of need) {
+      if (amount) await addStock(manager, productId, -amount);
     }
   }
+}
+
+/**
+ * Qoldiqni o'zgartirish — bitta atomar SQL (UPDATE ... SET stock = stock + d). Oldin "o'qish — hisoblash —
+ * yozish" edi: sklad tuzatishi va to'lovdagi ayirish bir vaqtda bo'lsa, bittasi yo'qolardi.
+ * Miqdor 3 xonagacha yaxlitlanadi (ustun shkalasi — 0.1 + 0.2 qoldiqlari to'planmasin).
+ */
+async function addStock(manager: EntityManager, productId: string, delta: number): Promise<void> {
+  if (!Number.isFinite(delta) || delta === 0) return;
+  await manager
+    .createQueryBuilder()
+    .update(ProductEntity)
+    .set({ stock: () => 'ROUND(COALESCE(stock, 0) + :stockDelta, 3)' })
+    .setParameter('stockDelta', delta)
+    .where('id = :productId', { productId })
+    .execute();
 }

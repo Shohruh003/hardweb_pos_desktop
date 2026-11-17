@@ -2,12 +2,14 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Param,
   Patch,
   Post,
   Put,
   Query,
+  Request,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -23,8 +25,21 @@ import { Type } from 'class-transformer';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
+import { FORBIDDEN_MESSAGE } from '../auth/user-view';
+import { can, isAdminRole } from '../orders/order-rules';
 import { ProductUnit, UserRole } from '@hardweb-pos/shared';
 import { InventoryService } from './inventory.service';
+
+/**
+ * Sklad ma'lumotlarini o'qish (tannarx, kirimlar, ta'minotchi qarzlari): 'inventory' (Sklad) yoki
+ * 'menu' (Menyu — taom retsepti va tannarxi) ruxsati, yoki administrator / direktor. Ofitsiant,
+ * oshpaz va kassir — 403 (UI bu bo'limlarni ularga ko'rsatmaydi, server ham bermaydi).
+ */
+function assertCanReadInventory(req: any): void {
+  const user = req?.user;
+  if (can(user, 'inventory') || can(user, 'menu') || isAdminRole(user)) return;
+  throw new ForbiddenException(FORBIDDEN_MESSAGE);
+}
 
 class ProductDto {
   @IsString() name: string;
@@ -75,26 +90,30 @@ class SetRecipeDto {
 export class InventoryController {
   constructor(private readonly inventory: InventoryService) {}
 
-  // --- O'qish (barcha rollar) ---
+  // --- O'qish: 'inventory' / 'menu' ruxsati yoki administrator / direktor (assertCanReadInventory) ---
   @Get('products')
-  listProducts() {
+  listProducts(@Request() req: any) {
+    assertCanReadInventory(req);
     return this.inventory.listProducts();
   }
 
   @Get('recipe/:menuItemId')
-  getRecipe(@Param('menuItemId') menuItemId: string) {
+  getRecipe(@Param('menuItemId') menuItemId: string, @Request() req: any) {
+    assertCanReadInventory(req);
     return this.inventory.getRecipe(menuItemId);
   }
 
   // Kirimlar tarixi (ta'minot) — barchasi yoki mahsulot bo'yicha
   @Get('purchases')
-  listPurchases(@Query('productId') productId?: string) {
+  listPurchases(@Request() req: any, @Query('productId') productId?: string) {
+    assertCanReadInventory(req);
     return this.inventory.listPurchases(productId);
   }
 
   // Ta'minotchilar balansi (olingan - to'langan = qarz)
   @Get('supplier-balances')
-  supplierBalances() {
+  supplierBalances(@Request() req: any) {
+    assertCanReadInventory(req);
     return this.inventory.getSupplierBalances();
   }
 

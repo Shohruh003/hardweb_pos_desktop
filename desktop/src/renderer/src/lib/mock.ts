@@ -172,7 +172,6 @@ interface MockPayment {
   debtRepaidType: string | null;
 }
 interface MockTable { id: string; number: number; hall: string; capacity: number; status: TableStatus }
-interface MockRole { key: string; label: string; description: string; panel: string; builtin: boolean }
 interface MockCategory { id: string; name: string; sortOrder: number }
 interface MockStation {
   id: string;
@@ -212,6 +211,9 @@ interface MockSettings {
   telegramToken: string;
   telegramChatId: string;
   dailyReportTime: string;
+  /** Har kuni bazaning zaxira nusxasi Telegram'ga (server TelegramBackupService) */
+  telegramBackup: boolean;
+  telegramBackupAt: string | null;
   serviceDineInPercent: number;
   waiterSharePercent: number;
   hallOrder: string[];
@@ -265,8 +267,6 @@ let settings: MockSettings = defaultSettings();
 let terminals: any[] = [];
 // Kassa harakatlari: chiqim (rasxod) va kirim (B33)
 let expenses: MockExpense[] = [];
-// Rollar registri (admin CRUD qiladi). Har rol qaysi panelga kirishini belgilaydi.
-let roles: MockRole[] = [];
 let orders: MockOrder[] = [];
 let customers: MockCustomer[] = [];
 let payments: MockPayment[] = [];
@@ -292,6 +292,8 @@ function defaultSettings(): MockSettings {
     telegramToken: '',
     telegramChatId: '',
     dailyReportTime: '23:59',
+    telegramBackup: true,
+    telegramBackupAt: null,
     // Demo: stolga buyurtmalarga 10% xizmat haqi (server demo seed'i bilan bir xil), VIP zalda alohida 15%,
     // ofitsiant ulushi 5%, yetkazish narxi 10 000 so'm — imkoniyatlar ko'rinib tursin
     serviceDineInPercent: 10,
@@ -398,13 +400,6 @@ function ensureSeeded(): void {
   terminals = [
     { id: uid(), name: 'Kassa 1', hall: 'Asosiy zal', note: null },
     { id: uid(), name: 'Ofitsiant terminali', hall: 'VIP zal', note: null },
-  ];
-  roles = [
-    { key: UserRole.Waiter, label: 'Ofitsiant', description: 'Buyurtma qabul qilish', panel: 'ofitsiant', builtin: true },
-    { key: UserRole.Cook, label: 'Oshpaz', description: 'Oshxona ekrani (KDS)', panel: 'oshpaz', builtin: true },
-    { key: UserRole.Cashier, label: 'Kassir', description: 'To‘lov va chek', panel: 'kassir', builtin: true },
-    { key: UserRole.Admin, label: 'Administrator', description: 'Tizimni boshqarish', panel: 'administrator', builtin: true },
-    { key: UserRole.Director, label: 'Direktor', description: 'Hisobotlar', panel: 'direktor', builtin: true },
   ];
   orders = [];
   customers = [
@@ -3169,19 +3164,6 @@ function route(method: string, fullPath: string, body: any, token?: string | nul
     return ok(recipeItems.filter((r) => r.menuItemId === seg[2]));
   }
 
-  // Rollar CRUD (faqat demo registri)
-  if (path === '/roles' && method === 'GET') return ok([...roles]);
-  if (path === '/roles' && method === 'POST') {
-    const r: MockRole = { key: 'role-' + uid().slice(0, 6), label: body.label, description: body.description || '', panel: body.panel || 'ofitsiant', builtin: false };
-    roles.push(r); return ok(r);
-  }
-  if (seg[0] === 'roles' && seg[1] && method === 'PATCH') {
-    const r = roles.find((x) => x.key === seg[1]); if (r && !r.builtin) Object.assign(r, body); else if (r) r.description = body.description ?? r.description; return ok(r);
-  }
-  if (seg[0] === 'roles' && seg[1] && method === 'DELETE') {
-    const i = roles.findIndex((x) => x.key === seg[1]); if (i >= 0 && !roles[i].builtin) roles.splice(i, 1); return ok({ ok: true });
-  }
-
   // ---- Xodimlar ----
   if (path === '/users/waiters' && method === 'GET') {
     // Buyurtma qabul qiladigan faol xodimlar: ofitsiantlar va 'waiter' ruxsati bor boshqa xodimlar
@@ -3385,6 +3367,9 @@ function settingsRoute(method: string, path: string, seg: string[], body: any, a
     if (body.deliveryFeeDefault != null && !(isInt(body.deliveryFeeDefault) && body.deliveryFeeDefault >= 0 && body.deliveryFeeDefault <= DELIVERY_FEE_MAX)) {
       throw bad(DELIVERY_FEE_DEFAULT_MESSAGE);
     }
+    if (body.telegramBackup != null && typeof body.telegramBackup !== 'boolean') {
+      throw bad('Zaxira nusxa sozlamasi noto‘g‘ri (true yoki false)');
+    }
     if (body.paymentMethods != null) {
       if (!Array.isArray(body.paymentMethods)) throw bad('To‘lov turlari ro‘yxati noto‘g‘ri');
       const problem = validatePaymentMethods(body.paymentMethods);
@@ -3394,6 +3379,7 @@ function settingsRoute(method: string, path: string, seg: string[], body: any, a
     for (const k of ['restaurantName', 'telegramToken', 'telegramChatId', 'dailyReportTime'] as const) {
       if (body[k] !== undefined) settings[k] = body[k] == null ? '' : String(body[k]);
     }
+    if (typeof body.telegramBackup === 'boolean') settings.telegramBackup = body.telegramBackup;
     if (body.serviceDineInPercent !== undefined) settings.serviceDineInPercent = percent2(body.serviceDineInPercent);
     if (body.waiterSharePercent !== undefined) settings.waiterSharePercent = percent2(body.waiterSharePercent);
     if (body.hallOrder !== undefined) settings.hallOrder = normalizeHallList(body.hallOrder);
@@ -3404,9 +3390,19 @@ function settingsRoute(method: string, path: string, seg: string[], body: any, a
     return ok(settingsView());
   }
   if (seg[1] === 'telegram-detect' && method === 'POST') {
-    const chatId = settings.telegramChatId || '123456789';
-    settings.telegramChatId = chatId;
+    // Server kabi: aniqlangan ID ro'yxatga QO'SHILADI (avvalgilar o'chmaydi)
+    const chatId = '123456789';
+    const list = settings.telegramChatId.split(/[\s,;]+/).map((c) => c.trim()).filter(Boolean);
+    if (!list.includes(chatId)) settings.telegramChatId = [...list, chatId].join(', ');
     return ok({ chatId });
+  }
+  if (seg[1] === 'telegram-backup' && method === 'POST') {
+    // Demo: fayl yuborilmaydi — natija server bilan bir xil shaklda
+    if (!settings.telegramToken.trim() || !settings.telegramChatId.trim()) {
+      return ok({ ok: false, message: 'Telegram sozlanmagan — bot token va chat id kiriting' });
+    }
+    settings.telegramBackupAt = nowIso();
+    return ok({ ok: true, message: 'Zaxira nusxa Telegram’ga yuborildi (demo)', sizeBytes: 0, sentAt: settings.telegramBackupAt });
   }
   if ((seg[1] === 'telegram-test' || seg[1] === 'telegram-report') && method === 'POST') return ok({ ok: true });
   return fail(`Mock: yo‘l topilmadi (${method} ${path})`, 404);

@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   PrimaryGeneratedColumn,
 } from 'typeorm';
 
@@ -12,6 +13,8 @@ export class FiscalDocEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  // Chek nusxasi / tarixda buyurtma bo'yicha qidiriladi (0.3.3: jadval endi tozalanmaydi)
+  @Index()
   @Column({ name: 'order_id', type: 'uuid' })
   orderId: string;
 

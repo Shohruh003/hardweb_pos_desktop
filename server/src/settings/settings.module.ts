@@ -4,9 +4,10 @@ import { SettingsEntity } from '../entities';
 import { PosSettingsController, SettingsController } from './settings.controller';
 import { SettingsService } from './settings.service';
 import { TelegramModule } from '../telegram/telegram.module';
+import { BackupModule } from '../backup/backup.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([SettingsEntity]), TelegramModule],
+  imports: [TypeOrmModule.forFeature([SettingsEntity]), TelegramModule, BackupModule],
   controllers: [SettingsController, PosSettingsController],
   providers: [SettingsService],
   exports: [SettingsService],

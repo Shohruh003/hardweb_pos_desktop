@@ -4,11 +4,10 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
-import { Not, Raw, Repository } from 'typeorm';
+import { In, Raw, Repository } from 'typeorm';
 import {
   ExpenseEntity,
   OrderEntity,
-  PaymentEntity,
   SettingsEntity,
 } from '../entities';
 import {
@@ -16,7 +15,7 @@ import {
   ORDER_TYPE_LABELS,
   OrderStatus,
   OrderType,
-  orderTypeOf,
+  SETTABLE_ORDER_STATUSES,
   roundSum,
 } from '@hardweb-pos/shared';
 import type { CashSummary, OrderVoidedPayload, VoidReport, WaiterShareReport } from '@hardweb-pos/shared';
@@ -99,8 +98,6 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     private readonly config: ConfigService,
-    @InjectRepository(PaymentEntity)
-    private readonly payments: Repository<PaymentEntity>,
     @InjectRepository(ExpenseEntity)
     private readonly expenses: Repository<ExpenseEntity>,
     @InjectRepository(OrderEntity)
@@ -374,15 +371,11 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     const inDay = Raw((column) => inDaySql(column), range);
     const reportDay = dayRange(day);
 
-    // Tushum — vozvrat qilinmagan cheklar bo'yicha
-    const revRow = await this.payments
-      .createQueryBuilder('p')
-      .innerJoin(OrderEntity, 'o', 'o.id = p.order_id')
-      .select('COALESCE(SUM(p.amount), 0)', 'sum')
-      .where(inDaySql('p.created_at'), range)
-      .andWhere('o.refunded = 0')
-      .getRawOne<{ sum: string | number }>();
-    const revenue = roundSum(revRow?.sum ?? 0);
+    // Tushum va buyurtma turlari — hisobotlar (dashboard) bilan aynan bir xil, vozvrat kuni qoidasi
+    // (0.3.3): shu kungi to'lovlar − shu kuni qaytarilgan cheklarning to'lovlari. Kechagi chek bugun
+    // qaytarilsa — bugungi tushumdan ayiriladi, kechagi (yuborilgan) hisobot o'zgarmaydi.
+    const summary = await this.reports.summary('day', reportDay);
+    const revenue = summary.revenue;
 
     // Kassa harakatlari: chiqim (rasxod) va kirim (kassaga qo'yilgan pul) — B33
     const exps = await this.expenses.find({ where: { createdAt: inDay } });
@@ -415,28 +408,12 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
     // Hali yopilmagan (ochiq) cheklar — hisobot chala emasligini bildirish uchun
     const openCount = await this.orders.count({
-      where: { status: Not(OrderStatus.Closed), refunded: false },
+      where: { status: In(SETTABLE_ORDER_STATUSES), refunded: false },
     });
 
-    // Buyurtma turlari bo'yicha tushum (stolga / olib ketish / yetkazish) — shu kunning to'lovlari
-    const typeRows = await this.payments
-      .createQueryBuilder('p')
-      .innerJoin(OrderEntity, 'o', 'o.id = p.order_id')
-      .select('o.order_type', 'type')
-      .addSelect('COALESCE(SUM(p.amount), 0)', 'sum')
-      .addSelect('COUNT(DISTINCT p.order_id)', 'orders')
-      .where(inDaySql('p.created_at'), range)
-      .andWhere('o.refunded = 0')
-      .groupBy('o.order_type')
-      .getRawMany<{ type: string | null; sum: string | number; orders: string | number }>();
-    const byType = new Map<OrderType, { sum: number; orders: number }>();
-    for (const r of typeRows) {
-      const t = orderTypeOf({ type: r.type });
-      const cur = byType.get(t) ?? { sum: 0, orders: 0 };
-      cur.sum += roundSum(r.sum);
-      cur.orders += Number(r.orders) || 0;
-      byType.set(t, cur);
-    }
+    // Buyurtma turlari bo'yicha (stolga / olib ketish / yetkazish): yopilgan cheklar soni va tushum —
+    // summary bilan bir xil (qatorlar yig'indisi = tushum)
+    const byType = new Map((summary.byOrderType ?? []).map((r) => [r.type, r] as const));
 
     const fmt = (n: number) => formatMoney(n);
     const som = (n: number) => `${fmt(n)} so‘m`;
@@ -445,10 +422,13 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       [OrderType.Takeaway]: '🥡',
       [OrderType.Delivery]: '🛵',
     };
-    // Faqat savdo bo'lgan turlar ko'rsatiladi (bo'sh qatorlar hisobotni cho'zmasin)
-    const typeLines = ORDER_TYPES.filter((t) => (byType.get(t)?.orders ?? 0) > 0).map((t) => {
+    // Faqat savdo (yoki vozvrat) bo'lgan turlar ko'rsatiladi (bo'sh qatorlar hisobotni cho'zmasin)
+    const typeLines = ORDER_TYPES.filter((t) => {
+      const v = byType.get(t);
+      return !!v && (v.count !== 0 || v.amount !== 0);
+    }).map((t) => {
       const v = byType.get(t)!;
-      return `  ${typeIcon[t]} ${ORDER_TYPE_LABELS[t]}: ${v.orders} ta — ${som(v.sum)}`;
+      return `  ${typeIcon[t]} ${ORDER_TYPE_LABELS[t]}: ${v.count} ta — ${som(v.amount)}`;
     });
     const typeBlock = typeLines.length ? `${typeLines.join('\n')}\n` : '';
 

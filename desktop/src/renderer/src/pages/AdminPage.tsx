@@ -11,13 +11,12 @@ import { StationsTab } from './admin/StationsTab';
 import { CategoriesTab } from './admin/CategoriesTab';
 import { TablesTab } from './admin/TablesTab';
 import { StaffTab } from './admin/StaffTab';
-import { RolesTab } from './admin/RolesTab';
 import { DevicesTab } from './admin/DevicesTab';
 import { ReceiptsTab } from './admin/ReceiptsTab';
 import { TerminalsTab } from './admin/TerminalsTab';
 import { SettingsPanel } from '../components/SettingsPanel';
 
-type Tab = 'receipts' | 'menu' | 'inventory' | 'customers' | 'stations' | 'categories' | 'tables' | 'staff' | 'roles' | 'devices' | 'terminals' | 'settings';
+type Tab = 'receipts' | 'menu' | 'inventory' | 'customers' | 'stations' | 'categories' | 'tables' | 'staff' | 'devices' | 'terminals' | 'settings';
 
 // Har tab qaysi ruxsat (capability)ga bog'liq — ruxsat yo'q bo'lsa ko'rinmaydi
 const NAV: { key: Tab; tkey: string; icon: string; hint: string; cap: string }[] = [
@@ -29,7 +28,6 @@ const NAV: { key: Tab; tkey: string; icon: string; hint: string; cap: string }[]
   { key: 'categories', tkey: 'admin.categories', icon: '🗂️', hint: 'Menyu kategoriyalari', cap: 'menu' },
   { key: 'tables', tkey: 'admin.tables', icon: '🪑', hint: 'Stollar va zallar', cap: 'tables' },
   { key: 'staff', tkey: 'admin.staff', icon: '👥', hint: 'Xodimlar', cap: 'staff' },
-  { key: 'roles', tkey: 'admin.roles', icon: '🛡️', hint: 'Rollar va ruxsatlar', cap: 'staff' },
   { key: 'devices', tkey: 'admin.devices', icon: '🖨️', hint: 'Server va printer', cap: 'devices' },
   { key: 'terminals', tkey: 'admin.terminals', icon: '🖥️', hint: 'Terminallar (bloklar)', cap: 'terminals' },
   { key: 'settings', tkey: 'admin.settings', icon: '⚙️', hint: 'Telegram, restoran sozlamalari', cap: 'settings' },
@@ -144,7 +142,6 @@ export function AdminPage() {
             {tab === 'categories' && <CategoriesTab />}
             {tab === 'tables' && <TablesTab />}
             {tab === 'staff' && <StaffTab />}
-            {tab === 'roles' && <RolesTab />}
             {tab === 'devices' && <DevicesTab />}
             {tab === 'terminals' && <TerminalsTab />}
             {tab === 'settings' && <SettingsPanel embedded />}

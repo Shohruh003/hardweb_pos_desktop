@@ -22,6 +22,11 @@ export interface OpenModuleOptions {
 interface NavCtx {
   module: ModuleKey;
   /**
+   * Xodim bosh sahifani (launcher) o'zi tanladi ("← Orqaga"). Kassir kirganda tanlov oynasisiz
+   * kassa (POS) ekraniga tushadi — faqat "Orqaga" bosgandagina launcher ko'rinadi.
+   */
+  home: boolean;
+  /**
    * Ofitsiant ekrani ochilganda tanlanadigan rejim (open('waiter', {waiterMode}) bilan beriladi).
    * WaiterPage uni bir marta o'qiydi (mount'da) va consumeWaiterMode() bilan tozalaydi.
    */
@@ -32,22 +37,27 @@ interface NavCtx {
   consumeWaiterMode: () => OrderType | null;
   consumeWaiterTarget: () => WaiterTarget | null;
   goHome: () => void;
+  /** Xodim almashganda (chiqish / boshqa xodim kirishi): boshlang'ich holat — modul ham, "home" ham yo'q */
+  resetNav: () => void;
 }
 
 const Ctx = createContext<NavCtx | null>(null);
 
 export function AppNavProvider({ children }: { children: ReactNode }) {
   const [module, setModule] = useState<ModuleKey>(null);
+  const [home, setHome] = useState(false);
   const [waiterMode, setWaiterMode] = useState<OrderType | null>(null);
   const [waiterTarget, setWaiterTarget] = useState<WaiterTarget | null>(null);
   const value: NavCtx = {
     module,
+    home,
     waiterMode,
     waiterTarget,
     open: (m, opts) => {
       setWaiterMode(opts?.waiterMode ?? null);
       setWaiterTarget(opts?.waiterTarget ?? null);
       setModule(m);
+      setHome(m === null);
     },
     consumeWaiterMode: () => {
       const m = waiterMode;
@@ -63,6 +73,13 @@ export function AppNavProvider({ children }: { children: ReactNode }) {
       setWaiterMode(null);
       setWaiterTarget(null);
       setModule(null);
+      setHome(true);
+    },
+    resetNav: () => {
+      setWaiterMode(null);
+      setWaiterTarget(null);
+      setModule(null);
+      setHome(false);
     },
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

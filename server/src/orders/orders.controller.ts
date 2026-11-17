@@ -132,8 +132,10 @@ export class OrdersController {
   }
 
   // Oshxona holatlari (qabul_qilindi | tayyorlanmoqda | tayyor). "yopildi" — faqat to'lov orqali.
+  // Faqat oshxona ekrani (KDS) o'zgartiradi — 'kitchen' ruxsati (direktor/SuperAdmin — avtomatik).
   @Patch(':id/status')
-  updateStatus(@Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
+  updateStatus(@Param('id') id: string, @Body() dto: UpdateOrderStatusDto, @Request() req: any) {
+    assertCapability(req, 'kitchen');
     return this.orders.updateStatus(id, dto);
   }
 
@@ -248,10 +250,14 @@ export class OrdersController {
     return this.orders.printBillRelay(id);
   }
 
-  // To'lov chekini kassa (printerli terminal) chop etsin (relay).
-  // Printersiz terminalda to'lov qilinganda chek kassadan chiqadi.
+  // To'lov chekini kassa (printerli terminal) chop etsin (relay). UI bilan bir xil qoida: printersiz
+  // terminalda to'lovdan keyin (kassa ruxsati / administrator / direktor) yoki cheklar tarixidan qayta
+  // chop etishda ('history' ruxsati). Ofitsiant va oshpaz — 403 (kassadan begona chek chiqarilmasin).
   @Post('print-receipt')
-  printReceipt(@Body() receipt: Receipt) {
+  printReceipt(@Body() receipt: Receipt, @Request() req: any) {
+    if (!canManageOrders(req?.user) && !canViewAllHistory(req?.user)) {
+      throw new ForbiddenException(FORBIDDEN_MESSAGE);
+    }
     return this.orders.printReceiptRelay(receipt);
   }
 

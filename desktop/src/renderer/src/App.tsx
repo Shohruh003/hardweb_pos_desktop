@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { hasCapability } from '@hardweb-pos/shared';
+import { UserRole, hasCapability } from '@hardweb-pos/shared';
 import { useAuth } from './state/auth';
 import { useDemoNav } from './state/demoNav';
 import { useAppNav } from './state/appNav';
@@ -35,7 +35,7 @@ export function App() {
 function AppScreens() {
   const { user, logout, updateUser, refreshUser } = useAuth();
   const { queue } = useDemoNav();
-  const { module, goHome } = useAppNav();
+  const { module, home, resetNav } = useAppNav();
   // Server manzili saqlanib oyna qayta yuklanganda splash qayta ko'rsatilmaydi
   const [splashDone, setSplashDone] = useState(consumeSkipSplash);
   // Barqaror callback — App qayta chizilganda splash taymerlari qaytadan boshlanmaydi
@@ -84,9 +84,9 @@ function AppScreens() {
   const prevUserId = useRef<string | null>(user?.id ?? null);
   useEffect(() => {
     const id = user?.id ?? null;
-    if (prevUserId.current && id !== prevUserId.current) goHome();
+    if (prevUserId.current && id !== prevUserId.current) resetNav();
     prevUserId.current = id;
-  }, [user, goHome]);
+  }, [user, resetNav]);
 
   // Sensorli qurilma (planshet/monoblok): matn maydoni bosilganda Windows
   // ekran klaviaturasini ochamiz. Oddiy kompyuterda (sichqoncha) ochilmaydi.
@@ -189,7 +189,10 @@ function AppScreens() {
   // (eski/stale modul holatida ruxsatsiz ekranga tushib qolmasligi uchun).
   // Bitta modul bo'lsa — to'g'ridan-to'g'ri o'sha ekran (launcher ko'rsatilmaydi).
   const validModule = module && mods.includes(module) ? module : null;
-  const effective = validModule ?? (mods.length === 1 ? mods[0] : null);
+  // Kassir (kassa PIN kodi) — tanlov oynasisiz barcha zallar ko'rinadigan kassa (POS) ekrani; bosh
+  // sahifa (launcher) faqat "← Orqaga" bosilganda (restoran egasi kassada shu hisob bilan ishlaydi)
+  const landing = user.role === UserRole.Cashier && mods.includes('waiter') && !home ? 'waiter' : null;
+  const effective = validModule ?? (mods.length === 1 ? mods[0] : landing);
 
   switch (effective) {
     case 'waiter':

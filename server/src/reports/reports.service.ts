@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, In, MoreThanOrEqual, Repository } from 'typeorm';
+import { Between, In, MoreThanOrEqual, ObjectLiteral, Repository, SelectQueryBuilder } from 'typeorm';
 
 import {
   ExpenseEntity,
@@ -38,7 +38,26 @@ import {
   roundSum,
 } from '@hardweb-pos/shared';
 import { Actor, normalizePaymentMethods, orderTotalsOf } from '../orders/order-rules';
-import { LocalRange, inRangeSql, rangeParams, sqliteUtc } from './report-dates';
+import { LocalRange, inRangeSql, looseDayBound, rangeParams, sqliteUtc } from './report-dates';
+
+// ---- Vozvrat kuni qoidasi (0.3.3) ----
+// O'tgan kunlar raqamlari HECH QACHON o'zgarmaydi (Telegram'ga ketgan kunlik hisobot bilan bir xil qoladi):
+//  • sotuv — o'z kunida hisoblanadi (keyin vozvrat qilinsa ham): to'lovlar — to'lov kunida, yopilgan
+//    chek ko'rsatkichlari (taomlar, ofitsiantlar, kunlik grafik) — chek yopilgan kunida;
+//  • vozvrat — vozvrat qilingan kunida (refunded_at) MANFIY yozuv: chekning barcha to'lovlari / taomlari.
+// Oraliq qiymati = Σ(oraliqdagi sotuvlar, vozvrat qilingan-qilinmaganidan qat'i nazar) − Σ(oraliqdagi
+// vozvratlar). Bir oraliqdagi sotuv va uning vozvrati nolga teng (avvalgidek). Vozvrat — butun chek.
+
+/** Hisobot yozuvi tomoni: sotuv (+) yoki vozvrat (−) */
+type Side = 'sale' | 'refund';
+const SIDES: readonly Side[] = ['sale', 'refund'];
+const SIGN: Record<Side, 1 | -1> = { sale: 1, refund: -1 };
+
+/** Hisobot oynasi: [fromUtc, toUtc) — UTC matn; toUtc = null — fromUtc dan boshlab (eski davrlar) */
+interface ReportWindow {
+  fromUtc: string;
+  toUtc: string | null;
+}
 
 // ---- Xabarlar (demo/mock bilan bir xil bo'lishi kerak) ----
 export const SHARE_PERCENT_MESSAGE = 'Ofitsiant ulushi foizi 0 dan 100 gacha bo‘lishi kerak';
@@ -75,6 +94,7 @@ export interface DebtsReport {
 
 /** Yopilgan chekning pul ko'rsatkichlari (SQL'da qator yig'indilari, JS'da xizmat haqi — calcOrderTotals bilan bir xil) */
 interface ClosedOrderMoney {
+  sign: 1 | -1; // +1 — yopilgan kuni (sotuv), −1 — vozvrat kuni
   waiterId: string;
   type: OrderType;
   subtotal: number; // qatorlar yig'indisi
@@ -91,6 +111,19 @@ interface MethodInfo {
 
 /** Davr bo'yicha to'lov turlari qatori — kalit, nom va toifa bilan (B30) */
 export type PaymentBreakdownRow = ReportSummary['paymentBreakdown'][number] & { label: string; kind: PaymentMethodKind };
+
+/** Taom bo'yicha sof yig'indi (sotuv − vozvrat). qty — yaxlitlanmagan, summalar — butun so'm */
+interface ItemNet {
+  name: string;
+  unit: string | null;
+  category: string | null;
+  qty: number;
+  amount: number;
+  hall: number;
+  saboy: number;
+  takeaway: number;
+  delivery: number;
+}
 
 @Injectable()
 export class ReportsService {
@@ -134,18 +167,111 @@ export class ReportsService {
    * Hisobot oynasi (0.3.2): ?from=&to= (sana yoki sana+vaqt) berilsa — aynan shu oraliq,
    * aks holda eski davr (kun / hafta / oy) — boshidan hozirgacha.
    */
-  private windowOf(period: ReportPeriod, range?: LocalRange | null): { fromUtc: string; toUtc: string | null } {
+  private windowOf(period: ReportPeriod, range?: LocalRange | null): ReportWindow {
     if (range) return { fromUtc: range.fromUtc, toUtc: range.toUtc };
     return { fromUtc: sqliteUtc(this.periodStart(period)), toUtc: null };
   }
 
-  /** SQL: ustun oynada (datetime() bilan yagona ko'rinish) */
-  private winSql(column: string, w: { toUtc: string | null }): string {
-    return w.toUtc ? `datetime(${column}) >= :wFrom AND datetime(${column}) < :wTo` : `datetime(${column}) >= :wFrom`;
+  /**
+   * SQL: ustun oynada. Aniq shart — datetime() bilan yagona ko'rinishda (bazada aralash formatlar bor);
+   * qo'pol matn chegaralari (:wLo / :wHi, report-dates looseDayBound) — faqat indeksdan foydalanish uchun.
+   */
+  private winSql(column: string, w: ReportWindow): string {
+    const lower = `${column} >= :wLo AND datetime(${column}) >= :wFrom`;
+    return w.toUtc ? `${lower} AND ${column} < :wHi AND datetime(${column}) < :wTo` : lower;
   }
 
-  private winParams(w: { fromUtc: string; toUtc: string | null }): Record<string, string> {
-    return w.toUtc ? { wFrom: w.fromUtc, wTo: w.toUtc } : { wFrom: w.fromUtc };
+  private winParams(w: ReportWindow): Record<string, string> {
+    const params: Record<string, string> = { wFrom: w.fromUtc, wLo: looseDayBound(w.fromUtc, -1) };
+    if (w.toUtc) {
+      params.wTo = w.toUtc;
+      params.wHi = looseDayBound(w.toUtc, 2);
+    }
+    return params;
+  }
+
+  /**
+   * Yopilgan chek yozuvlari (`o` — orders) tomon bo'yicha: sotuv — yopilgan cheklar, closed_at oynada
+   * (keyin vozvrat qilingan bo'lsa ham); vozvrat — qaytarilgan cheklar, refunded_at oynada.
+   */
+  private whereClosedSide<T extends ObjectLiteral>(qb: SelectQueryBuilder<T>, side: Side, w: ReportWindow): SelectQueryBuilder<T> {
+    if (side === 'sale') {
+      return qb
+        .andWhere('o.status = :closedStatus', { closedStatus: OrderStatus.Closed })
+        .andWhere(this.winSql('o.closed_at', w), this.winParams(w));
+    }
+    return qb.andWhere('o.refunded = 1').andWhere(this.winSql('o.refunded_at', w), this.winParams(w));
+  }
+
+  /**
+   * To'lov yozuvlari (`p` — payments, `o` — uning cheki) tomon bo'yicha: sotuv — oynada qabul qilingan
+   * to'lovlar (chek keyin vozvrat qilingan bo'lsa ham); vozvrat — oynada qaytarilgan cheklarning BARCHA
+   * to'lovlari (qaysi kuni to'langanidan qat'i nazar — mijozga chek summasi to'liq qaytadi).
+   */
+  private paymentsOf(side: Side, w: ReportWindow): SelectQueryBuilder<PaymentEntity> {
+    const qb = this.payments.createQueryBuilder('p').innerJoin(OrderEntity, 'o', 'o.id = p.order_id');
+    if (side === 'sale') return qb.where(this.winSql('p.created_at', w), this.winParams(w));
+    return qb.where('o.refunded = 1').andWhere(this.winSql('o.refunded_at', w), this.winParams(w));
+  }
+
+  /**
+   * Taomlar bo'yicha sof yig'indi (sotuv − vozvrat), nomi bo'yicha. detail — toifa va zal / saboy /
+   * olib ketish / yetkazish bo'yicha summalar ham. Nolga tenglashganlar ham qaytadi (chaqiruvchi tanlaydi).
+   */
+  private async netItems(
+    w: ReportWindow,
+    opts: { waiterId?: string; type?: OrderType | null; detail?: boolean } = {},
+  ): Promise<ItemNet[]> {
+    const byName = new Map<string, ItemNet>();
+    for (const side of SIDES) {
+      const sign = SIGN[side];
+      const qb = this.orderItems
+        .createQueryBuilder('i')
+        .innerJoin(OrderEntity, 'o', 'o.id = i.order_id')
+        .select('i.menu_item_name', 'name')
+        .addSelect('MAX(i.unit)', 'unit')
+        .addSelect('SUM(i.quantity)', 'qty')
+        .addSelect(`SUM(${LINE_SQL})`, 'amount');
+      if (opts.detail) {
+        qb.leftJoin('menu_items', 'mi', 'mi.id = i.menu_item_id')
+          .leftJoin('categories', 'c', 'c.id = mi.category_id')
+          .addSelect('MAX(c.name)', 'category')
+          .addSelect(`SUM(CASE WHEN COALESCE(o.order_type, 'stol') = 'stol' AND COALESCE(i.takeaway, 0) = 0 THEN ${LINE_SQL} ELSE 0 END)`, 'hall')
+          .addSelect(`SUM(CASE WHEN COALESCE(o.order_type, 'stol') = 'stol' AND COALESCE(i.takeaway, 0) = 1 THEN ${LINE_SQL} ELSE 0 END)`, 'saboy')
+          .addSelect(`SUM(CASE WHEN o.order_type = 'olib_ketish' THEN ${LINE_SQL} ELSE 0 END)`, 'takeaway')
+          .addSelect(`SUM(CASE WHEN o.order_type = 'yetkazish' THEN ${LINE_SQL} ELSE 0 END)`, 'delivery');
+      }
+      this.whereClosedSide(qb, side, w);
+      if (opts.waiterId) qb.andWhere('o.waiter_id = :waiterId', { waiterId: opts.waiterId });
+      if (opts.type === OrderType.DineIn) qb.andWhere("COALESCE(o.order_type, 'stol') = 'stol'");
+      else if (opts.type) qb.andWhere('o.order_type = :t', { t: opts.type });
+      const rows = await qb.groupBy('i.menu_item_name').getRawMany<Record<string, string | number | null>>();
+      for (const r of rows) {
+        const name = String(r.name ?? '');
+        const cur = byName.get(name) ?? {
+          name,
+          unit: null,
+          category: null,
+          qty: 0,
+          amount: 0,
+          hall: 0,
+          saboy: 0,
+          takeaway: 0,
+          delivery: 0,
+        };
+        // Birlik / toifa — ikki tomonning kattasi (SQL'dagi MAX bilan bir xil: kg > dona)
+        cur.unit = maxText(cur.unit, r.unit);
+        cur.category = maxText(cur.category, r.category);
+        cur.qty += sign * (Number(r.qty) || 0);
+        cur.amount += sign * roundSum(r.amount);
+        cur.hall += sign * roundSum(r.hall);
+        cur.saboy += sign * roundSum(r.saboy);
+        cur.takeaway += sign * roundSum(r.takeaway);
+        cur.delivery += sign * roundSum(r.delivery);
+        byName.set(name, cur);
+      }
+    }
+    return [...byName.values()];
   }
 
   // Davr boshlanish vaqti: kun = bugun 00:00, hafta = 7 kun, oy = 30 kun
@@ -164,46 +290,47 @@ export class ReportsService {
 
   // Umumiy ko'rsatkichlar: tushum, hisoblar soni, o'rtacha chek, to'lov turlari (TZ F-5.2).
   // To'lov turlari — sozlamadagi usul kaliti, nomi va toifasi bilan (B30), sozlamadagi tartibda.
+  // Vozvrat kuni qoidasi: oynadagi to'lovlar (+) − oynada qaytarilgan cheklarning to'lovlari (−).
+  // Hisoblar soni ham shunday: to'lovi bor cheklar (+) − qaytarilgan cheklar (−); manfiy bo'lishi mumkin.
   async summary(period: ReportPeriod, range?: LocalRange | null): Promise<ReportSummary> {
     const w = this.windowOf(period, range);
 
-    const rows = await this.payments
-      .createQueryBuilder('p')
-      .innerJoin(OrderEntity, 'o', 'o.id = p.order_id')
-      .select('p.type', 'type')
-      .addSelect('SUM(p.amount)', 'amount')
-      .where(this.winSql('p.created_at', w), this.winParams(w))
-      .andWhere('o.refunded = 0') // vozvrat qilinganlar hisobga olinmaydi
-      .groupBy('p.type')
-      .getRawMany<{ type: string; amount: string | number }>();
+    const net = new Map<string, number>();
+    let ordersCount = 0;
+    for (const side of SIDES) {
+      const rows = await this.paymentsOf(side, w)
+        .select('p.type', 'type')
+        .addSelect('SUM(p.amount)', 'amount')
+        .groupBy('p.type')
+        .getRawMany<{ type: string; amount: string | number }>();
+      for (const r of rows) net.set(r.type, (net.get(r.type) ?? 0) + SIGN[side] * roundSum(r.amount));
+      // Bitta chek bir nechta usul bilan to'langan bo'lishi mumkin — chek soni alohida (DISTINCT) hisoblanadi
+      const countRow = await this.paymentsOf(side, w)
+        .select('COUNT(DISTINCT p.order_id)', 'orders')
+        .getRawOne<{ orders: string | number }>();
+      ordersCount += SIGN[side] * (Number(countRow?.orders) || 0);
+    }
 
     const methods = await this.paymentMethods();
     const order = new Map(methods.map((m, i) => [m.key, i] as const));
     let revenue = 0;
-    // Bitta chek bir nechta usul bilan to'langan bo'lishi mumkin — chek soni alohida (DISTINCT) hisoblanadi
-    const breakdown: PaymentBreakdownRow[] = rows.map((r) => {
-      const amount = roundSum(r.amount);
-      revenue += amount;
-      const info = methodInfo(methods, r.type);
-      return { type: r.type as PaymentType, amount, label: info.label, kind: info.kind };
-    });
+    // Nolga tenglashgan usul (masalan shu oraliqda sotilib, qaytarilgan) ko'rsatilmaydi — avvalgidek
+    const breakdown: PaymentBreakdownRow[] = [...net.entries()]
+      .filter(([, amount]) => amount !== 0)
+      .map(([type, amount]) => {
+        revenue += amount;
+        const info = methodInfo(methods, type);
+        return { type: type as PaymentType, amount, label: info.label, kind: info.kind };
+      });
     breakdown.sort(
       (a, b) => (order.get(a.type) ?? 999) - (order.get(b.type) ?? 999) || b.amount - a.amount,
     );
-    const countRow = await this.payments
-      .createQueryBuilder('p')
-      .innerJoin(OrderEntity, 'o', 'o.id = p.order_id')
-      .select('COUNT(DISTINCT p.order_id)', 'orders')
-      .where(this.winSql('p.created_at', w), this.winParams(w))
-      .andWhere('o.refunded = 0')
-      .getRawOne<{ orders: string | number }>();
-    const ordersCount = Number(countRow?.orders) || 0;
 
     return {
       period,
       revenue,
       ordersCount,
-      avgCheck: ordersCount ? Math.round(revenue / ordersCount) : 0,
+      avgCheck: ordersCount > 0 ? Math.round(revenue / ordersCount) : 0,
       paymentBreakdown: breakdown,
       byOrderType: await this.byOrderType(w),
     };
@@ -211,30 +338,28 @@ export class ReportsService {
 
   /**
    * Buyurtma turlari bo'yicha (stolga / olib ketish / yetkazish): tushum — umumiy tushum bilan bir
-   * xil qoida (davrdagi to'lovlar, vozvrat qilinmagan cheklar), soni — shu to'lovlari bor YOPILGAN
-   * cheklar. Uchala tur doim qaytadi (savdo bo'lmasa — 0).
+   * xil qoida (oynadagi to'lovlar − oynada qaytarilgan cheklarning to'lovlari), soni — shu to'lovlari
+   * bor YOPILGAN cheklar − qaytarilgan cheklar. Uchala tur doim qaytadi (savdo bo'lmasa — 0).
    */
-  private async byOrderType(w: { fromUtc: string; toUtc: string | null }): Promise<NonNullable<ReportSummary['byOrderType']>> {
-    const rows = await this.payments
-      .createQueryBuilder('p')
-      .innerJoin(OrderEntity, 'o', 'o.id = p.order_id')
-      .select('o.order_type', 'type')
-      .addSelect('SUM(p.amount)', 'amount')
-      .addSelect('COUNT(DISTINCT CASE WHEN o.status = :closed THEN o.id END)', 'orders')
-      .where(this.winSql('p.created_at', w), this.winParams(w))
-      .andWhere('o.refunded = 0')
-      .setParameter('closed', OrderStatus.Closed)
-      .groupBy('o.order_type')
-      .getRawMany<{ type: string | null; amount: string | number; orders: string | number }>();
-
+  private async byOrderType(w: ReportWindow): Promise<NonNullable<ReportSummary['byOrderType']>> {
     const acc = new Map<OrderType, { count: number; amount: number }>();
-    for (const r of rows) {
-      // Tur yozilmagan (eski) buyurtmalar — stolga
-      const t = orderTypeOf({ type: r.type });
-      const cur = acc.get(t) ?? { count: 0, amount: 0 };
-      cur.count += Number(r.orders) || 0;
-      cur.amount += roundSum(r.amount);
-      acc.set(t, cur);
+    for (const side of SIDES) {
+      const sign = SIGN[side];
+      const rows = await this.paymentsOf(side, w)
+        .select('o.order_type', 'type')
+        .addSelect('SUM(p.amount)', 'amount')
+        .addSelect('COUNT(DISTINCT CASE WHEN o.status = :closed THEN o.id END)', 'orders')
+        .setParameter('closed', OrderStatus.Closed)
+        .groupBy('o.order_type')
+        .getRawMany<{ type: string | null; amount: string | number; orders: string | number }>();
+      for (const r of rows) {
+        // Tur yozilmagan (eski) buyurtmalar — stolga
+        const t = orderTypeOf({ type: r.type });
+        const cur = acc.get(t) ?? { count: 0, amount: 0 };
+        cur.count += sign * (Number(r.orders) || 0);
+        cur.amount += sign * roundSum(r.amount);
+        acc.set(t, cur);
+      }
     }
     return ORDER_TYPES.map((type) => ({
       type,
@@ -243,71 +368,38 @@ export class ReportsService {
     }));
   }
 
-  // Eng ko'p sotilgan taomlar reytingi (TZ F-5.3)
+  // Eng ko'p sotilgan taomlar reytingi (TZ F-5.3): sof miqdor (sotuv − vozvrat), faqat musbatlari
   async topItems(period: ReportPeriod, limit = 10, range?: LocalRange | null): Promise<TopItem[]> {
-    const w = this.windowOf(period, range);
-    const rows = await this.orderItems
-      .createQueryBuilder('i')
-      .innerJoin(OrderEntity, 'o', 'o.id = i.order_id')
-      .select('i.menu_item_name', 'name')
-      .addSelect('SUM(i.quantity)', 'qty')
-      .addSelect(`SUM(${LINE_SQL})`, 'amount')
-      .where('o.status = :closed', { closed: OrderStatus.Closed })
-      .andWhere(this.winSql('o.closed_at', w), this.winParams(w))
-      .andWhere('o.refunded = 0')
-      .groupBy('i.menu_item_name')
-      .orderBy('qty', 'DESC')
-      .limit(limit)
-      .getRawMany<{ name: string; qty: string | number; amount: string | number }>();
-
-    return rows.map((r) => ({
-      name: r.name,
-      quantity: roundQty3(r.qty),
-      sum: roundSum(r.amount),
-    }));
+    const rows = await this.netItems(this.windowOf(period, range));
+    return rows
+      .map((r) => ({ name: r.name, quantity: roundQty3(r.qty), sum: r.amount }))
+      .filter((r) => r.quantity > 0)
+      .sort((a, b) => b.quantity - a.quantity || compareText(a.name, b.name))
+      .slice(0, Math.max(0, limit));
   }
 
   /**
    * Taomlar bo'yicha to'liq hisobot (0.3.2 — restoran talabi: faqat "eng ko'p sotilganlar" emas,
-   * 1 ta sotilgan bo'lsa ham). Oraliqdagi yopilgan, vozvrat qilinmagan cheklar; ixtiyoriy buyurtma turi.
+   * 1 ta sotilgan bo'lsa ham). Oraliqdagi yopilgan cheklar minus oraliqdagi vozvratlar (sof — manfiy
+   * bo'lishi mumkin: oldin sotilgan taom shu oraliqda qaytarilgan); ixtiyoriy buyurtma turi.
    * Har taom: miqdor (kasr ham), summa, zalda / saboy / olib ketish / yetkazish bo'yicha summa.
    */
   async allItems(range: LocalRange, type?: OrderType | null): Promise<SoldItemsReport> {
-    const qb = this.orderItems
-      .createQueryBuilder('i')
-      .innerJoin(OrderEntity, 'o', 'o.id = i.order_id')
-      .leftJoin('menu_items', 'mi', 'mi.id = i.menu_item_id')
-      .leftJoin('categories', 'c', 'c.id = mi.category_id')
-      .select('i.menu_item_name', 'name')
-      .addSelect('MAX(i.unit)', 'unit')
-      .addSelect('MAX(c.name)', 'category')
-      .addSelect('SUM(i.quantity)', 'qty')
-      .addSelect(`SUM(${LINE_SQL})`, 'amount')
-      .addSelect(`SUM(CASE WHEN COALESCE(o.order_type, 'stol') = 'stol' AND COALESCE(i.takeaway, 0) = 0 THEN ${LINE_SQL} ELSE 0 END)`, 'hall')
-      .addSelect(`SUM(CASE WHEN COALESCE(o.order_type, 'stol') = 'stol' AND COALESCE(i.takeaway, 0) = 1 THEN ${LINE_SQL} ELSE 0 END)`, 'saboy')
-      .addSelect(`SUM(CASE WHEN o.order_type = 'olib_ketish' THEN ${LINE_SQL} ELSE 0 END)`, 'takeaway')
-      .addSelect(`SUM(CASE WHEN o.order_type = 'yetkazish' THEN ${LINE_SQL} ELSE 0 END)`, 'delivery')
-      .where('o.status = :closed', { closed: OrderStatus.Closed })
-      .andWhere('o.refunded = 0')
-      .andWhere(inRangeSql('o.closed_at'), rangeParams(range));
-    if (type === OrderType.DineIn) qb.andWhere("COALESCE(o.order_type, 'stol') = 'stol'");
-    else if (type) qb.andWhere('o.order_type = :t', { t: type });
-    const rows = await qb
-      .groupBy('i.menu_item_name')
-      .orderBy('amount', 'DESC')
-      .addOrderBy('name', 'ASC')
-      .getRawMany<Record<string, string | number | null>>();
-    const items = rows.map((r) => ({
-      name: String(r.name ?? ''),
-      category: r.category ? String(r.category) : null,
-      unit: r.unit === MenuUnit.Weight ? MenuUnit.Weight : MenuUnit.Piece,
-      quantity: roundQty3(r.qty as number),
-      sum: roundSum(r.amount),
-      hall: roundSum(r.hall),
-      saboy: roundSum(r.saboy),
-      takeaway: roundSum(r.takeaway),
-      delivery: roundSum(r.delivery),
-    }));
+    const items = (await this.netItems(range, { type, detail: true }))
+      .map((r) => ({
+        name: r.name,
+        category: r.category,
+        unit: r.unit === MenuUnit.Weight ? MenuUnit.Weight : MenuUnit.Piece,
+        quantity: roundQty3(r.qty),
+        sum: r.amount,
+        hall: r.hall,
+        saboy: r.saboy,
+        takeaway: r.takeaway,
+        delivery: r.delivery,
+      }))
+      // Shu oraliqda sotilib, qaytarilgan taom — nolga teng, ro'yxatga kirmaydi (avvalgidek)
+      .filter((x) => x.quantity !== 0 || x.sum !== 0 || x.hall !== 0 || x.saboy !== 0 || x.takeaway !== 0 || x.delivery !== 0)
+      .sort((a, b) => b.sum - a.sum || compareText(a.name, b.name));
     return {
       from: range.from,
       to: range.to,
@@ -320,25 +412,28 @@ export class ReportsService {
   }
 
   // Kunlik tushum qatori (dashboard chiziqli grafigi uchun) — oxirgi N kun, MAHALLIY sana bo'yicha
-  // (closed_at UTC'da saqlanadi — 'localtime' bilan Toshkent kuniga o'tkaziladi: 00:00–04:59 dagi
-  // cheklar oldingi kunga tushib qolmaydi).
+  // (vaqtlar UTC'da saqlanadi — 'localtime' bilan Toshkent kuniga o'tkaziladi: 00:00–04:59 dagi
+  // cheklar oldingi kunga tushib qolmaydi). Sotuv — chek yopilgan kunida (to'lovlari yig'indisi),
+  // vozvrat — qaytarilgan kunida manfiy.
   async daily(days = 7): Promise<{ date: string; revenue: number }[]> {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
     start.setDate(start.getDate() - (days - 1));
+    const w: ReportWindow = { fromUtc: sqliteUtc(start), toUtc: null };
 
-    const rows = await this.orders
-      .createQueryBuilder('o')
-      .innerJoin(PaymentEntity, 'p', 'p.order_id = o.id')
-      .select("strftime('%Y-%m-%d', o.closed_at, 'localtime')", 'date')
-      .addSelect('SUM(p.amount)', 'revenue')
-      .where('o.status = :closed', { closed: OrderStatus.Closed })
-      .andWhere('datetime(o.closed_at) >= :start', { start: sqliteUtc(start) })
-      .andWhere('o.refunded = 0')
-      .groupBy('date')
-      .getRawMany<{ date: string; revenue: string | number }>();
-
-    const map = new Map(rows.map((r) => [r.date, roundSum(r.revenue)]));
+    const map = new Map<string, number>();
+    for (const side of SIDES) {
+      const column = side === 'sale' ? 'o.closed_at' : 'o.refunded_at';
+      const qb = this.orders
+        .createQueryBuilder('o')
+        .innerJoin(PaymentEntity, 'p', 'p.order_id = o.id')
+        .select(`strftime('%Y-%m-%d', ${column}, 'localtime')`, 'date')
+        .addSelect('SUM(p.amount)', 'revenue');
+      const rows = await this.whereClosedSide(qb, side, w)
+        .groupBy('date')
+        .getRawMany<{ date: string; revenue: string | number }>();
+      for (const r of rows) map.set(r.date, (map.get(r.date) ?? 0) + SIGN[side] * roundSum(r.revenue));
+    }
     const out: { date: string; revenue: number }[] = [];
     for (let i = 0; i < days; i++) {
       const d = new Date(start);
@@ -349,31 +444,35 @@ export class ReportsService {
     return out;
   }
 
-  // Ofitsiantlar bo'yicha statistika (TZ F-5.4)
+  // Ofitsiantlar bo'yicha statistika (TZ F-5.4): yopilgan cheklar (+) − qaytarilgan cheklar (−), chek egasi bo'yicha
   async waiterStats(period: ReportPeriod, range?: LocalRange | null): Promise<WaiterStat[]> {
     const w = this.windowOf(period, range);
-    const rows = await this.orders
-      .createQueryBuilder('o')
-      .innerJoin('users', 'u', 'u.id = o.waiter_id')
-      .innerJoin(PaymentEntity, 'p', 'p.order_id = o.id')
-      .select('u.id', 'waiterId')
-      .addSelect('u.name', 'waiterName')
-      .addSelect('COUNT(DISTINCT o.id)', 'ordersCount')
-      .addSelect('SUM(p.amount)', 'revenue')
-      .where('o.status = :closed', { closed: OrderStatus.Closed })
-      .andWhere(this.winSql('o.closed_at', w), this.winParams(w))
-      .andWhere('o.refunded = 0')
-      .groupBy('u.id')
-      .addGroupBy('u.name')
-      .orderBy('revenue', 'DESC')
-      .getRawMany<{ waiterId: string; waiterName: string; ordersCount: string | number; revenue: string | number }>();
-
-    return rows.map((r) => ({
-      waiterId: r.waiterId,
-      waiterName: r.waiterName,
-      ordersCount: Number(r.ordersCount) || 0,
-      revenue: roundSum(r.revenue),
-    }));
+    const byWaiter = new Map<string, { waiterId: string; waiterName: string; ordersCount: number; revenue: number }>();
+    for (const side of SIDES) {
+      const sign = SIGN[side];
+      const qb = this.orders
+        .createQueryBuilder('o')
+        .innerJoin('users', 'u', 'u.id = o.waiter_id')
+        .innerJoin(PaymentEntity, 'p', 'p.order_id = o.id')
+        .select('u.id', 'waiterId')
+        .addSelect('u.name', 'waiterName')
+        .addSelect('COUNT(DISTINCT o.id)', 'ordersCount')
+        .addSelect('SUM(p.amount)', 'revenue');
+      const rows = await this.whereClosedSide(qb, side, w)
+        .groupBy('u.id')
+        .addGroupBy('u.name')
+        .getRawMany<{ waiterId: string; waiterName: string; ordersCount: string | number; revenue: string | number }>();
+      for (const r of rows) {
+        const cur = byWaiter.get(r.waiterId) ?? { waiterId: r.waiterId, waiterName: r.waiterName, ordersCount: 0, revenue: 0 };
+        cur.ordersCount += sign * (Number(r.ordersCount) || 0);
+        cur.revenue += sign * roundSum(r.revenue);
+        byWaiter.set(r.waiterId, cur);
+      }
+    }
+    // Shu oraliqda sotib, qaytarilgan (nolga tenglashgan) xodim ko'rsatilmaydi — avvalgidek
+    return [...byWaiter.values()]
+      .filter((r) => r.ordersCount !== 0 || r.revenue !== 0)
+      .sort((a, b) => b.revenue - a.revenue || a.waiterName.localeCompare(b.waiterName, 'uz'));
   }
 
   // Vozvratlar (qaytarilgan cheklar) — soni, umumiy summasi va ro'yxati
@@ -409,48 +508,51 @@ export class ReportsService {
   // =============================================================================================
 
   /**
-   * Oraliqda (closed_at, mahalliy kunlar) yopilgan, vozvrat qilinmagan cheklarning pul ko'rsatkichlari.
+   * Oraliqdagi (mahalliy kunlar) chek yozuvlarining pul ko'rsatkichlari: oraliqda yopilgan cheklar
+   * (sign +1, keyin vozvrat qilingan bo'lsa ham) va oraliqda qaytarilgan cheklar (sign −1).
    * Qator summalari SQL'da (ROUND(narx × miqdor) — shared lineSum bilan bir xil), xizmat haqi esa
    * JS'da calcOrderTotals qoidasi bilan: round(xizmat bazasi × foiz / 100). Shunda hisobot cheklardagi
-   * summalar bilan tiyinigacha mos keladi.
+   * summalar bilan tiyinigacha mos keladi (vozvrat yozuvi sotuv yozuvining aynan teskarisi).
    */
   private async closedOrderMoney(range: LocalRange, waiterId?: string): Promise<ClosedOrderMoney[]> {
-    const qb = this.orders
-      .createQueryBuilder('o')
-      .leftJoin(OrderItemEntity, 'i', 'i.order_id = o.id')
-      .select('o.id', 'id')
-      .addSelect('o.waiter_id', 'waiterId')
-      .addSelect('o.order_type', 'type')
-      .addSelect('o.service_percent', 'servicePercent')
-      .addSelect(`COALESCE(SUM(${LINE_SQL}), 0)`, 'subtotal')
-      .addSelect(`COALESCE(SUM(CASE WHEN i.takeaway = 1 THEN 0 ELSE ${LINE_SQL} END), 0)`, 'serviceBase')
-      .where('o.status = :closed', { closed: OrderStatus.Closed })
-      .andWhere('o.refunded = 0')
-      .andWhere(inRangeSql('o.closed_at'), rangeParams(range))
-      .groupBy('o.id');
-    if (waiterId) qb.andWhere('o.waiter_id = :waiterId', { waiterId });
-    const rows = await qb.getRawMany<{
-      id: string;
-      waiterId: string;
-      type: string | null;
-      servicePercent: string | number | null;
-      subtotal: string | number;
-      serviceBase: string | number;
-    }>();
-    return rows.map((r) => {
-      const serviceBase = roundSum(r.serviceBase);
-      return {
-        waiterId: r.waiterId,
-        type: orderTypeOf({ type: r.type }),
-        subtotal: roundSum(r.subtotal),
-        serviceBase,
-        serviceAmount: roundSum((serviceBase * clampPercent(r.servicePercent)) / 100),
-      };
-    });
+    const out: ClosedOrderMoney[] = [];
+    for (const side of SIDES) {
+      const qb = this.orders
+        .createQueryBuilder('o')
+        .leftJoin(OrderItemEntity, 'i', 'i.order_id = o.id')
+        .select('o.id', 'id')
+        .addSelect('o.waiter_id', 'waiterId')
+        .addSelect('o.order_type', 'type')
+        .addSelect('o.service_percent', 'servicePercent')
+        .addSelect(`COALESCE(SUM(${LINE_SQL}), 0)`, 'subtotal')
+        .addSelect(`COALESCE(SUM(CASE WHEN i.takeaway = 1 THEN 0 ELSE ${LINE_SQL} END), 0)`, 'serviceBase');
+      this.whereClosedSide(qb, side, range);
+      if (waiterId) qb.andWhere('o.waiter_id = :waiterId', { waiterId });
+      const rows = await qb.groupBy('o.id').getRawMany<{
+        id: string;
+        waiterId: string;
+        type: string | null;
+        servicePercent: string | number | null;
+        subtotal: string | number;
+        serviceBase: string | number;
+      }>();
+      for (const r of rows) {
+        const serviceBase = roundSum(r.serviceBase);
+        out.push({
+          sign: SIGN[side],
+          waiterId: r.waiterId,
+          type: orderTypeOf({ type: r.type }),
+          subtotal: roundSum(r.subtotal),
+          serviceBase,
+          serviceAmount: roundSum((serviceBase * clampPercent(r.servicePercent)) / 100),
+        });
+      }
+    }
+    return out;
   }
 
   /**
-   * Bitta xodim cheklari yig'indisi (B21 qoidasi):
+   * Bitta xodim cheklari yig'indisi (B21 qoidasi; vozvrat yozuvlari ayiriladi):
    *  dineInSales   — stolga cheklarning xizmat bazasi (zalda yeyilgan taomlar, saboy qatorlarisiz);
    *  takeawaySales — olib ketish/yetkazish cheklarining taomlari + stolga cheklardagi saboy qatorlari;
    *  serviceAmount — haqiqatda undirilgan xizmat haqi.
@@ -458,21 +560,30 @@ export class ReportsService {
   private static accumulate(list: ClosedOrderMoney[]) {
     const acc = { ordersCount: 0, dineInSales: 0, takeawaySales: 0, serviceAmount: 0 };
     for (const o of list) {
-      acc.ordersCount += 1;
+      acc.ordersCount += o.sign;
       if (o.type === OrderType.DineIn) {
-        acc.dineInSales += o.serviceBase;
-        acc.takeawaySales += o.subtotal - o.serviceBase;
+        acc.dineInSales += o.sign * o.serviceBase;
+        acc.takeawaySales += o.sign * (o.subtotal - o.serviceBase);
       } else {
-        acc.takeawaySales += o.subtotal;
+        acc.takeawaySales += o.sign * o.subtotal;
       }
-      acc.serviceAmount += o.serviceAmount;
+      acc.serviceAmount += o.sign * o.serviceAmount;
     }
     return acc;
   }
 
-  /** Ofitsiant ulushi: round(stolga buyurtmalar summasi × foiz / 100) */
+  /**
+   * Ofitsiant ulushi: round(stolga buyurtmalar summasi × foiz / 100). Manfiy summada (vozvrat kuni)
+   * ishorasi bilan simmetrik yaxlitlanadi: sotuv kunidagi ulushning aynan teskarisi chiqadi.
+   */
   private static share(dineInSales: number, percent: number): number {
-    return roundSum((dineInSales * percent) / 100);
+    const v = roundSum((Math.abs(dineInSales) * percent) / 100);
+    return dineInSales < 0 && v !== 0 ? -v : v;
+  }
+
+  /** Hamma ko'rsatkichi nolga teng (shu oraliqda sotib, qaytarilgan) xodim qatori */
+  private static isZeroRow(r: { ordersCount: number; dineInSales: number; takeawaySales: number; serviceAmount: number }): boolean {
+    return r.ordersCount === 0 && r.dineInSales === 0 && r.takeawaySales === 0 && r.serviceAmount === 0;
   }
 
   /**
@@ -495,17 +606,20 @@ export class ReportsService {
       : [];
     const personById = new Map(people.map((u) => [u.id, u] as const));
 
-    const rows: WaiterShareRow[] = [...byWaiter.entries()].map(([waiterId, orders]) => {
-      const acc = ReportsService.accumulate(orders);
-      const person = personById.get(waiterId);
-      return {
-        waiterId,
-        waiterName: person?.name ?? 'Noma’lum xodim',
-        role: person?.role ?? '',
-        ...acc,
-        shareAmount: ReportsService.share(acc.dineInSales, percent),
-      };
-    });
+    const rows: WaiterShareRow[] = [...byWaiter.entries()]
+      .map(([waiterId, orders]) => {
+        const acc = ReportsService.accumulate(orders);
+        const person = personById.get(waiterId);
+        return {
+          waiterId,
+          waiterName: person?.name ?? 'Noma’lum xodim',
+          role: person?.role ?? '',
+          ...acc,
+          shareAmount: ReportsService.share(acc.dineInSales, percent),
+        };
+      })
+      // Shu oraliqda sotib, qaytarilgan (nolga tenglashgan) xodim ko'rsatilmaydi — avvalgidek
+      .filter((r) => !ReportsService.isZeroRow(r));
     rows.sort(
       (a, b) =>
         b.dineInSales + b.takeawaySales - (a.dineInSales + a.takeawaySales) ||
@@ -526,29 +640,20 @@ export class ReportsService {
     return { from: range.from, to: range.to, sharePercent: percent, totals, rows };
   }
 
-  /** GET /reports/waiter-items — shu xodim oraliqda sotgan taomlar (yopilgan, vozvrat qilinmagan cheklar) */
+  /**
+   * GET /reports/waiter-items — shu xodim cheklaridagi taomlar: oraliqda yopilganlari minus oraliqda
+   * qaytarilganlari (sof, manfiy bo'lishi mumkin — ofitsiantlar hisobotidagi summalar bilan bir xil qoida)
+   */
   async waiterItems(waiterId: string, range: LocalRange): Promise<(TopItem & { unit: MenuUnit | null })[]> {
-    const rows = await this.orderItems
-      .createQueryBuilder('i')
-      .innerJoin(OrderEntity, 'o', 'o.id = i.order_id')
-      .select('i.menu_item_name', 'name')
-      .addSelect('MAX(i.unit)', 'unit')
-      .addSelect('SUM(i.quantity)', 'qty')
-      .addSelect(`SUM(${LINE_SQL})`, 'amount')
-      .where('o.status = :closed', { closed: OrderStatus.Closed })
-      .andWhere('o.refunded = 0')
-      .andWhere('o.waiter_id = :waiterId', { waiterId })
-      .andWhere(inRangeSql('o.closed_at'), rangeParams(range))
-      .groupBy('i.menu_item_name')
-      .orderBy('amount', 'DESC')
-      .addOrderBy('name', 'ASC')
-      .getRawMany<{ name: string; unit: string | null; qty: string | number; amount: string | number }>();
-    return rows.map((r) => ({
-      name: r.name,
-      unit: r.unit === MenuUnit.Weight ? MenuUnit.Weight : r.unit ? MenuUnit.Piece : null,
-      quantity: roundQty3(r.qty),
-      sum: roundSum(r.amount),
-    }));
+    return (await this.netItems(range, { waiterId }))
+      .map((r) => ({
+        name: r.name,
+        unit: r.unit === MenuUnit.Weight ? MenuUnit.Weight : r.unit ? MenuUnit.Piece : null,
+        quantity: roundQty3(r.qty),
+        sum: r.amount,
+      }))
+      .filter((r) => r.quantity !== 0 || r.sum !== 0)
+      .sort((a, b) => b.sum - a.sum || compareText(a.name, b.name));
   }
 
   /** GET /reports/my-share — xodimning o'z ko'rsatkichlari (faqat o'zi olgan cheklar) */
@@ -942,6 +1047,19 @@ function roundQty6(value: unknown): number {
 /** Foiz 2 xonagacha */
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+/** Matnlarni SQLite'ning standart (BINARY) tartibida solishtirish — avvalgi ORDER BY name bilan bir xil */
+function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** Ikki qiymatning kattasi (SQL MAX kabi; bo'sh / null — e'tiborsiz) */
+function maxText(a: string | null, b: unknown): string | null {
+  const s = b == null || b === '' ? null : String(b);
+  if (a == null) return s;
+  if (s == null) return a;
+  return s > a ? s : a;
 }
 
 /** LIKE uchun maxsus belgilarni ekranlash ('\' ESCAPE bilan) */

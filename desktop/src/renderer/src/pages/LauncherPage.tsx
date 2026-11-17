@@ -42,7 +42,7 @@ export function LauncherPage() {
   }, []);
 
   const tiles = [
-    { key: 'waiter' as const, cap: 'waiter', label: 'Ofitsiant', desc: 'Zakaz qabul qilish', icon: '🧑‍🍳' },
+    { key: 'waiter' as const, cap: 'waiter', label: 'Ofitsiant', desc: 'Zakaz qabul qilish', icon: '🍽️' },
     { key: 'kitchen' as const, cap: 'kitchen', label: 'Oshxona (KDS)', desc: 'Tayyorlash ekrani', icon: '🍳' },
     { key: 'cashier' as const, cap: 'cashier', label: 'Kassa', desc: 'To‘lov va chek', icon: '💵' },
     { key: 'reports' as const, cap: 'reports', label: 'Hisobotlar', desc: 'Tushum, atchotlar', icon: '📊' },

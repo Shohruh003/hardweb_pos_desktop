@@ -98,7 +98,8 @@ export function DirectorPage() {
   const maxTop = Math.max(1, ...topItems.map((x) => x.quantity));
   const maxWaiter = Math.max(1, ...waiters.map((w) => w.revenue));
   const payments = (summary?.paymentBreakdown ?? []) as PaymentRow[];
-  const totalPay = Math.max(1, payments.reduce((s, p) => s + p.amount, 0));
+  // Ulush faqat musbat summalardan (vozvrat kuni ba'zi usullar minus bo'lishi mumkin — 0.3.3)
+  const totalPay = Math.max(1, payments.reduce((s, p) => s + Math.max(0, p.amount), 0));
   const voidRange = useMemo(() => toDateRange(rr), [rr]);
 
   // Davr: Bugun / Hafta / Oy yoki istalgan sana va vaqt oralig'i (0.3.2)
@@ -151,7 +152,7 @@ export function DirectorPage() {
                       key={p.type}
                       label={p.label ?? paymentMethodLabel(pos.paymentMethods, p.type)}
                       value={formatSum(p.amount)}
-                      percent={(p.amount / totalPay) * 100}
+                      percent={(Math.max(0, p.amount) / totalPay) * 100}
                       color={KIND_BAR[p.kind ?? ''] ?? 'bg-primary'}
                     />
                   ))

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -33,12 +34,18 @@ import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { FORBIDDEN_MESSAGE, RequestUser } from '../auth/user-view';
 import { OrdersGateway } from '../orders/orders.gateway';
-import { MenuItem, MenuUnit, SOCKET_EVENTS, UserRole, hasCapability } from '@hardweb-pos/shared';
+import { MenuItem, MenuUnit, UserRole, hasCapability } from '@hardweb-pos/shared';
 import { decodeStoredImage, menuImageUrl, normalizeUploadedImage } from './menu-image';
 
 const ITEM_NOT_FOUND_MESSAGE = 'Taom topilmadi';
 const CATEGORY_ORDER_MESSAGE = 'Kategoriyalar ro‘yxati noto‘g‘ri';
 const AVAILABILITY_MESSAGE = 'Taom holati noto‘g‘ri (available: true yoki false)';
+
+/** Taomli kategoriyani o'chirishga urinish: "«Ichimliklar» kategoriyasida 3 ta taom bor — ..." */
+function categoryInUseMessage(name: string, dishes: number): string {
+  const where = name ? `«${name}» kategoriyasida` : 'Bu kategoriyada';
+  return `${where} ${dishes} ta taom bor — avval taomlarni boshqa kategoriyaga o‘tkazing (Menyu bo‘limida)`;
+}
 
 class CategoryDto {
   @IsString() name: string;
@@ -289,21 +296,28 @@ export class MenuController {
     return { ok: true };
   }
 
+  // Taomli kategoriya o'chirilmaydi (aks holda taomlari menyuda ko'rinmay qolardi) — avval taomlar
+  // boshqa kategoriyaga o'tkaziladi
   @UseGuards(RolesGuard)
   @Roles(UserRole.Admin, UserRole.Director, UserRole.SuperAdmin)
   @Delete('categories/:id')
   async deleteCategory(@Param('id') id: string) {
+    const dishes = await this.items.count({ where: { categoryId: id } });
+    if (dishes > 0) {
+      const category = await this.categories.findOne({ where: { id } });
+      throw new BadRequestException(categoryInUseMessage(category?.name ?? '', dishes));
+    }
     await this.categories.delete(id);
     return { ok: true };
   }
 
   /**
-   * 'menu:changed' — barcha ekranlarga (ofitsiant, kassa) menyuni qayta yuklash signali.
-   * Socket xatosi asosiy amalni (saqlashni) buzmasin.
+   * 'menu:changed' — xodimlar ekranlariga (ofitsiant, kassa) menyuni qayta yuklash signali (faqat
+   * STAFF_ROOM — OrdersGateway orqali). Socket xatosi asosiy amalni (saqlashni) buzmasin.
    */
   private emitMenuChanged(payload: { itemId: string; available: boolean; deleted?: boolean }): void {
     try {
-      this.gateway.server?.emit(SOCKET_EVENTS.MENU_CHANGED, payload);
+      this.gateway.emitMenuChanged(payload);
     } catch (e) {
       this.logger.warn(`menu:changed yuborilmadi: ${e instanceof Error ? e.message : String(e)}`);
     }

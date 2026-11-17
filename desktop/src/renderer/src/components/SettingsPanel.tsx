@@ -14,6 +14,10 @@ interface Settings {
   telegramToken: string | null;
   telegramChatId: string | null;
   dailyReportTime: string;
+  /** Har kuni bazaning zaxira nusxasini Telegram'ga yuborish (standart — yoqilgan) */
+  telegramBackup?: boolean;
+  /** Oxirgi muvaffaqiyatli zaxira (server yozadi) */
+  telegramBackupAt?: string | null;
   serviceDineInPercent?: number | string | null;
   waiterSharePercent?: number | string | null;
   deliveryFeeDefault?: number | string | null;
@@ -47,11 +51,21 @@ function patchBody(s: Settings, servicePct: number, sharePct: number, fee: numbe
     telegramToken: s.telegramToken ?? '',
     telegramChatId: s.telegramChatId ?? '',
     dailyReportTime: s.dailyReportTime,
+    telegramBackup: s.telegramBackup !== false,
     serviceDineInPercent: servicePct,
     waiterSharePercent: sharePct,
     deliveryFeeDefault: fee,
     paymentMethods: methods.map((m) => ({ key: m.key, label: m.label.trim(), kind: m.kind, active: m.active })),
   };
+}
+
+/** Oxirgi zaxira vaqti: "17.11.2026 23:59" yoki "hali yuborilmagan" */
+function backupAtLabel(at: string | null | undefined): string {
+  if (!at) return 'hali yuborilmagan';
+  const d = new Date(at);
+  if (Number.isNaN(d.getTime())) return 'hali yuborilmagan';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 /** Foiz matni -> 0..100 son */
@@ -107,6 +121,8 @@ export function SettingsPanel({
     telegramToken: '',
     telegramChatId: '',
     dailyReportTime: '23:59',
+    telegramBackup: true,
+    telegramBackupAt: null,
   });
   // Foiz matnlari alohida ("7," kabi oraliq yozuv yo'qolmasin)
   const [serviceText, setServiceText] = useState('');
@@ -136,6 +152,8 @@ export function SettingsPanel({
         telegramToken: data?.telegramToken ?? '',
         telegramChatId: data?.telegramChatId ?? '',
         dailyReportTime: data?.dailyReportTime || '23:59',
+        telegramBackup: data?.telegramBackup !== false,
+        telegramBackupAt: data?.telegramBackupAt ?? null,
       });
       setServiceText(pctText(data?.serviceDineInPercent));
       setShareText(pctText(data?.waiterSharePercent));
@@ -237,6 +255,26 @@ export function SettingsPanel({
       } else {
         show('Topilmadi — avval botga Telegram\'da /start yozing, keyin qayta bosing', 'err', 6000);
       }
+    } catch (e) {
+      show((e as Error).message, 'err', 6000);
+    }
+  }
+
+  // Bazaning zaxira nusxasini hoziroq Telegram'ga yuborish (avval sozlamalar saqlanadi)
+  async function sendBackup() {
+    if (!loaded) return;
+    if (problem) {
+      show(problem, 'err', 6000);
+      return;
+    }
+    show('Zaxira nusxa tayyorlanmoqda va yuborilmoqda...', 'info', 0);
+    try {
+      await api.patch('/settings', patchBody(s, servicePct, sharePct, fee, methods));
+      const r = await api.post<{ ok: boolean; message?: string; sentAt?: string }>('/settings/telegram-backup', undefined, {
+        timeoutMs: 240_000,
+      });
+      if (r.ok && r.sentAt) setS((cur) => ({ ...cur, telegramBackupAt: r.sentAt }));
+      show(r.message || (r.ok ? 'Zaxira nusxa yuborildi ✓' : 'Yuborilmadi'), r.ok ? 'ok' : 'err', 7000);
     } catch (e) {
       show((e as Error).message, 'err', 6000);
     }
@@ -533,6 +571,34 @@ export function SettingsPanel({
         onChange={(e) => setS({ ...s, dailyReportTime: e.target.value })}
         className={`${field} mb-4`}
       />
+
+      {/* Kunlik zaxira nusxa (0.3.3): kassa kompyuteri buzilsa ham savdo tarixi yo'qolmasin */}
+      <div className="mb-4 rounded-xl border border-border bg-bg p-3" data-testid="telegram-backup">
+        <label className={`flex items-start gap-3 select-none ${loaded ? 'cursor-pointer' : 'opacity-60'}`}>
+          <input
+            type="checkbox"
+            checked={s.telegramBackup !== false}
+            disabled={!loaded}
+            onChange={(e) => setS({ ...s, telegramBackup: e.target.checked })}
+            className="mt-0.5 w-5 h-5 accent-[#059669] shrink-0"
+          />
+          <span className="text-sm">
+            <b>💾 Har kuni bazaning zaxira nusxasini Telegram'ga yuborish</b>
+            <span className="block text-xs text-muted mt-0.5 leading-relaxed">
+              Hisobot vaqtidan keyin (kompyuter o‘chiq bo‘lsa — yoqilganda) yuqoridagi Telegram ID'larga fayl
+              bo‘lib boradi. Kompyuter buzilsa ham ma’lumotlar shu fayldan tiklanadi.
+            </span>
+          </span>
+        </label>
+        <div className="mt-2 flex flex-wrap items-center gap-2 pl-8">
+          <span className="text-xs text-muted">
+            Oxirgi zaxira: <b className="text-text">{backupAtLabel(s.telegramBackupAt)}</b>
+          </span>
+          <Button variant="ghost" onClick={sendBackup} disabled={!loaded} className="ml-auto h-10 text-sm" data-testid="telegram-backup-now">
+            Hozir yuborish
+          </Button>
+        </div>
+      </div>
 
       <div className="flex gap-2 flex-wrap">
         <Button onClick={save} disabled={busy || !loaded} className="flex-1 h-12" data-testid="settings-save">

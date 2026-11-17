@@ -46,7 +46,8 @@ export function ItemsReport({ range }: { range: DateRange }) {
     );
   }, [data, q, category, sort]);
   const total = rows.reduce((t, r) => t + r.sum, 0);
-  const grand = Math.max(1, data?.total ?? 0);
+  // Ulush — musbat summalar yig'indisidan (vozvrat kuni minus qatorlar ulushsiz)
+  const positiveGrand = (data?.items ?? []).reduce((t, r) => t + Math.max(0, r.sum), 0);
 
   function exportCsv() {
     const head = ['Taom', 'Toifa', 'Miqdor', 'Birlik', 'Summa', 'Zalda', 'Saboy', 'Olib ketish', 'Yetkazish'];
@@ -120,7 +121,7 @@ export function ItemsReport({ range }: { range: DateRange }) {
             </thead>
             <tbody className="divide-y divide-border">
               {rows.map((r, i) => (
-                <ItemRow key={r.name} r={r} index={i + 1} share={(r.sum / grand) * 100} />
+                <ItemRow key={r.name} r={r} index={i + 1} share={positiveGrand > 0 && r.sum > 0 ? (r.sum / positiveGrand) * 100 : 0} />
               ))}
               <tr className="bg-bg font-extrabold">
                 <td className="px-3 py-2.5" />
@@ -139,7 +140,8 @@ export function ItemsReport({ range }: { range: DateRange }) {
 
 function ItemRow({ r, index, share }: { r: SoldItemRow; index: number; share: number }) {
   const cell = 'px-3 py-2 text-right tabular-nums';
-  const dash = (n: number) => (n > 0 ? num(n) : '—');
+  // Vozvrat kuni (0.3.3) qiymatlar manfiy bo'lishi mumkin — faqat nol "—"
+  const dash = (n: number) => (n ? num(n) : '—');
   return (
     <tr className="hover:bg-surface-hover">
       <td className="px-3 py-2 text-muted tabular-nums">{index}</td>
@@ -148,14 +150,14 @@ function ItemRow({ r, index, share }: { r: SoldItemRow; index: number; share: nu
         {r.category && <div className="text-xs text-muted">{r.category}</div>}
       </td>
       <td className={`${cell} font-bold`}>{qty(r.quantity, r.unit)}</td>
-      <td className={`${cell} font-extrabold text-text`}>{num(r.sum)}</td>
+      <td className={`${cell} font-extrabold ${r.sum < 0 ? 'text-danger' : 'text-text'}`}>{num(r.sum)}</td>
       <td className={`${cell} hidden md:table-cell`}>{dash(r.hall)}</td>
       <td className={`${cell} hidden md:table-cell`}>{dash(r.saboy)}</td>
       <td className={`${cell} hidden md:table-cell`}>{dash(r.takeaway)}</td>
       <td className={`${cell} hidden md:table-cell`}>{dash(r.delivery)}</td>
       <td className="px-3 py-2 hidden lg:table-cell">
         <div className="h-2.5 rounded-full bg-bg border border-border overflow-hidden">
-          <div className="h-full bg-primary" style={{ width: `${Math.min(100, share).toFixed(1)}%` }} />
+          <div className="h-full bg-primary" style={{ width: `${Math.max(0, Math.min(100, share)).toFixed(1)}%` }} />
         </div>
       </td>
     </tr>

@@ -94,7 +94,6 @@ const DICT: Record<string, Record<Lang, string>> = {
   'admin.categories': { uz: 'Kategoriyalar', ru: 'Категории', en: 'Categories' },
   'admin.tables': { uz: 'Stollar', ru: 'Столы', en: 'Tables' },
   'admin.staff': { uz: 'Xodimlar', ru: 'Сотрудники', en: 'Staff' },
-  'admin.roles': { uz: 'Rollar', ru: 'Роли', en: 'Roles' },
   'admin.receipts': { uz: 'Cheklar', ru: 'Чеки', en: 'Receipts' },
   'admin.devices': { uz: 'Qurilmalar', ru: 'Устройства', en: 'Devices' },
   'admin.terminals': { uz: 'Terminallar', ru: 'Терминалы', en: 'Terminals' },

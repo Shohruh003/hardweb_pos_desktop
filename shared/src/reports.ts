@@ -29,7 +29,9 @@ export interface WaiterStat {
 /**
  * Ofitsiantlar hisoboti (eski POS'dagi "Ofitsiantlar bo'yicha hisobot" kabi).
  * Mijoz stolga buyurtmada 6% xizmat haqi to'laydi; ofitsiantga stolga buyurtmalar summasining 5% i
- * (sharePercent) tegadi; qolgani muassasada. Faqat yopilgan, vozvrat qilinmagan buyurtmalar.
+ * (sharePercent) tegadi; qolgani muassasada. Yopilgan buyurtma yopilgan kunida (+), vozvrat qilingani
+ * vozvrat kunida (−) hisoblanadi (0.3.3): o'tgan kunlar hisoboti keyin o'zgarmaydi. Shuning uchun vozvrat
+ * kuni qiymatlar manfiy bo'lishi mumkin.
  */
 export interface WaiterShareRow {
   waiterId: string;

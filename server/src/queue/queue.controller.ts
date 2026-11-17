@@ -27,11 +27,12 @@ export class QueueController {
     return QUEUE_HTML;
   }
 
-  // Boshlang'ich ma'lumot: faol (yopilmagan) buyurtmalar.
-  // Bu manzil login'siz ochiladi (LAN/Wi-Fi'dagi istalgan kishi) — shuning uchun FAQAT tablo
-  // ko'rsatadigan maydonlar qaytadi: mijoz telefoni, manzili, ismi, izoh, taomlar va summalar
-  // (to'liq Order DTO) bu yerdan hech qachon chiqmasin.
+  // Tablo ma'lumoti: faol (yopilmagan) buyurtmalar — boshida va har 'queue:changed' signalida o'qiladi
+  // (socket tablo'ga buyurtmaning o'zini yubormaydi). Bu manzil login'siz ochiladi (LAN/Wi-Fi'dagi
+  // istalgan kishi) — shuning uchun FAQAT tablo ko'rsatadigan maydonlar qaytadi: mijoz telefoni,
+  // manzili, ismi, izoh, taomlar va summalar (to'liq Order DTO) bu yerdan hech qachon chiqmasin.
   @Get('data')
+  @Header('Cache-Control', 'no-store')
   async data(): Promise<QueueBoardOrder[]> {
     const list = await this.orders.findActive();
     return list

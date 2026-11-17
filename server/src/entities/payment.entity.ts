@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   PrimaryGeneratedColumn,
   ValueTransformer,
 } from 'typeorm';
@@ -15,11 +16,14 @@ const wholeSumTransformer: ValueTransformer = {
   from: (value: unknown) => (value == null ? value : Number(value)),
 };
 
+// Indekslar (0.3.3 — to'lovlar endi o'chirilmaydi): order_id — buyurtma to'lovlari (har chek, tarix,
+// hisobot birlashmalari); created_at — kun/oraliq bo'yicha tushum va kassa holati.
 @Entity('payments')
 export class PaymentEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  @Index()
   @Column({ name: 'order_id', type: 'uuid' })
   orderId: string;
 
@@ -33,6 +37,7 @@ export class PaymentEntity {
   @Column({ name: 'cashier_id', type: 'uuid' })
   cashierId: string;
 
+  @Index()
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

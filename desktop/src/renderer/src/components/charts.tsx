@@ -1,4 +1,6 @@
 // Yengil, kutubxonasiz grafiklar (SVG/CSS) — dashboard uchun.
+// Qiymat manfiy bo'lishi mumkin (0.3.3: vozvrat qaytarilgan kuni minus bo'lib hisoblanadi) — ulush va
+// uzunliklar faqat musbat qismdan, raqamlar esa qanday bo'lsa shunday (minus — qizil) ko'rsatiladi.
 // Ranglar ko'k emas: emerald, amber, pink, violet, teal (loyiha uslubi).
 import { formatSum } from './ui';
 
@@ -23,7 +25,8 @@ export function DonutChart({
   centerLabel?: string;
   centerValue?: string;
 }) {
-  const total = data.reduce((s, d) => s + d.value, 0);
+  const total = data.reduce((s, d) => s + Math.max(0, d.value), 0);
+  const empty = data.every((d) => !d.value);
   const R = 60;
   const C = 2 * Math.PI * R;
   let acc = 0;
@@ -35,7 +38,7 @@ export function DonutChart({
           <circle cx="80" cy="80" r={R} fill="none" stroke="rgb(var(--c-border))" strokeWidth="18" />
           {total > 0 &&
             data.map((d, i) => {
-              const f = d.value / total;
+              const f = Math.max(0, d.value) / total;
               const seg = (
                 <circle
                   key={i}
@@ -68,10 +71,10 @@ export function DonutChart({
           <div key={i} className="flex items-center gap-2 text-sm">
             <span className="w-3 h-3 rounded-full shrink-0" style={{ background: d.color ?? CHART_COLORS[i % CHART_COLORS.length] }} />
             <span className="text-muted">{d.label}</span>
-            <span className="font-semibold ml-auto pl-3">{formatSum(d.value)}</span>
+            <span className={`font-semibold ml-auto pl-3 ${d.value < 0 ? 'text-danger' : ''}`}>{formatSum(d.value)}</span>
           </div>
         ))}
-        {total === 0 && <div className="text-muted text-sm">Ma'lumot yo'q</div>}
+        {empty && <div className="text-muted text-sm">Ma'lumot yo'q</div>}
       </div>
     </div>
   );
@@ -91,15 +94,19 @@ export function LineChart({
   const padR = 8;
   const padT = 16;
   const padB = 28;
+  // Manfiy kun (vozvrat ko'p) bo'lsa — nol chizig'i o'rtaroqda, grafik uning ostiga ham tushadi
   const max = Math.max(1, ...points.map((p) => p.value));
+  const min = Math.min(0, ...points.map((p) => p.value));
+  const span = max - min || 1;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
   const stepX = points.length > 1 ? innerW / (points.length - 1) : 0;
   const x = (i: number) => padL + i * stepX;
-  const y = (v: number) => padT + innerH - (v / max) * innerH;
+  const y = (v: number) => padT + innerH - ((v - min) / span) * innerH;
+  const zeroY = y(0);
 
   const line = points.map((p, i) => `${x(i)},${y(p.value)}`).join(' ');
-  const area = `${padL},${padT + innerH} ${line} ${padL + (points.length - 1) * stepX},${padT + innerH}`;
+  const area = `${padL},${zeroY} ${line} ${padL + (points.length - 1) * stepX},${zeroY}`;
   const gridVals = [0, 0.25, 0.5, 0.75, 1];
 
   return (
@@ -123,12 +130,15 @@ export function LineChart({
           strokeDasharray="4 4"
         />
       ))}
+      {min < 0 && (
+        <line x1={padL} x2={W - padR} y1={zeroY} y2={zeroY} stroke="rgb(var(--c-muted))" strokeWidth="1.2" />
+      )}
       {points.length > 0 && (
         <>
           <polygon points={area} fill="url(#lineFill)" />
           <polyline points={line} fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
           {points.map((p, i) => (
-            <circle key={i} cx={x(i)} cy={y(p.value)} r="3.5" fill="currentColor" />
+            <circle key={i} cx={x(i)} cy={y(p.value)} r="3.5" fill={p.value < 0 ? 'rgb(var(--c-danger))' : 'currentColor'} />
           ))}
         </>
       )}
@@ -160,10 +170,10 @@ export function HBars({
         <div key={i}>
           <div className="flex justify-between text-sm mb-1">
             <span className="truncate pr-2">{r.label}</span>
-            <span className="font-semibold shrink-0">{valueFmt ? valueFmt(r.value) : r.value}</span>
+            <span className={`font-semibold shrink-0 ${r.value < 0 ? 'text-danger' : ''}`}>{valueFmt ? valueFmt(r.value) : r.value}</span>
           </div>
           <div className="h-2.5 rounded-full bg-bg overflow-hidden">
-            <div className="h-full rounded-full" style={{ width: `${(r.value / max) * 100}%`, background: color }} />
+            <div className="h-full rounded-full" style={{ width: `${(Math.max(0, r.value) / max) * 100}%`, background: color }} />
           </div>
           {r.sub && <div className="text-xs text-muted mt-0.5">{r.sub}</div>}
         </div>

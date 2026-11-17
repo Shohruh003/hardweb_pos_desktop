@@ -6,25 +6,30 @@ import { api } from '../lib/api';
 import { useAuth } from '../state/auth';
 import { Button, formatSum } from './ui';
 import { Select } from './Select';
-import { OrderHistory, orderCheckTotals } from './OrderHistory';
+import { OrderHistory } from './OrderHistory';
 import { useI18n } from '../state/i18n';
 import {
   OrderFilters,
+  OrdersSummary,
+  historyQuery,
   useInfiniteOrders,
   useScrollSentinel,
 } from '../hooks/useInfiniteOrders';
+import { shiftDays, todayKey } from './reports/reportUtils';
 import { ORDER_TYPE_ICON } from './waiter/orderUi';
 
 type DatePreset = 'all' | 'today' | 'week' | 'month';
 
-function presetRange(p: DatePreset): { dateFrom?: string; dateTo?: string } {
+/**
+ * Davr -> mahalliy sanalar (server ?from=&to= — yopilgan vaqt bo'yicha, ochiq hisobda — ochilgan).
+ * "Bugun" kun oxirigacha: ekran ochiq turganda yopilgan yangi cheklar ham kiradi.
+ */
+function presetRange(p: DatePreset): { from?: string; to?: string } {
   if (p === 'all') return {};
-  const now = new Date();
-  const from = new Date();
-  from.setHours(0, 0, 0, 0);
-  if (p === 'week') from.setDate(from.getDate() - 6);
-  if (p === 'month') from.setDate(from.getDate() - 29);
-  return { dateFrom: from.toISOString(), dateTo: now.toISOString() };
+  const today = todayKey();
+  if (p === 'week') return { from: shiftDays(today, -6), to: today };
+  if (p === 'month') return { from: shiftDays(today, -29), to: today };
+  return { from: today, to: today };
 }
 
 // Turi bo'yicha filtr (B7: GET /orders/history?type=) — OrderFilters'ga qo'shimcha maydon
@@ -69,28 +74,54 @@ export function MyOrdersView({
   const [paymentType, setPaymentType] = useState('');
   const [search, setSearch] = useState('');
 
+  // Kun almashsa "Bugun" yangi kunga o'tsin (ekran tun bo'yi ochiq turishi mumkin)
+  const [day, setDay] = useState(todayKey);
+  useEffect(() => {
+    const id = window.setInterval(() => setDay((d) => (d === todayKey() ? d : todayKey())), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const filters: HistoryFilters = useMemo(() => {
-    const { dateFrom, dateTo } = presetRange(preset);
+    const { from, to } = presetRange(preset);
     return {
       waiterId,
       type: type || undefined,
       status: status || undefined,
       paymentType: paymentType || undefined,
       search: search.trim() || undefined,
-      dateFrom,
-      dateTo,
+      from,
+      to,
     };
-  }, [waiterId, preset, type, status, paymentType, search]);
+    // day — kun almashganda davrni qayta hisoblash uchun
+  }, [waiterId, preset, type, status, paymentType, search, day]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { items, total, hasMore, loading, loadMore } = useInfiniteOrders(
-    filters,
-    20,
-  );
+  const { items, total, hasMore, loading, error, loadMore, reload } = useInfiniteOrders(filters, 20);
   const sentinelRef = useScrollSentinel(loadMore, hasMore && !loading);
 
-  // Jami tushum (yuklangan buyurtmalar bo'yicha) — chek summalari (chegirma/xizmat bilan), ro'yxatdagi
-  // bilan bir xil; vozvrat qilingan cheklar tushumga kirmaydi (hisobotlar kabi)
-  const sum = items.reduce((s, o) => (o.refunded ? s : s + orderCheckTotals(o).total), 0);
+  // Tushum — server hisoblaydi (yuklangan sahifalar emas): shu filtrdagi YOPILGAN (to'langan) cheklar
+  // summasi, vozvrat qilinganlarsiz. Ochiq (hali to'lanmagan) hisoblar tushumga kirmaydi.
+  const revenueKey = JSON.stringify({ ...filters, status: OrderStatus.Closed });
+  const [revenue, setRevenue] = useState<number | null>(null);
+  const [revenueError, setRevenueError] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setRevenueError(false);
+    api
+      .get<{ summary?: OrdersSummary }>(`/orders/history?${historyQuery({ ...filters, status: OrderStatus.Closed }, 1, 1)}`)
+      .then((r) => {
+        if (!alive) return;
+        const sm = r.summary;
+        setRevenue(sm ? Math.max(0, sm.total - sm.refundedTotal) : null);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setRevenue(null);
+        setRevenueError(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [revenueKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const PRESETS: { key: DatePreset; label: string }[] = [
     { key: 'today', label: t('filter.today') },
@@ -139,10 +170,10 @@ export function MyOrdersView({
           <div className="text-sm text-muted">{t('common.total')}</div>
           <div className="text-2xl font-extrabold">{total} ta</div>
         </div>
-        <div className="bg-surface border border-border rounded-2xl p-4">
-          <div className="text-sm text-muted">{t('director.revenue')}</div>
-          <div className="text-2xl font-extrabold text-primary">
-            {formatSum(sum)}
+        <div className="bg-surface border border-border rounded-2xl p-4" data-testid="my-revenue">
+          <div className="text-sm text-muted">{t('director.revenue')} · to‘langan cheklar</div>
+          <div className="text-2xl font-extrabold text-primary tabular-nums">
+            {revenue !== null ? formatSum(revenue) : revenueError ? '—' : '…'}
           </div>
         </div>
       </div>
@@ -209,8 +240,16 @@ export function MyOrdersView({
 
       {/* Ro'yxat */}
       <div className="bg-surface border border-border rounded-2xl p-3 sm:p-4">
+        {error && (
+          <div role="alert" className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-danger/50 bg-danger/10 px-4 py-3">
+            <span className="flex-1 min-w-[200px] text-sm font-semibold text-text">⚠️ {error}</span>
+            <Button variant="ghost" className="shrink-0" onClick={() => void reload()}>
+              Qayta urinish
+            </Button>
+          </div>
+        )}
         {items.length === 0 && !loading ? (
-          <div className="text-center text-muted py-16">{t('common.noData')}</div>
+          !error && <div className="text-center text-muted py-16">{t('common.noData')}</div>
         ) : (
           <>
             <OrderHistory orders={items} />

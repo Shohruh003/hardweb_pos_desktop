@@ -20,3 +20,4 @@ export * from './terminal.entity';
 export * from './print-job.entity';
 export * from './void-log.entity';
 export * from './daily-counter.entity';
+export * from './order-request.entity';

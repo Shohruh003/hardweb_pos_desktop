@@ -131,16 +131,38 @@ export function resolveDay(dateRaw: unknown, now: Date = new Date()): LocalRange
 }
 
 /**
- * SQL shart: ustun qiymati oraliqda ([:<prefix>From, :<prefix>To)). Ustun datetime() bilan yagona
- * 'YYYY-MM-DD HH:MM:SS' ko'rinishga keltiriladi (bazada aralash formatlar bor). Parametrlar —
- * rangeParams(range, prefix).
+ * Indeks uchun qo'pol chegara: UTC matn chegarasining sanasi `days` kun siljitilgan 'YYYY-MM-DD'.
+ * Bazadagi har qanday ko'rinish ('YYYY-MM-DD HH:MM:SS[.SSS]', ISO 'T…Z') sana bilan boshlanadi, shuning
+ * uchun ustunni datetime()siz shu chegaralar bilan matn sifatida solishtirish to'g'ri va indeksdan
+ * foydalanadi (datetime(ustun) shartida SQLite indeksni ishlata olmaydi). Bir-ikki kunlik zaxira —
+ * vaqt mintaqasi yozilgan ISO qiymatlar uchun ham. Aniq chegara baribir datetime() bilan tekshiriladi.
+ */
+export function looseDayBound(utc: string, days: number): string {
+  const d = new Date(`${utc.slice(0, 10)}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * SQL shart: ustun qiymati oraliqda ([:<prefix>From, :<prefix>To)). Aniq shart — datetime() bilan
+ * yagona 'YYYY-MM-DD HH:MM:SS' ko'rinishda (bazada aralash formatlar bor); oldidagi qo'pol shart
+ * (:<prefix>Lo / :<prefix>Hi) faqat indeksdan foydalanish uchun, natijani o'zgartirmaydi.
+ * Parametrlar — rangeParams(range, prefix).
  */
 export function inRangeSql(column: string, prefix = 'r'): string {
-  return `datetime(${column}) >= :${prefix}From AND datetime(${column}) < :${prefix}To`;
+  return (
+    `${column} >= :${prefix}Lo AND ${column} < :${prefix}Hi AND ` +
+    `datetime(${column}) >= :${prefix}From AND datetime(${column}) < :${prefix}To`
+  );
 }
 
 export function rangeParams(range: LocalRange, prefix = 'r'): Record<string, string> {
-  return { [`${prefix}From`]: range.fromUtc, [`${prefix}To`]: range.toUtc };
+  return {
+    [`${prefix}From`]: range.fromUtc,
+    [`${prefix}To`]: range.toUtc,
+    [`${prefix}Lo`]: looseDayBound(range.fromUtc, -1),
+    [`${prefix}Hi`]: looseDayBound(range.toUtc, 2),
+  };
 }
 
 function isGiven(v: unknown): boolean {
