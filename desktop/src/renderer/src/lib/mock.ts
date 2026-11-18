@@ -1868,6 +1868,15 @@ function history(params: URLSearchParams, actor: MockUser) {
     if (can(actor, 'waiter')) forcedWaiterId = actor.id;
     else throw forbidden();
   }
+  // Ofitsiant faqat BUGUNGI o'z buyurtmalarini ko'radi (server kabi): sana filtrlari e'tiborsiz
+  if (forcedWaiterId) {
+    const today = businessDateOf();
+    params = new URLSearchParams(params);
+    params.set('from', today);
+    params.set('to', today);
+    params.delete('dateFrom');
+    params.delete('dateTo');
+  }
   const str = (k: string) => {
     const v = params.get(k);
     if (v == null) return undefined;
@@ -4658,6 +4667,8 @@ function reportsRoute(path: string, seg: string[], params: URLSearchParams, peri
   };
   // O'z ko'rsatkichi (ofitsiant ekrani) — istalgan xodim, faqat o'zi olgan cheklar
   if (sub === 'my-share') {
+    // Ofitsiantga pul ko'rsatkichi berilmaydi (server kabi)
+    if (actor.role === UserRole.Waiter) throw forbidden();
     const range = resolveDay(params.get('date'));
     const percent = round2(clampPercent(settings.waiterSharePercent));
     const acc = accumulateShares(closedOrdersIn(range).filter((o) => o.waiterId === actor.id));

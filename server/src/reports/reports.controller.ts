@@ -50,8 +50,8 @@ function assertAllowed(ok: boolean): void {
 const LEGACY_ROLES = [UserRole.Director, UserRole.Admin, UserRole.Cashier, UserRole.SuperAdmin];
 
 // Hisobotlar (TZ 5.5). Sinf darajasida rol cheklovi yo'q: eski marshrutlar @Roles bilan, yangilari
-// (B19/B20/B33/B34) ruxsatlar (capabilities) bo'yicha tekshiriladi — masalan "my-share" ni har bir
-// xodim (ofitsiant) o'zi uchun ko'radi.
+// (B19/B20/B33/B34) ruxsatlar (capabilities) bo'yicha tekshiriladi — masalan "my-share" ni xodim
+// o'zi uchun ko'radi (ofitsiantdan tashqari — unga pul ko'rsatilmaydi).
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('reports')
 export class ReportsController {
@@ -127,11 +127,12 @@ export class ReportsController {
     return this.reports.waiterItems(waiterId, resolveRange(q.from, q.to));
   }
 
-  // Xodimning o'z ko'rsatkichlari (har bir tizimga kirgan xodim — faqat o'ziniki): ?date=YYYY-MM-DD
+  // Xodimning o'z ko'rsatkichlari (faqat o'ziniki): ?date=YYYY-MM-DD. Ofitsiantga — yo'q: restoran
+  // talabi bilan ofitsiant ekranida pul haqida hech narsa ko'rsatilmaydi (ulush ham)
   @Get('my-share')
   myShare(@Query('date') date: unknown, @Request() req: any) {
     const userId = req?.user?.id;
-    assertAllowed(!!userId);
+    assertAllowed(!!userId && req?.user?.role !== UserRole.Waiter);
     return this.reports.myShare(String(userId), resolveDay(date));
   }
 

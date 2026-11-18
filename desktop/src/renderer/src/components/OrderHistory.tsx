@@ -81,10 +81,13 @@ export function OrderHistory({
   orders,
   onRevert,
   onRefund,
+  hideMoney = false,
 }: {
   orders: Order[];
   onRevert?: (order: Order) => Promise<void> | void;
   onRefund?: (order: Order, reason: string) => Promise<void> | void;
+  /** Ofitsiant ekrani: summalar, narxlar va to'lov ma'lumoti ko'rsatilmaydi (faqat taomlar va holat) */
+  hideMoney?: boolean;
 }) {
   const [sel, setSel] = useState<Order | null>(null);
   const [reverting, setReverting] = useState(false);
@@ -181,9 +184,11 @@ export function OrderHistory({
                 ) : (
                   <StatusBadge status={o.status} />
                 )}
-                <div className={`text-sm font-bold mt-1 ${o.refunded ? 'line-through text-muted' : 'text-text'}`}>
-                  {formatSum(payable(o))}
-                </div>
+                {!hideMoney && (
+                  <div className={`text-sm font-bold mt-1 ${o.refunded ? 'line-through text-muted' : 'text-text'}`}>
+                    {formatSum(payable(o))}
+                  </div>
+                )}
               </div>
             </button>
           );
@@ -218,12 +223,14 @@ export function OrderHistory({
                   {it.note && <span className="text-warning text-xs"> ({it.note})</span>}
                   {it.takeaway && <span className="ml-1 px-1.5 py-0.5 rounded bg-warning/15 text-warning text-[11px] font-bold">olib ketadi</span>}
                 </span>
-                <span className="font-semibold whitespace-nowrap">{formatSum(lineSum(it.price ?? 0, it.quantity))}</span>
+                {!hideMoney && (
+                  <span className="font-semibold whitespace-nowrap">{formatSum(lineSum(it.price ?? 0, it.quantity))}</span>
+                )}
               </div>
             ))}
           </div>
 
-          {(selTotals.discountAmount > 0 || selTotals.serviceAmount > 0 || selTotals.deliveryFee > 0) && (
+          {!hideMoney && (selTotals.discountAmount > 0 || selTotals.serviceAmount > 0 || selTotals.deliveryFee > 0) && (
             <div className="space-y-1 text-sm mb-3 px-1">
               <Row label="Mahsulotlar" value={formatSum(selTotals.subtotal)} />
               {selTotals.discountAmount > 0 && (
@@ -238,9 +245,9 @@ export function OrderHistory({
 
           <div className="flex items-center justify-between">
             <StatusBadge status={sel.status} />
-            <div className="text-xl font-extrabold text-primary">{formatSum(payable(sel))}</div>
+            {!hideMoney && <div className="text-xl font-extrabold text-primary">{formatSum(payable(sel))}</div>}
           </div>
-          {sel.status !== OrderStatus.Closed && (
+          {!hideMoney && sel.status !== OrderStatus.Closed && (
             <div className="text-xs text-muted mt-2 text-right">
               {sel.paidAmount && roundSum(sel.paidAmount) > 0
                 ? `Qisman to‘langan: ${formatSum(roundSum(sel.paidAmount))}`

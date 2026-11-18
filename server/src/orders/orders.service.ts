@@ -478,6 +478,11 @@ export class OrdersService {
       if (can(actor, 'waiter') && actor.id) forcedWaiterId = actor.id;
       else throw new ForbiddenException(FORBIDDEN_MESSAGE);
     }
+    // Ofitsiant faqat BUGUNGI o'z buyurtmalarini ko'radi (restoran talabi): sana filtrlari e'tiborsiz
+    if (forcedWaiterId) {
+      const today = businessDateOf();
+      query = { ...query, from: today, to: today, dateFrom: undefined, dateTo: undefined };
+    }
 
     const page = positiveInt(query.page, 1, MAX_HISTORY_PAGE);
     const limit = positiveInt(query.limit, 20, 100);
